@@ -85,6 +85,8 @@ class ContentTests(unittest.TestCase):
             gemini.generate("Chia cảnh")
         with self.assertRaises(ValueError):
             content.Gemini("short")
+        for pasted in ('"AQ.Fake0ExampleKey0123456789"', " AQ.Fake0Example\nKey0123456789 ", "key=AQ.Fake0ExampleKey0123456789"):
+            self.assertEqual(content.api_key_value(pasted), "AQ.Fake0ExampleKey0123456789")
 
 
 class ContentHTTPTests(unittest.TestCase):
@@ -126,7 +128,7 @@ class ContentHTTPTests(unittest.TestCase):
         self.assertIn("khóa API", data["error"])
         self.assertEqual(self.post("/api/content/settings", {"api_key": KEY, "model": "gemini-2.5-pro"})[0], 200)
         state = self.state()
-        self.assertEqual(state["content"], {"configured": True, "model": "gemini-2.5-pro"})
+        self.assertEqual(state["content"], {"version": content.VERSION, "configured": True, "model": "gemini-2.5-pro"})
         self.assertNotIn(KEY, json.dumps(state))
         status, data = self.post("/api/content/generate", {"brief": "Chia cảnh", "video_url": ""})
         self.assertEqual(status, 200)

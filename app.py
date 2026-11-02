@@ -81,7 +81,7 @@ class Handler(BaseHTTPRequestHandler):
             data = self.server.store.snapshot()
             data["engine"] = self.server.engine.snapshot()
             data["key"] = self.server.secret
-            data["content"] = {"configured": bool(self.server.store.setting("gemini_api_key")),
+            data["content"] = {"version": content.VERSION, "configured": bool(self.server.store.setting("gemini_api_key")),
                                "model": self.server.store.setting("gemini_model") or content.DEFAULT_MODEL}
             return self.reply(data)
         if path == "/api/library":

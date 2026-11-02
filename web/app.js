@@ -244,8 +244,12 @@ function renderScenes(){
   $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b><span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}</div></article>`).join('');
   renderContentOutput();
 }
+const CONTENT_VERSION='content-3';
 function renderGeminiStatus(){
-  const info=state?.content;if(!info)return;
+  if(!state)return;
+  const info=state.content,outdated=!info||info.version!==CONTENT_VERSION;
+  $('runnerOutdated').hidden=!outdated;
+  if(!info){$('geminiStatus').textContent='Bộ chạy cũ · cần mở lại';$('geminiStatus').dataset.ok='false';return;}
   $('geminiStatus').textContent=info.configured?`Đã có khóa · ${info.model}`:'Chưa có khóa API';
   $('geminiStatus').dataset.ok=String(info.configured);
   if(!$('geminiModel').value)$('geminiModel').value=info.model;
@@ -272,7 +276,15 @@ $('contentBrief').oninput=()=>{content.brief=$('contentBrief').value;saveContent
 $('contentVideo').oninput=()=>{content.video=$('contentVideo').value.trim();saveContent();};
 $('contentLanguage').onchange=()=>{content.language=$('contentLanguage').value;saveContent();};
 $('contentScript').oninput=()=>{content.script=$('contentScript').value;saveContent();};
-$('saveGemini').onclick=()=>action(async()=>{await api('/api/content/settings',{api_key:$('geminiKey').value.trim(),model:$('geminiModel').value.trim()});$('geminiKey').value='';$('geminiSettings').open=false;toast('Đã lưu cài đặt Gemini.');}).then(renderGeminiStatus);
+$('saveGemini').onclick=async()=>{
+  const apiKey=$('geminiKey').value.trim();$('geminiError').hidden=true;
+  if(!apiKey&&!state?.content?.configured){$('geminiError').textContent='Dán khóa API vào ô Khóa API Gemini trước khi lưu.';$('geminiError').hidden=false;return;}
+  try{await api('/api/content/settings',{api_key:apiKey,model:$('geminiModel').value.trim()});await refresh();}
+  catch(error){$('geminiError').textContent=error.message;$('geminiError').hidden=false;renderGeminiStatus();return;}
+  renderGeminiStatus();
+  if(!state?.content?.configured){$('geminiError').textContent='Bộ chạy chưa lưu được khóa. Đóng và mở lại CHAY_WINDOWS.cmd, rồi thử lại.';$('geminiError').hidden=false;return;}
+  $('geminiKey').value='';$('geminiSettings').open=false;toast('Đã lưu khóa API Gemini.');
+};
 $('clearGemini').onclick=()=>action(async()=>{await api('/api/content/settings',{clear_key:true,model:$('geminiModel').value.trim()});toast('Đã xóa khóa API Gemini khỏi máy.');}).then(renderGeminiStatus);
 $('runContent').onclick=async()=>{
   if(!content.brief.trim())return toast('Nhập yêu cầu (prompt) cho Gemini.',true);

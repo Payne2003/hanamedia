@@ -53,6 +53,7 @@
     </div>
     <section id="contentView" class="content-page" hidden>
       <div class="content-page-heading"><div><div class="eyebrow">PROMPT + VIDEO GỐC → GEMINI → HÀNG LOẠT PROMPT</div><h1>Viết content</h1><p>Gemini xem video gốc, viết lại kịch bản và chia cảnh: <b>bối cảnh, góc quay, hành vi nhân vật, nội dung hành động nhân vật</b>. Kiểm tra lại thiếu cảnh/lỗi rồi đưa hàng loạt prompt vào Studio.</p></div><button id="closeContent" type="button">← Về Studio</button></div>
+      <div id="runnerOutdated" class="content-error" role="alert" hidden><b>Bộ chạy đang chạy bản cũ.</b> Đóng cửa sổ đen CHAY_WINDOWS.cmd (hoặc nhấn Ctrl+C trong đó), mở lại CHAY_WINDOWS.cmd rồi tải lại trang này bằng Ctrl+F5.</div>
       <div class="content-columns">
         <div class="content-input card">
           <section class="content-step first"><h3><span>1</span>Đầu vào</h3>
@@ -65,7 +66,7 @@
           <section class="content-step"><details id="geminiSettings" class="gemini-settings"><summary>⚙ Cài đặt Gemini <span id="geminiStatus" class="gemini-status">Chưa có khóa API</span></summary>
             <label>Khóa API Gemini<input id="geminiKey" type="password" autocomplete="off" placeholder="Dán khóa từ aistudio.google.com/apikey"></label>
             <label>Model<input id="geminiModel" list="geminiModels" maxlength="80" placeholder="gemini-3.8-flash"><datalist id="geminiModels"><option value="gemini-3.8-flash"><option value="gemini-3.5-flash"><option value="gemini-3.1-pro-preview"><option value="gemini-flash-latest"></datalist></label>
-            <div class="content-actions"><button id="saveGemini" type="button" class="primary">Lưu cài đặt</button><button id="clearGemini" type="button">Xóa khóa</button></div>
+            <div id="geminiError" class="content-error" role="alert" hidden></div><div class="content-actions"><button id="saveGemini" type="button" class="primary">Lưu cài đặt</button><button id="clearGemini" type="button">Xóa khóa</button></div>
             <p class="detail">Khóa chỉ lưu trong thư mục data trên máy này và chỉ được gửi tới Google Gemini. Không chia sẻ thư mục data.</p>
           </details></section>
         </div>
