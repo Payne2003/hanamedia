@@ -26,7 +26,7 @@ Cũng có chế độ **Tự gửi prompt & tải video**, dùng menu **ba chấ
 
 Bấm **✎ Viết content** trên thanh điều hướng để mở trang Viết content (bấm **Studio** hoặc **← Về Studio** để quay lại; địa chỉ `http://127.0.0.1:8765/#content` mở thẳng trang này).
 
-1. **Cài đặt Gemini** (một lần): dán khóa API lấy tại https://aistudio.google.com/apikey và chọn model (mặc định `gemini-2.5-flash`; `gemini-2.5-pro` kỹ hơn nhưng chậm hơn). Khóa chỉ lưu trong `data/` trên máy và chỉ gửi tới Google Gemini; giao diện không hiển thị lại khóa.
+1. **Cài đặt Gemini** (một lần): dán khóa API lấy tại https://aistudio.google.com/apikey và chọn model (mặc định `gemini-3.8-flash`; Google không cho khóa mới dùng `gemini-2.5-*` nữa). Khóa chỉ lưu trong `data/` trên máy và chỉ gửi tới Google Gemini; giao diện không hiển thị lại khóa.
 2. **Đầu vào**: (1) Prompt — yêu cầu cho Gemini (đã có mẫu sẵn, sửa tùy ý); (2) Link video gốc — link **YouTube** công khai hoặc không công khai (`youtube.com/watch`, `youtu.be`, `/shorts`). Có thể bỏ trống link để Gemini tự viết kịch bản theo yêu cầu. Gemini không đọc trực tiếp link TikTok/Facebook: đăng video lên YouTube rồi dán link.
 3. Bấm **Phân tích bằng Gemini**. Đầu ra gồm **Kịch bản video gốc** và danh sách cảnh, mỗi cảnh có: bối cảnh, góc quay, hành vi nhân vật, nội dung hành động nhân vật. Có thể sửa, thêm, xóa, đổi thứ tự cảnh.
 4. Bấm **Kiểm tra thiếu cảnh / lỗi**: Gemini so lại với video gốc, bổ sung cảnh bị bỏ sót và viết lại cảnh dễ bị AI video từ chối/không tạo được (người nổi tiếng, logo, chữ trên màn hình, quá nhiều hành động…). Danh sách vấn đề hiện ở khung **Cần xem lại**. Lặp lại đến khi không còn vấn đề. Tool cũng tự báo cảnh bị trống trường.

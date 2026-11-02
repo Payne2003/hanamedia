@@ -46,7 +46,7 @@ class ContentTests(unittest.TestCase):
         result = content.Gemini(KEY, transport=fake_transport(reply, calls)).generate(
             "Chia cảnh", "https://youtu.be/dQw4w9WgXcQ")
         url, payload, headers = calls[0]
-        self.assertTrue(url.endswith("/gemini-2.5-flash:generateContent"))
+        self.assertTrue(url.endswith("/gemini-3.8-flash:generateContent"))
         self.assertEqual(headers["x-goog-api-key"], KEY)
         self.assertEqual(payload["contents"][0]["parts"][0]["file_data"]["file_uri"],
                          "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
@@ -61,8 +61,26 @@ class ContentTests(unittest.TestCase):
         self.assertNotIn("file_data", calls[0][1]["contents"][0]["parts"][0])
         self.assertEqual((len(result["scenes"]), result["issues"]), (2, ["Thiếu cảnh kết"]))
 
+    def test_overloaded_model_falls_back(self):
+        calls = []
+        ok = fake_transport({"original_script": "K", "scenes": [SCENE]}, calls)
+        def transport(url, payload, headers, timeout):
+            if "/gemini-3.8-flash:" in url:
+                calls.append((url,))
+                return 503, b'{"error":{"message":"high demand"}}'
+            return ok(url, payload, headers, timeout)
+        gemini = content.Gemini(KEY, transport=transport)
+        gemini.sleep = lambda _: None
+        self.assertEqual(len(gemini.generate("Chia cảnh")["scenes"]), 1)
+        self.assertIn("/gemini-3.5-flash:", calls[1][0])
+        self.assertEqual(gemini.used_model, "gemini-3.5-flash")
+
     def test_api_errors_are_explained(self):
         gemini = content.Gemini(KEY, transport=fake_transport({}, [], status=429))
+        busy = content.Gemini(KEY, transport=fake_transport({}, [], status=503))
+        busy.sleep = lambda _: None
+        with self.assertRaisesRegex(ValueError, "quá tải"):
+            busy.generate("Chia cảnh")
         with self.assertRaisesRegex(ValueError, "429"):
             gemini.generate("Chia cảnh")
         with self.assertRaises(ValueError):
