@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 
 from runner import content
+from runner.gemini_web import GeminiWebRunner
 from runner.engine import Engine
 from runner.store import Store
 from runner.instance import InstanceLock
@@ -34,6 +35,7 @@ class AppServer(ThreadingHTTPServer):
         self.folder_lock = threading.Lock()
         self.gemini_transport = content.default_transport
         self.video_fetch = content.default_fetch
+        self.gemini_web = GeminiWebRunner(Path(store.path).parent / "profiles" / "gemini-web")
 
     def handle_error(self, request, client_address):
         error = sys.exc_info()[1]
@@ -83,7 +85,10 @@ class Handler(BaseHTTPRequestHandler):
             data["engine"] = self.server.engine.snapshot()
             data["key"] = self.server.secret
             data["content"] = {"version": content.VERSION, "configured": bool(self.server.store.setting("gemini_api_key")),
-                               "model": self.server.store.setting("gemini_model") or content.DEFAULT_MODEL}
+                               "model": self.server.store.setting("gemini_model") or content.DEFAULT_MODEL,
+                               "web": dict(self.server.gemini_web.snapshot(),
+                                           email=self.server.store.setting("gemini_web_email") or "",
+                                           model=self.server.store.setting("gemini_web_model") or "")}
             return self.reply(data)
         if path == "/api/library":
             return self.reply({"images": self.server.store.library_images()})
@@ -241,6 +246,21 @@ class Handler(BaseHTTPRequestHandler):
                 elif body.get("clear_key"):
                     store.save_setting("gemini_api_key", "")
                 store.save_setting("gemini_model", content.model_name(body.get("model")))
+            elif path == "/api/content/web-settings":
+                email = str(body.get("email") or "").strip().lower()
+                if email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+                    raise ValueError("Email Google không hợp lệ.")
+                store.save_setting("gemini_web_email", email[:254])
+                store.save_setting("gemini_web_model", str(body.get("model") or "").strip()[:40])
+            elif path == "/api/content/web-run":
+                kind = "review" if body.get("kind") == "review" else "generate"
+                prompt = content.web_prompt(kind, body.get("brief", ""), body.get("video_url", ""),
+                                            body.get("language", "vi"), body.get("scenes"))
+                job = self.server.gemini_web.start(kind, prompt, store.setting("gemini_web_email") or "",
+                                                   store.setting("gemini_web_model") or "")
+                return self.reply({"ok": True, "id": job})
+            elif path == "/api/content/web-stop":
+                self.server.gemini_web.cancel()
             elif path == "/api/content/web-prompt":
                 return self.reply({"prompt": content.web_prompt(body.get("kind", "generate"), body.get("brief", ""),
                                                                 body.get("video_url", ""), body.get("language", "vi"),
@@ -319,6 +339,7 @@ def main():
             pass
     finally:
         engine.close_browsers()
+        server.gemini_web.close()
         server.server_close()
         instance.close()
     return 0

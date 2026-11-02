@@ -210,7 +210,8 @@ class ContentHTTPTests(unittest.TestCase):
         self.assertIn("khóa API", data["error"])
         self.assertEqual(self.post("/api/content/settings", {"api_key": KEY, "model": "gemini-2.5-pro"})[0], 200)
         state = self.state()
-        self.assertEqual(state["content"], {"version": content.VERSION, "configured": True, "model": "gemini-2.5-pro"})
+        self.assertEqual({k: state["content"][k] for k in ("version", "configured", "model")},
+                         {"version": content.VERSION, "configured": True, "model": "gemini-2.5-pro"})
         self.assertNotIn(KEY, json.dumps(state))
         status, data = self.post("/api/content/generate", {"brief": "Chia cảnh", "video_url": ""})
         self.assertEqual(status, 200)
@@ -222,3 +223,69 @@ class ContentHTTPTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeminiWebTests(unittest.TestCase):
+    def test_conversation_continues_until_end_mark_and_merges(self):
+        from runner import gemini_web
+
+        class FakeSession:
+            def __init__(self, answers):
+                self.answers, self.sent = list(answers), []
+            def new_chat(self):
+                pass
+            def wait_ready(self, status, stop, email=""):
+                pass
+            def choose_model(self, name):
+                return name
+            def ask(self, text, status, stop, email="", label=""):
+                self.sent.append(text)
+                return self.answers.pop(0)
+
+        line = lambda n: f"Bối cảnh {n}: Cảnh {n}, góc quay: Trung cảnh, hành vi nhân vật: Đi, Nội dung hành động nhân vật: Bước {n};"
+        session = FakeSession(["KỊCH BẢN VIDEO GỐC:\nK\nDANH SÁCH CẢNH:\n" + line(1) + "\n" + line(2),
+                               line(2) + "\n" + line(3),
+                               line(4) + "\n" + gemini_web.END_MARK])
+        result = gemini_web.run_conversation(session, "Yêu cầu", lambda _: None, threading.Event(), model="Pro")
+        self.assertEqual([s["setting"] for s in result["scenes"]], ["Cảnh 1", "Cảnh 2", "Cảnh 3", "Cảnh 4"])
+        self.assertEqual(result["rounds"], 3)
+        self.assertIn(gemini_web.END_MARK, session.sent[0])
+        self.assertIn("Bối cảnh 3", session.sent[1])
+
+    def test_runner_reports_result_and_errors(self):
+        from runner import gemini_web
+        line = "Bối cảnh 1: A, góc quay: B, hành vi nhân vật: C, Nội dung hành động nhân vật: D;\n" + gemini_web.END_MARK
+
+        class Session:
+            def __init__(self, profile):
+                pass
+            def alive(self):
+                return True
+            def close(self):
+                pass
+            def new_chat(self):
+                pass
+            def wait_ready(self, status, stop, email=""):
+                pass
+            def choose_model(self, name):
+                return ""
+            def ask(self, text, status, stop, email="", label=""):
+                if "lỗi" in text:
+                    raise gemini_web.GeminiWebError("Gemini chưa nhận yêu cầu")
+                return line
+
+        with tempfile.TemporaryDirectory() as folder:
+            runner = gemini_web.GeminiWebRunner(Path(folder), Session)
+            runner.start("generate", "Yêu cầu")
+            for _ in range(50):
+                if not runner.snapshot()["busy"]:
+                    break
+                threading.Event().wait(0.05)
+            self.assertEqual(runner.snapshot()["result"]["prompts"], content.format_prompts([dict(zip(content.FIELDS, "ABCD"))]))
+            runner.start("generate", "lỗi")
+            for _ in range(50):
+                if not runner.snapshot()["busy"]:
+                    break
+                threading.Event().wait(0.05)
+            self.assertIn("chưa nhận", runner.snapshot()["error"])
+            runner.close()

@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-5"
+VERSION = "content-6"
 SEGMENT_SECONDS = 60  # Video dài được chia đoạn 1 phút cho mỗi lần gọi Gemini.
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models/"
 DEFAULT_MODEL = "gemini-3.8-flash"
