@@ -21,7 +21,7 @@ SEGMENT_SECONDS = 60  # Video dài được chia đoạn 1 phút cho mỗi lần
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models/"
 DEFAULT_MODEL = "gemini-3.8-flash"
 # Dùng lần lượt khi model đang chọn báo quá tải (500/503).
-FALLBACK_MODELS = ("gemini-3.5-flash", "gemini-3-flash-preview", "gemini-flash-latest")
+FALLBACK_MODELS = ("gemini-3.5-flash", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-3.5-flash-lite")
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")

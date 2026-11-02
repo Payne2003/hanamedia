@@ -34,6 +34,8 @@ Bấm **✎ Viết content** trên thanh điều hướng để mở trang Viế
    `Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;`
    Bấm **Đưa vào Studio** (tool chuyển về trang Studio, prompt đã nằm trong khung tạo video) rồi **Tạo & chạy** như bình thường, hoặc **Chép** / **Tải .txt**.
 
+Ứng dụng Gemini trên web (gemini.google.com) và Gemini API là hai hệ thống riêng: web chạy được không có nghĩa API đang rảnh. Khóa miễn phí hay gặp lỗi 503 "quá tải" và không dùng được `gemini-4-argon` (báo 429); tool tự chuyển sang model dự phòng. Muốn ổn định hơn hoặc dùng Argon, bật thanh toán (billing) cho dự án của khóa trong Google AI Studio.
+
 Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt khi chuyển trang hoặc tải lại. Phân tích video dài có thể mất vài phút và dùng hạn mức Gemini của khóa API. Đã kiểm thử bằng Gemini giả lập; cần một khóa thật để kiểm tra với video thật.
 
 ## Mức độ đã xác minh — đọc trước khi chạy
