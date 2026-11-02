@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HANA MEDIA · AI Studio</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="/"><span class="logo">HM</span><span>HANA MEDIA<small>AI IMAGE & VIDEO</small></span></a>
+    <nav class="primary-nav" aria-label="Điều hướng chính">
+      <button type="button" class="active" data-nav="studio">▦ Studio</button>
+      <button type="button" id="openLibrary">▧ Thư viện</button>
+      <button type="button" id="accountsButton">♙ Tài khoản <b id="accountCount">0/10</b></button>
+      <button type="button" data-coming>◉ Proxy</button>
+      <button type="button" data-coming>⚙ Cài đặt</button>
+    </nav>
+    <div class="header-actions"><span id="connection" class="connection">Đang kết nối…</span><span class="running-pill"><i></i><b id="headerRuns">0</b> luồng đang chạy</span></div>
+  </header>
+  <main>
+    <section class="studio-toolbar">
+      <div class="project-controls"><button id="pickFolder" class="project-button"><span>▰</span><span><b>Mặc định</b><small id="folderPath">Chưa chọn thư mục lưu</small></span><span>⌄</span></button><button id="openFolder" class="icon-button" aria-label="Mở thư mục kết quả" title="Mở thư mục kết quả">↗</button></div>
+      <div class="studio-overview"><span><b id="topTotal">0</b> tác vụ</span><span><b id="topFiles">0</b> file</span><span class="live-stat"><i></i><b id="topRunning">0</b> đang chạy</span></div>
+      <button class="results-folder" type="button" id="openFolderSecondary">▱ Thư mục kết quả</button>
+    </section>
+    <div class="workspace">
+      <section class="queue card" aria-label="Hàng đợi">
+        <div class="queue-heading"><div><h1>Hàng đợi <span id="total" class="count">0</span></h1><p id="queueHint">Sẵn sàng nhận ý tưởng mới</p></div><div class="queue-heading-actions"><button id="run" class="primary">▶ Chạy</button><button id="pause">■ Dừng</button></div></div>
+        <div class="toolbar"><div class="tabs" role="group" aria-label="Lọc trạng thái"><button data-filter="all" class="active">Tất cả <b id="n-all">0</b></button><button data-filter="waiting">Chờ <b id="n-waiting">0</b></button><button data-filter="running">Đang chạy <b id="n-running">0</b></button><button data-filter="done">Xong <b id="n-done">0</b></button><button data-filter="error">Lỗi <b id="n-error">0</b></button></div><label class="queue-search"><span>⌕</span><input id="search" type="search" placeholder="Tìm tên, prompt…" aria-label="Tìm prompt"></label></div>
+        <div class="bulk-toolbar"><label class="select-all"><input id="selectVisible" type="checkbox"> Chọn tất cả</label><button type="button" class="quick-menu" data-coming>Chọn nhanh…</button><button id="deleteSelected" class="danger-outline" disabled>▤ Xóa <span id="selectedCount">0</span></button><span class="bulk-spacer"></span><button type="button" class="quick-menu" data-coming>↕ Đánh lại STT</button></div>
+        <div class="table-scroll"><table><thead><tr><th class="select-col"></th><th>STT</th><th class="thumb-col"></th><th>TÊN & PROMPT</th><th>LOẠI</th><th>TÀI KHOẢN</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty"><span>✧</span><h3>Một ý tưởng, một video</h3><p>Nhập prompt ở khung tạo bên phải để bắt đầu.</p></div></div>
+        <footer><span id="shown">0 tác vụ</span><span>Tự lưu hàng đợi trên máy</span></footer>
+      </section>
+      <aside class="composer card">
+        <div class="composer-heading"><h2 id="composerTitle">Tạo video</h2><button id="importButton" class="text-button">↑ .txt</button><input id="importFile" type="file" accept=".txt,.json" hidden></div>
+        <div class="creation-tabs" aria-label="Chọn loại nội dung"><button type="button" class="active" data-mode="text">▣ Video</button><button type="button" data-mode="image_generate">▧ Ảnh</button></div>
+        <div class="video-submodes video-only"><button type="button" class="active" data-mode="text">Prompt → video</button><button type="button" data-mode="image_video">Ảnh → video</button></div>
+        <div class="prompt-label"><label for="prompts">Prompt</label><span id="promptCount">0 tác vụ</span></div>
+        <textarea id="prompts" rows="7" maxlength="1000000" placeholder="Mỗi dòng là một prompt. Viết mô tả video bạn muốn tạo…"></textarea>
+        <div class="prompt-hint video-only">Mỗi dòng là 1 prompt. Dùng <code>---</code> nếu muốn tách đoạn.</div>
+        <div class="field video-only prompt-split"><label for="separator">Ký tự ngăn cách</label><select id="separator"><option value="line">Mỗi dòng một prompt</option><option value="blank">Dòng trống</option><option value="custom">---</option></select></div>
+        <div class="field image-assignment" hidden><label for="imagePromptIndex">Ảnh tham chiếu <span>(theo prompt)</span></label><div class="image-assignment-controls"><select id="imagePromptIndex" aria-label="Chọn prompt cần gắn ảnh"></select><button id="chooseLibrary" type="button">▧ Thư mục</button><button id="chooseImages" type="button">+ Ảnh</button><input id="characterImages" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></div><button type="button" class="image-dropzone" id="chooseImagesDrop"><span>⇧</span>Kéo thả ảnh hoặc chọn từ thư viện</button><div id="imageHint" class="detail">Gắn ảnh tham chiếu đúng prompt. Tối đa 10 ảnh mỗi prompt.</div><div id="assignedImages" class="image-chips"></div></div>
+        <section id="flowPanel" class="flow-panel" hidden><p>Prompt ảnh sẽ được điền trong Google Flow. Chọn <b>Hình ảnh</b>, tạo và tải kết quả xuống.</p><div class="flow-actions"><button id="createFlowImage" type="button" class="primary">Mở Flow và điền prompt</button><button id="importFlowImages" type="button">Nhập ảnh đã tải</button></div><div id="flowStatus" class="detail">Ảnh tải xuống sẽ được lưu vào thư viện của tool.</div></section>
+        <div class="video-only">
+          <div class="field"><label for="parallel">Số tài khoản chạy đồng thời</label><select id="parallel"><option value="1">1 tài khoản</option><option value="2" selected>2 tài khoản</option><option value="3">3 tài khoản</option><option value="4">4 tài khoản</option><option value="5">5 tài khoản</option><option value="6">6 tài khoản</option><option value="7">7 tài khoản</option><option value="8">8 tài khoản</option><option value="9">9 tài khoản</option><option value="10">10 tài khoản</option></select></div>
+          <details class="advanced-settings"><summary>Thiết lập nâng cao</summary><div class="field"><label for="cost">Credit dự kiến / video</label><input id="cost" type="number" min="0.01" step="0.01" value="1"></div><div class="field"><label for="operation">Cách chạy</label><select id="operation"><option value="auto">Tự gửi prompt & tải video</option><option value="assisted">Điền sẵn prompt để tôi gửi & tải</option></select></div><label class="check"><input id="headless" type="checkbox"><span>Chạy ẩn cửa sổ Chrome</span></label><p class="detail">Một tài khoản xử lý một video tại một thời điểm. Credit là ngân sách dự kiến do bạn nhập.</p></details>
+          <button id="create" class="primary full">✦ Tạo & chạy</button><button id="add" class="full">Chỉ thêm vào hàng đợi</button>
+        </div>
+      </aside>
+    </div>
+  </main>
+  <dialog id="accounts"><div class="dialog-heading"><div><div class="eyebrow">EMAIL + OTP · KHÔNG MẬT KHẨU</div><h2>Tài khoản Muse</h2></div><button id="closeAccounts" aria-label="Đóng">✕</button></div><p class="dialog-description">Mỗi tài khoản có phiên Chrome riêng. Tool thử lấy OTP mới từ link hộp thư; nếu hộp thư lỗi, nhập mã trực tiếp trên cửa sổ Muse.</p><div id="accountList"></div><form id="accountForm"><h3>Thêm tài khoản</h3><div class="form-grid"><label>Email Muse<input id="email" type="email" autocomplete="off" required maxlength="254" placeholder="email@tuan89.site"></label><label>Ngân sách credit dự kiến<input id="budget" type="number" required min="0" step="0.01" value="10"></label></div><label>Link hộp thư OTP<input id="mailbox" type="url" placeholder="Tự điền link Tuan89 theo email nếu để trống"></label><button class="primary" type="submit">+ Thêm tài khoản</button></form><p class="subtle-note">Phiên đăng nhập được giữ trên máy. Không chia sẻ thư mục data. Tài khoản hết ngân sách hoặc cần kiểm tra sẽ không nhận tác vụ mới.</p></dialog>
+  <dialog id="player"><div class="dialog-heading"><h2 id="playerTitle">Video của cảnh</h2><button id="closePlayer" aria-label="Đóng video">✕</button></div><video id="videoPlayer" controls playsinline></video><p id="playerPrompt"></p></dialog>
+  <dialog id="imageLibrary"><div class="dialog-heading"><div><div class="eyebrow">THƯ VIỆN CỤC BỘ</div><h2>Ảnh tham chiếu</h2></div><button id="closeImageLibrary" aria-label="Đóng thư viện">✕</button></div><p class="dialog-description">Chọn ảnh đã tạo từ Flow hoặc ảnh đã thêm trước đây để gắn vào prompt đang chọn.</p><div id="imageLibraryGrid" class="image-library-grid"></div></dialog>
+  <div id="toast" role="status" hidden></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
