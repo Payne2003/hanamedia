@@ -9,10 +9,12 @@ Phần thao tác trang nằm trong các đoạn JavaScript bên dưới để d�
 """
 import os
 import queue
+import subprocess
 import threading
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlencode
 
 from . import content
 
@@ -95,7 +97,8 @@ const account = [...document.querySelectorAll('a[aria-label*="@"], button[aria-l
 const email = (account.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [''])[0].toLowerCase();
 const signIn = location.hostname.startsWith('accounts.') ||
   [...document.querySelectorAll('a,button')].some(e => /^(đăng nhập|sign in)$/i.test((e.innerText || '').trim()));
-return {count: responses.length, busy, text, email, signIn, host: location.hostname};
+return {count: responses.length, busy, text, email, signIn, host: location.hostname,
+  rejected: location.hostname.startsWith('accounts.') && /rejected|disallowed/i.test(location.pathname)};
 """
 
 # Chọn model theo tên (ví dụ "Pro", "Argon"). Trả về tên đang hiển thị trên nút chọn, hoặc ''.
@@ -120,6 +123,27 @@ return '';
 
 class GeminiWebError(RuntimeError):
     pass
+
+
+def chrome_executable():
+    """Đường dẫn chrome.exe trên Windows (hoặc chrome trên máy khác)."""
+    candidates = []
+    for base in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"), os.environ.get("LOCALAPPDATA")):
+        if base:
+            candidates.append(Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe")
+    candidates += [Path("/usr/bin/google-chrome"), Path("/usr/bin/chromium"),
+                   Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    raise GeminiWebError("Không tìm thấy Google Chrome trên máy. Cài Chrome rồi thử lại.")
+
+
+def login_url(email=""):
+    query = {"continue": GEMINI_URL}
+    if email:
+        query["Email"] = email
+    return "https://accounts.google.com/ServiceLogin?" + urlencode(query)
 
 
 class GeminiWebSession:
@@ -174,13 +198,16 @@ class GeminiWebSession:
                 field = self.driver.execute_script(JS_FIND_INPUT)
             except Exception:
                 page, field = {}, None
-            if field and not page.get("signIn"):
+            if page.get("signIn") or page.get("rejected"):
+                # Google không cho nhập mật khẩu trong Chrome đang bị điều khiển tự động.
+                raise GeminiWebError("Chưa đăng nhập Gemini trong hồ sơ của tool. Bấm “Đăng nhập Google” để mở Chrome "
+                                     "thường, đăng nhập rồi đóng cửa sổ đó, sau đó bấm Chạy lại.")
+            if field:
                 if email and page.get("email") and page["email"] != email.lower():
                     raise GeminiWebError(f"Cửa sổ Gemini đang đăng nhập {page['email']}, không phải {email}. "
                                          "Đổi tài khoản trong cửa sổ đó rồi bấm lại.")
                 return field
-            status(f"Đăng nhập Google{' bằng ' + email if email else ''} trong cửa sổ Chrome vừa mở. "
-                   "Tool sẽ tự chạy tiếp khi vào được Gemini.")
+            status("Đang chờ Gemini tải xong…")
             time.sleep(2)
         raise GeminiWebError("Hết thời gian chờ đăng nhập Gemini.")
 
@@ -277,6 +304,7 @@ class GeminiWebRunner:
         self.lock, self.stop = threading.Lock(), threading.Event()
         self.requests = queue.Queue()
         self.session = None
+        self.login_process = None
         self.job = {"id": "", "busy": False, "status": "Chưa mở Gemini", "result": None, "error": ""}
         self.thread = threading.Thread(target=self.worker, daemon=True)
         self.thread.start()
@@ -302,6 +330,26 @@ class GeminiWebRunner:
     def cancel(self):
         self.stop.set()
 
+    def login_window_open(self):
+        return bool(self.login_process and self.login_process.poll() is None)
+
+    def open_login(self, email="", launcher=subprocess.Popen):
+        """Mở Chrome THƯỜNG (không bị điều khiển) với hồ sơ của tool để người dùng tự đăng nhập Google."""
+        with self.lock:
+            if self.job["busy"]:
+                raise ValueError("Đang chạy Gemini. Bấm Dừng trước khi đăng nhập lại.")
+        if self.login_window_open():
+            raise ValueError("Cửa sổ đăng nhập đang mở. Đăng nhập xong thì đóng hẳn cửa sổ đó.")
+        if self.session:  # Hai Chrome không dùng chung một hồ sơ được.
+            self.session.close()
+            self.session = None
+        self.profile.mkdir(parents=True, exist_ok=True)
+        url = login_url(email)
+        self.login_process = launcher([chrome_executable(), f"--user-data-dir={self.profile}",
+                                       "--profile-directory=Default", "--no-first-run", "--new-window", url])
+        self.set(status="Đã mở Chrome để đăng nhập. Đăng nhập Google, thấy trang Gemini thì đóng hẳn cửa sổ đó, rồi bấm Chạy.",
+                 error="")
+
     def worker(self):
         while True:
             item = self.requests.get()
@@ -310,6 +358,8 @@ class GeminiWebRunner:
             job_id, kind, prompt, email, model = item
             status = lambda text: self.set(status=text)
             try:
+                if self.login_window_open():
+                    raise GeminiWebError("Cửa sổ Chrome đăng nhập vẫn đang mở. Đóng hẳn cửa sổ đó rồi bấm Chạy lại.")
                 if not self.session or not self.session.alive():
                     if self.session:
                         self.session.close()

@@ -289,3 +289,49 @@ class GeminiWebTests(unittest.TestCase):
                 threading.Event().wait(0.05)
             self.assertIn("chưa nhận", runner.snapshot()["error"])
             runner.close()
+
+
+class GeminiLoginTests(unittest.TestCase):
+    def test_login_opens_plain_chrome_with_tool_profile_and_blocks_run_while_open(self):
+        from unittest.mock import patch
+        from runner import gemini_web
+
+        class Process:
+            running = True
+            def poll(self):
+                return None if self.running else 0
+
+        launched = []
+        process = Process()
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(gemini_web, "chrome_executable", return_value="chrome.exe"):
+            runner = gemini_web.GeminiWebRunner(Path(folder) / "gemini-web")
+            runner.open_login("jimmy@gmail.com", lambda args: launched.append(args) or process)
+            args = launched[0]
+            self.assertEqual(args[0], "chrome.exe")
+            self.assertIn(f"--user-data-dir={Path(folder) / 'gemini-web'}", args)
+            self.assertNotIn("--remote-debugging-port", " ".join(args))
+            self.assertIn("Email=jimmy%40gmail.com", args[-1])
+            with self.assertRaisesRegex(ValueError, "đang mở"):
+                runner.open_login("", lambda args: process)
+            runner.start("generate", "Yêu cầu")
+            for _ in range(50):
+                if not runner.snapshot()["busy"]:
+                    break
+                threading.Event().wait(0.05)
+            self.assertIn("vẫn đang mở", runner.snapshot()["error"])
+            runner.close()
+
+    def test_sign_in_page_fails_fast_with_instructions(self):
+        from runner import gemini_web
+
+        class Driver:
+            def execute_script(self, script, *args):
+                if script is gemini_web.JS_STATE:
+                    return {"signIn": True, "rejected": True}
+                return None
+
+        session = gemini_web.GeminiWebSession.__new__(gemini_web.GeminiWebSession)
+        session.driver = Driver()
+        with self.assertRaisesRegex(gemini_web.GeminiWebError, "Đăng nhập Google"):
+            session.wait_ready(lambda _: None, threading.Event(), timeout=5)
