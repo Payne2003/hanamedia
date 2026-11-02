@@ -335,3 +335,100 @@ class GeminiLoginTests(unittest.TestCase):
         session.driver = Driver()
         with self.assertRaisesRegex(gemini_web.GeminiWebError, "Đăng nhập Google"):
             session.wait_ready(lambda _: None, threading.Event(), timeout=5)
+
+
+class GeminiFillTests(unittest.TestCase):
+    """fill(): Ctrl+V thật trước, rồi gõ từng dòng bằng Shift+Enter; không bao giờ gửi từng dòng rời rạc."""
+
+    def run_fill(self, paste_works, shift_enter_sends):
+        import sys
+        import types
+        from unittest.mock import patch
+        from runner import gemini_web
+
+        class Keys:
+            CONTROL, SHIFT, ENTER = "ctrl", "shift", "\n"
+
+        class Driver:
+            current_url = "https://gemini.google.com/app"
+
+            def __init__(self):
+                self.box, self.count, self.clip = "", 0, ""
+
+            def execute_cdp_cmd(self, command, args):
+                if command == "Input.insertText":
+                    self.box += args["text"]
+
+            def execute_async_script(self, script, text, *rest):
+                self.clip = text
+                return True
+
+            def key(self, key):
+                if key == "v" and paste_works:
+                    self.box = self.clip
+                if key == "\n":
+                    if shift_enter_sends:
+                        self.count, self.box = self.count + 1, ""
+                    else:
+                        self.box += "\n"
+
+            def execute_script(self, script, *args):
+                if script is gemini_web.JS_STATE:
+                    return {"count": self.count}
+                if script is gemini_web.JS_CLEAR:
+                    self.box = ""
+                    return 0
+                if script is gemini_web.JS_CHECK:
+                    return {"length": len(self.box), "ok": "".join(self.box.split()) == "".join(args[1].split())}
+                if script is gemini_web.JS_INSERT:
+                    return {"length": 0, "ok": False}
+
+        driver = Driver()
+
+        class Actions:
+            def __init__(self, _):
+                pass
+
+            def key_down(self, key):
+                return self
+
+            def key_up(self, key):
+                return self
+
+            def send_keys(self, key):
+                driver.key(key)
+                return self
+
+            def perform(self):
+                pass
+
+        chains = types.ModuleType("selenium.webdriver.common.action_chains")
+        chains.ActionChains = Actions
+        keys = types.ModuleType("selenium.webdriver.common.keys")
+        keys.Keys = Keys
+        modules = {"selenium": types.ModuleType("selenium"), "selenium.webdriver": types.ModuleType("selenium.webdriver"),
+                   "selenium.webdriver.common": types.ModuleType("selenium.webdriver.common"),
+                   "selenium.webdriver.common.action_chains": chains, "selenium.webdriver.common.keys": keys}
+        session = gemini_web.GeminiWebSession.__new__(gemini_web.GeminiWebSession)
+        session.driver = driver
+        class Field:
+            def click(self):
+                pass
+        with patch.dict(sys.modules, modules), patch.object(gemini_web.time, "sleep", lambda _: None):
+            try:
+                return session.fill(Field(), "Dòng một\nDòng hai\n\nDòng ba", 0), driver.count
+            except gemini_web.GeminiWebError as error:
+                return error, driver.count
+
+    def test_real_paste_is_used_first(self):
+        result, sent = self.run_fill(paste_works=True, shift_enter_sends=False)
+        self.assertEqual((result["ok"], sent), (True, 0))
+
+    def test_typing_with_shift_enter_when_paste_fails(self):
+        result, sent = self.run_fill(paste_works=False, shift_enter_sends=False)
+        self.assertEqual((result["ok"], sent), (True, 0))
+
+    def test_stops_after_one_message_if_shift_enter_sends(self):
+        result, sent = self.run_fill(paste_works=False, shift_enter_sends=True)
+        self.assertIsInstance(result, Exception)
+        self.assertEqual(sent, 1)

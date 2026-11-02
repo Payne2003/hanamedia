@@ -37,31 +37,72 @@ return null;
 
 # Điền text vào ô nhập (giữ xuống dòng, không bấm Enter). Trả về số ký tự đã vào ô.
 JS_INSERT = r"""
+// Điền bằng sự kiện DÁN (như Ctrl+V): giữ xuống dòng mà ô của Gemini không coi "\n" là phím Enter (gửi sớm).
+// Trả về {length, ok}; ok = ô nhập chứa đủ đầu và cuối yêu cầu.
 const [element, text] = arguments;
+const squash = value => (value || '').replace(/\s+/g, '');
+const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+const head = squash(lines[0]).slice(0, 40), tail = squash(lines[lines.length - 1]).slice(-40);
+const filled = () => { const value = squash(element.tagName === 'TEXTAREA' ? element.value : element.innerText);
+  return value.includes(head) && value.includes(tail) && value.length >= squash(text).length * 0.9; };
+const result = () => ({length: (element.tagName === 'TEXTAREA' ? element.value : element.innerText).length, ok: filled()});
 element.focus();
 if (element.tagName === 'TEXTAREA') {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
   setter.call(element, text);
   element.dispatchEvent(new Event('input', {bubbles: true}));
-  return element.value.length;
+  return result();
 }
-const selection = window.getSelection();
-const range = document.createRange();
-range.selectNodeContents(element);
-selection.removeAllRanges();
-selection.addRange(range);
+const selectAll = () => { const range = document.createRange(); range.selectNodeContents(element);
+  const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); };
+selectAll();
 document.execCommand('delete', false);
-document.execCommand('insertText', false, text);
-if (element.innerText.replace(/\s/g, '').length < text.replace(/\s/g, '').length * 0.9) {
-  element.innerHTML = '';
-  for (const line of text.split('\n')) {
-    const p = document.createElement('p');
-    if (line) p.textContent = line; else p.appendChild(document.createElement('br'));
-    element.appendChild(p);
-  }
-  element.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText'}));
+try {
+  const data = new DataTransfer();
+  data.setData('text/plain', text);
+  element.dispatchEvent(new ClipboardEvent('paste', {clipboardData: data, bubbles: true, cancelable: true}));
+} catch (error) {}
+if (filled()) return result();
+// Cách 2: dựng thẳng từng đoạn <p> (trình soạn thảo Quill tự nhận thay đổi DOM).
+element.innerHTML = '';
+for (const line of text.split('\n')) {
+  const p = document.createElement('p');
+  if (line) p.textContent = line; else p.appendChild(document.createElement('br'));
+  element.appendChild(p);
 }
-return element.innerText.length;
+element.dispatchEvent(new Event('input', {bubbles: true}));
+if (filled()) return result();
+// Cách 3: gộp thành một dòng (không có ký tự xuống dòng nên không thể bị gửi sớm).
+selectAll();
+document.execCommand('delete', false);
+document.execCommand('insertText', false, text.replace(/\s*\n+\s*/g, ' '));
+return result();
+"""
+
+# Kiểm tra ô nhập đã chứa đủ yêu cầu chưa (đầu, cuối và độ dài). Trả về {length, ok}.
+JS_CHECK = r"""
+const [element, text] = arguments;
+const squash = value => (value || '').replace(/\s+/g, '');
+const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+const value = squash(element.tagName === 'TEXTAREA' ? element.value : element.innerText);
+const ok = value.includes(squash(lines[0]).slice(0, 40)) && value.includes(squash(lines[lines.length - 1]).slice(-40)) &&
+  value.length >= squash(text).length * 0.9;
+return {length: value.length, ok};
+"""
+
+JS_CLEAR = r"""
+const element = arguments[0];
+element.focus();
+const range = document.createRange(); range.selectNodeContents(element);
+const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+document.execCommand('delete', false);
+return (element.innerText || element.value || '').trim().length;
+"""
+
+# Ghi clipboard trong trang (cần quyền clipboard đã cấp qua CDP).
+JS_CLIPBOARD = r"""
+const [text, done] = arguments;
+navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
 """
 
 # Bấm nút Gửi. Trả về true nếu bấm được.
@@ -222,13 +263,76 @@ class GeminiWebSession:
         except Exception:
             return ""
 
+    def sent_early(self, before):
+        return int(self.state().get("count") or 0) > before
+
+    def checked(self, field, text):
+        time.sleep(0.8)
+        return self.driver.execute_script(JS_CHECK, field, text) or {}
+
+    def fill(self, field, text, before):
+        """Điền yêu cầu như người dùng: ưu tiên Ctrl+V thật, rồi gõ từng dòng với Shift+Enter, cuối cùng chèn bằng JS.
+
+        Ô của Gemini coi Enter là Gửi, nên không bao giờ gửi ký tự xuống dòng như phím Enter.
+        """
+        from selenium.webdriver.common.action_chains import ActionChains
+        from selenium.webdriver.common.keys import Keys
+
+        result = {}
+        # 1) Dán thật: ghi clipboard rồi bấm Ctrl+V vào ô nhập.
+        try:
+            from urllib.parse import urlsplit
+            url = urlsplit(self.driver.current_url)
+            origin = f"{url.scheme}://{url.netloc}"
+            self.driver.execute_cdp_cmd("Browser.grantPermissions", {
+                "origin": origin, "permissions": ["clipboardReadWrite", "clipboardSanitizedWrite"]})
+        except Exception:
+            pass
+        try:
+            self.driver.execute_script(JS_CLEAR, field)
+            field.click()
+            if self.driver.execute_async_script(JS_CLIPBOARD, text):
+                ActionChains(self.driver).key_down(Keys.CONTROL).send_keys("v").key_up(Keys.CONTROL).perform()
+                result = self.checked(field, text)
+        except Exception:
+            result = {}
+        if self.sent_early(before):
+            raise GeminiWebError("Gemini đã gửi yêu cầu trước khi tool điền xong. Thử lại; nếu vẫn lỗi hãy dùng chế độ Tự dán.")
+        if result.get("ok"):
+            return result
+        # 2) Gõ như bàn phím: chèn từng dòng, xuống dòng bằng Shift+Enter (Enter = Gửi trong Gemini).
+        try:
+            self.driver.execute_script(JS_CLEAR, field)
+            field.click()
+            lines = text.split("\n")
+            for index, line in enumerate(lines):
+                if line:
+                    self.driver.execute_cdp_cmd("Input.insertText", {"text": line})
+                if index < len(lines) - 1:
+                    ActionChains(self.driver).key_down(Keys.SHIFT).send_keys(Keys.ENTER).key_up(Keys.SHIFT).perform()
+                    if self.sent_early(before):  # Shift+Enter cũng bị gửi: dừng ngay, không gửi tiếp từng dòng.
+                        break
+            result = self.checked(field, text)
+        except Exception:
+            result = {}
+        if self.sent_early(before):
+            raise GeminiWebError("Gemini đã gửi yêu cầu trước khi tool điền xong. Thử lại; nếu vẫn lỗi hãy dùng chế độ Tự dán.")
+        if result.get("ok"):
+            return result
+        # 3) Chèn bằng JS (dán giả lập / dựng đoạn văn / gộp một dòng).
+        result = self.driver.execute_script(JS_INSERT, field, text) or {}
+        time.sleep(1)
+        if self.sent_early(before):
+            raise GeminiWebError("Gemini đã gửi yêu cầu trước khi tool điền xong. Thử lại; nếu vẫn lỗi hãy dùng chế độ Tự dán.")
+        return result
+
     def ask(self, text, status, stop, email="", timeout=1200, label="Gemini đang viết"):
         field = self.wait_ready(status, stop, email)
         before = int(self.state().get("count") or 0)
-        written = self.driver.execute_script(JS_INSERT, field, text)
-        if not written:
-            raise GeminiWebError("Không điền được yêu cầu vào ô Hỏi Gemini. Giao diện Gemini có thể đã thay đổi.")
-        time.sleep(1)
+        written = self.fill(field, text, before)
+        if not written.get("ok"):
+            raise GeminiWebError(f"Không điền đủ yêu cầu vào ô Hỏi Gemini (mới vào {written.get('length', 0)} ký tự). "
+                                 "Giao diện Gemini có thể đã thay đổi; dùng tạm chế độ Tự dán.")
         if not self.driver.execute_script(JS_SEND):
             from selenium.webdriver.common.keys import Keys
             field.send_keys(Keys.ENTER)
