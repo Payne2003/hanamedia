@@ -66,9 +66,10 @@
             </div><label>Ngôn ngữ kịch bản<select id="contentLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
             <div class="auto-only">
               <div class="content-grid"><label>Tài khoản Google<input id="autoEmail" type="email" maxlength="254" placeholder="ten@gmail.com"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40" placeholder="Pro"><datalist id="autoModels"><option value="Pro"><option value="Argon"><option value="Flash"></datalist></label></div>
+              <button id="loginAuto" type="button" class="full">① Đăng nhập Google (mở Chrome thường)</button>
               <button id="runAuto" type="button" class="primary full">✦ Chạy tự động trên Gemini</button>
               <div id="autoProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="autoStatus"></span><button id="stopAuto" type="button">Dừng</button></div></div>
-              <p class="detail">Tool mở một Chrome riêng vào gemini.google.com. Lần đầu: đăng nhập tài khoản Google ở trên trong cửa sổ đó (tool không đọc mật khẩu), các lần sau Chrome tự nhớ. Tool tự dán yêu cầu, chờ Gemini viết, tự nhắn “viết tiếp” khi câu trả lời bị cắt rồi đọc kết quả. Giữ cửa sổ Gemini mở, không gõ vào đó khi tool đang chạy.</p>
+              <p class="detail"><b>Lần đầu:</b> bấm ① để mở Chrome thường bằng hồ sơ riêng của tool, đăng nhập tài khoản Google ở trên (tool không đọc mật khẩu), thấy trang Gemini thì <b>đóng hẳn cửa sổ đó</b>. Các lần sau chỉ cần bấm Chạy. Tool tự dán yêu cầu, chờ Gemini viết, tự nhắn “viết tiếp” khi câu trả lời bị cắt rồi đọc kết quả. Giữ cửa sổ Gemini mở, không gõ vào đó khi tool đang chạy.</p>
             </div>
             <div class="web-only web-steps">
               <button id="webCopy" type="button" class="primary full">① Chép yêu cầu &amp; mở Gemini</button>

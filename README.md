@@ -30,9 +30,10 @@ Có ba cách dùng, chọn ở đầu khung **Đầu vào**:
 
 - **Gemini Pro tự động (mặc định, không cần API):** dùng gói Gemini của tài khoản Google (ví dụ Google AI Pro).
   1. Nhập **Tài khoản Google** và **Model** (ví dụ `Pro`, `Argon`; để trống thì dùng model đang chọn trong Gemini).
-  2. Bấm **Chạy tự động trên Gemini**. Tool mở một Chrome riêng (hồ sơ trong `data/profiles/gemini-web`) vào gemini.google.com. **Lần đầu** đăng nhập tài khoản Google trong cửa sổ đó (tool không đọc/lưu mật khẩu); các lần sau Chrome tự nhớ.
-  3. Tool tự dán yêu cầu, gửi, chờ Gemini viết xong; nếu câu trả lời bị cắt thì tự nhắn "viết tiếp" (tối đa 12 lần) rồi ghép và tách cảnh. **Kiểm tra thiếu cảnh / lỗi** cũng chạy tự động.
-  4. Trong lúc chạy, giữ cửa sổ Gemini mở và không gõ vào đó. Bấm **Dừng** để ngừng.
+  2. **Lần đầu**: bấm **① Đăng nhập Google (mở Chrome thường)**. Chrome mở bình thường (không bị điều khiển) bằng hồ sơ riêng của tool trong `data/profiles/gemini-web`. Đăng nhập tài khoản Google, thấy trang Gemini thì **đóng hẳn cửa sổ đó**. Google không cho đăng nhập trong cửa sổ Chrome đang bị điều khiển tự động (báo "Trình duyệt hoặc ứng dụng này có thể không an toàn"), nên phải đăng nhập theo cách này. Tool không đọc/lưu mật khẩu.
+  3. Bấm **Chạy tự động trên Gemini**. Tool mở Chrome với hồ sơ đã đăng nhập đó và vào gemini.google.com.
+  4. Tool tự dán yêu cầu, gửi, chờ Gemini viết xong; nếu câu trả lời bị cắt thì tự nhắn "viết tiếp" (tối đa 12 lần) rồi ghép và tách cảnh. **Kiểm tra thiếu cảnh / lỗi** cũng chạy tự động.
+  5. Trong lúc chạy, giữ cửa sổ Gemini mở và không gõ vào đó. Bấm **Dừng** để ngừng.
   Tool dò ô nhập, nút Gửi và câu trả lời theo giao diện Gemini hiện tại; nếu Google đổi giao diện mà tool báo không điền/không đọc được, dùng tạm chế độ **Tự dán**. Việc điều khiển trình duyệt tự động có thể trái điều khoản sử dụng của Google; dùng ở mức vừa phải trên tài khoản của chính bạn.
 - **Tự dán (không cần API):**
   1. Nhập prompt và link video, bấm **① Chép yêu cầu & mở Gemini**. Tool chép sẵn yêu cầu đầy đủ (prompt, link, quy tắc cảnh, định dạng trả lời) và mở gemini.google.com.

@@ -244,7 +244,7 @@ function renderScenes(){
   $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b><span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}</div></article>`).join('');
   renderContentOutput();
 }
-const CONTENT_VERSION='content-6';
+const CONTENT_VERSION='content-7';
 function renderGeminiStatus(){
   if(!state)return;
   const info=state.content,outdated=!info||info.version!==CONTENT_VERSION;
@@ -383,7 +383,7 @@ async function runAuto(kind){
 }
 function renderAuto(){
   const web=state?.content?.web,running=Boolean(autoJob);
-  $('autoProgress').hidden=!running;$('runAuto').disabled=running;
+  $('autoProgress').hidden=!running;$('runAuto').disabled=running;$('loginAuto').disabled=running;
   if(content.mode==='auto')$('reviewContent').disabled=running;
   $('runAuto').textContent=running&&autoJob.kind!=='review'?'Gemini đang chạy…':'✦ Chạy tự động trên Gemini';
   if(running)$('autoStatus').textContent=web&&web.id===autoJob.id?(web.status||''):'Đang mở Gemini…';
@@ -401,6 +401,7 @@ function pollAuto(){
   toast(job.kind==='review'?`Đã kiểm tra: ${result.scenes.length} cảnh · ${result.issues.length} vấn đề.`:`Gemini đã viết ${result.scenes.length} cảnh (${result.rounds} lượt trả lời). Bấm “Kiểm tra thiếu cảnh / lỗi” để rà lại.`);
 }
 $('runAuto').onclick=()=>runAuto('generate');
+$('loginAuto').onclick=async()=>{try{await saveAutoSettings();await api('/api/content/web-login',{});await refresh();toast('Đã mở Chrome. Đăng nhập Google, thấy trang Gemini thì đóng hẳn cửa sổ đó rồi bấm Chạy.');}catch(error){toast(error.message,true);}};
 $('stopAuto').onclick=()=>api('/api/content/web-stop',{}).then(()=>$('autoStatus').textContent='Đang dừng…').catch(error=>toast(error.message,true));
 setInterval(pollAuto,1000);
 $('runContent').onclick=()=>startContent(false);

@@ -259,6 +259,8 @@ class Handler(BaseHTTPRequestHandler):
                 job = self.server.gemini_web.start(kind, prompt, store.setting("gemini_web_email") or "",
                                                    store.setting("gemini_web_model") or "")
                 return self.reply({"ok": True, "id": job})
+            elif path == "/api/content/web-login":
+                self.server.gemini_web.open_login(store.setting("gemini_web_email") or "")
             elif path == "/api/content/web-stop":
                 self.server.gemini_web.cancel()
             elif path == "/api/content/web-prompt":
