@@ -14,6 +14,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 
+from runner import content
 from runner.engine import Engine
 from runner.store import Store
 from runner.instance import InstanceLock
@@ -31,6 +32,7 @@ class AppServer(ThreadingHTTPServer):
         self.origin = f"http://127.0.0.1:{self.server_port}"
         self.secret = secrets.token_urlsafe(32)
         self.folder_lock = threading.Lock()
+        self.gemini_transport = content.default_transport
 
     def handle_error(self, request, client_address):
         error = sys.exc_info()[1]
@@ -79,6 +81,8 @@ class Handler(BaseHTTPRequestHandler):
             data = self.server.store.snapshot()
             data["engine"] = self.server.engine.snapshot()
             data["key"] = self.server.secret
+            data["content"] = {"configured": bool(self.server.store.setting("gemini_api_key")),
+                               "model": self.server.store.setting("gemini_model") or content.DEFAULT_MODEL}
             return self.reply(data)
         if path == "/api/library":
             return self.reply({"images": self.server.store.library_images()})
@@ -230,6 +234,25 @@ class Handler(BaseHTTPRequestHandler):
                         store.save_setting("output_folder", str(target))
                 finally:
                     self.server.folder_lock.release()
+            elif path == "/api/content/settings":
+                if body.get("api_key"):
+                    store.save_setting("gemini_api_key", content.api_key_value(body["api_key"]))
+                elif body.get("clear_key"):
+                    store.save_setting("gemini_api_key", "")
+                store.save_setting("gemini_model", content.model_name(body.get("model")))
+            elif path in ("/api/content/generate", "/api/content/review"):
+                api_key = store.setting("gemini_api_key")
+                if not api_key:
+                    raise ValueError("Chưa có khóa API Gemini. Mở Cài đặt Gemini trong cửa sổ Viết content để nhập khóa.")
+                gemini = content.Gemini(api_key, store.setting("gemini_model") or content.DEFAULT_MODEL,
+                                        self.server.gemini_transport)
+                language = body.get("language", "vi")
+                if path == "/api/content/generate":
+                    result = gemini.generate(body["brief"], body.get("video_url", ""), language)
+                else:
+                    result = gemini.review(body.get("brief", ""), body.get("video_url", ""), body["scenes"], language)
+                result["prompts"] = content.format_prompts(result["scenes"])
+                return self.reply(result)
             elif path == "/api/open-folder":
                 folder = store.setting("output_folder")
                 if not folder or not Path(folder).is_dir():

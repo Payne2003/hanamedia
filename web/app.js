@@ -220,6 +220,81 @@ $('deleteSelected').onclick=async()=>{
   catch(error){toast(error.message,true);}
 };
 $('importButton').onclick=()=>$('importFile').click();$('importFile').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>5000000)throw Error('File tối đa 5 MB.');const text=await file.text();if(file.name.toLowerCase().endsWith('.json')){const data=JSON.parse(text);if(data.format!=='huy-studio-project'||!Array.isArray(data.jobs))throw Error('Hãy chọn file JSON dự án được xuất từ phiên bản Huy Studio cũ.');const jobs=data.jobs.filter(j=>j.mode==='text'&&!j.video);if(!jobs.length)throw Error('File không có prompt → video chưa có kết quả.');$('prompts').value=jobs.map(j=>[j.prompt,j.common,`Thời lượng mong muốn: ${j.duration} giây. Tỷ lệ: ${j.ratio}.`].filter(Boolean).join('\n')).join('\n---\n');$('separator').value='custom';}else $('prompts').value=text;countPrompts();toast('Đã nhập prompt. Kiểm tra trước khi tạo.');}catch(error){toast(error.message,true);}e.target.value='';};
+// ---- Viết content: Prompt + link video gốc → Gemini → cảnh → hàng loạt prompt ----
+const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior','Hành vi nhân vật'],['action','Nội dung hành động nhân vật']];
+const defaultBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
+let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[]},contentBusy=false;
+try{content={...content,...JSON.parse(localStorage.getItem('hana-content')||'{}')};}catch{}
+const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
+const oneLine=value=>String(value||'').replace(/\s+/g,' ').trim();
+const contentPrompts=()=>content.scenes.map((s,i)=>`Bối cảnh ${i+1}: ${oneLine(s.setting)}, góc quay: ${oneLine(s.camera)}, hành vi nhân vật: ${oneLine(s.behavior)}, Nội dung hành động nhân vật: ${oneLine(s.action)};`);
+function localSceneIssues(){return content.scenes.flatMap((s,i)=>{const missing=sceneFields.filter(([f])=>!oneLine(s[f])).map(([,n])=>n.toLowerCase());return missing.length?[`Cảnh ${i+1} thiếu: ${missing.join(', ')}.`]:[];});}
+function renderContentOutput(){
+  const has=content.scenes.length>0;
+  $('contentResult').hidden=!has&&!content.script;$('contentOutput').hidden=!has;
+  $('sceneCount').textContent=`${content.scenes.length} cảnh`;
+  $('contentPrompts').value=contentPrompts().join('\n');
+  const issues=[...content.issues,...localSceneIssues()];
+  $('contentIssues').hidden=!issues.length;
+  $('contentIssues').innerHTML=issues.length?`<b>Cần xem lại</b><ul>${issues.map(i=>`<li>${esc(i)}</li>`).join('')}</ul>`:'';
+  saveContent();
+}
+function renderScenes(){
+  $('contentScript').value=content.script||'';
+  $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b><span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}</div></article>`).join('');
+  renderContentOutput();
+}
+function renderGeminiStatus(){
+  const info=state?.content;if(!info)return;
+  $('geminiStatus').textContent=info.configured?`Đã có khóa · ${info.model}`:'Chưa có khóa API';
+  $('geminiStatus').dataset.ok=String(info.configured);
+  if(!$('geminiModel').value)$('geminiModel').value=info.model;
+}
+async function geminiCall(path,body,label){
+  if(contentBusy)return null;
+  contentBusy=true;const buttons=[$('runContent'),$('reviewContent')],old=buttons.map(b=>b.textContent);
+  buttons.forEach(b=>b.disabled=true);$(path.endsWith('review')?'reviewContent':'runContent').textContent=label;
+  try{return await api(path,body);}catch(error){toast(error.message,true);if(/khóa API/.test(error.message))$('geminiSettings').open=true;return null;}
+  finally{contentBusy=false;buttons.forEach((b,i)=>{b.disabled=false;b.textContent=old[i];});}
+}
+$('openContent').onclick=()=>{$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;renderGeminiStatus();if(state?.content&&!state.content.configured)$('geminiSettings').open=true;renderScenes();$('contentDialog').showModal();};
+$('closeContent').onclick=()=>$('contentDialog').close();
+$('contentBrief').oninput=()=>{content.brief=$('contentBrief').value;saveContent();};
+$('contentVideo').oninput=()=>{content.video=$('contentVideo').value.trim();saveContent();};
+$('contentLanguage').onchange=()=>{content.language=$('contentLanguage').value;saveContent();};
+$('contentScript').oninput=()=>{content.script=$('contentScript').value;saveContent();};
+$('saveGemini').onclick=()=>action(async()=>{await api('/api/content/settings',{api_key:$('geminiKey').value.trim(),model:$('geminiModel').value.trim()});$('geminiKey').value='';$('geminiSettings').open=false;toast('Đã lưu cài đặt Gemini.');}).then(renderGeminiStatus);
+$('clearGemini').onclick=()=>action(async()=>{await api('/api/content/settings',{clear_key:true,model:$('geminiModel').value.trim()});toast('Đã xóa khóa API Gemini khỏi máy.');}).then(renderGeminiStatus);
+$('runContent').onclick=async()=>{
+  if(!content.brief.trim())return toast('Nhập yêu cầu (prompt) cho Gemini.',true);
+  if(content.scenes.length&&!confirm('Phân tích lại sẽ thay thế danh sách cảnh hiện tại. Tiếp tục?'))return;
+  const result=await geminiCall('/api/content/generate',{brief:content.brief,video_url:content.video,language:content.language},content.video?'Gemini đang xem video… (có thể 1–3 phút)':'Gemini đang viết…');
+  if(!result)return;
+  content.script=result.original_script;content.scenes=result.scenes;content.issues=[];renderScenes();
+  toast(`Gemini đã chia ${result.scenes.length} cảnh. Bấm “Kiểm tra thiếu cảnh / lỗi” để rà lại.`);
+};
+$('reviewContent').onclick=async()=>{
+  const result=await geminiCall('/api/content/review',{brief:content.brief,video_url:content.video,language:content.language,scenes:content.scenes},'Gemini đang kiểm tra…');
+  if(!result)return;
+  const before=content.scenes.length;content.scenes=result.scenes;content.issues=result.issues;renderScenes();
+  toast(result.issues.length?`Đã sửa ${result.issues.length} vấn đề · ${before} → ${result.scenes.length} cảnh.`:'Không thấy thiếu cảnh hay lỗi.');
+};
+$('addScene').onclick=()=>{content.scenes.push({setting:'',camera:'',behavior:'',action:''});renderScenes();$('sceneList').lastElementChild?.querySelector('textarea')?.focus();};
+$('sceneList').addEventListener('input',e=>{const t=e.target.closest('[data-scene]');if(!t)return;content.scenes[Number(t.dataset.scene)][t.dataset.field]=t.value;renderContentOutput();});
+$('sceneList').addEventListener('click',e=>{
+  const del=e.target.closest('[data-scene-delete]'),move=e.target.closest('[data-scene-move]');
+  if(del){content.scenes.splice(Number(del.dataset.sceneDelete),1);renderScenes();}
+  if(move){const i=Number(move.dataset.sceneMove),j=i+Number(move.dataset.dir);[content.scenes[i],content.scenes[j]]=[content.scenes[j],content.scenes[i]];renderScenes();}
+});
+$('useContent').onclick=()=>{
+  const prompts=contentPrompts();if(!prompts.length)return;
+  if($('prompts').value.trim()&&!confirm('Thay nội dung đang có trong khung prompt bằng các prompt này?'))return;
+  mode='text';$('separator').value='line';$('prompts').value=prompts.join('\n');renderMode();$('contentDialog').close();$('prompts').focus();
+  toast(`Đã đưa ${prompts.length} prompt vào khung tạo video. Bấm “Tạo & chạy” hoặc “Chỉ thêm vào hàng đợi”.`);
+};
+$('copyContent').onclick=()=>navigator.clipboard.writeText($('contentPrompts').value).then(()=>toast('Đã chép hàng loạt prompt.')).catch(()=>toast('Không chép được. Chọn và sao chép trong ô bên dưới.',true));
+$('downloadContent').onclick=()=>{const blob=new Blob([[content.script?'KỊCH BẢN VIDEO GỐC\n'+content.script+'\n\nPROMPT\n':'',$('contentPrompts').value].join('')],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='content-prompt.txt';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};
+
 try{$('prompts').value=localStorage.getItem('huy-runner-draft')||'';const pending=JSON.parse(localStorage.getItem('huy-runner-pending')||'null');if(pending&&typeof pending.id==='string'&&typeof pending.signature==='string')pendingBatch=pending;}catch{}
 renderMode();await refresh();setInterval(refresh,2000);
 
