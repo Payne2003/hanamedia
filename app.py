@@ -241,6 +241,14 @@ class Handler(BaseHTTPRequestHandler):
                 elif body.get("clear_key"):
                     store.save_setting("gemini_api_key", "")
                 store.save_setting("gemini_model", content.model_name(body.get("model")))
+            elif path == "/api/content/web-prompt":
+                return self.reply({"prompt": content.web_prompt(body.get("kind", "generate"), body.get("brief", ""),
+                                                                body.get("video_url", ""), body.get("language", "vi"),
+                                                                body.get("scenes"))})
+            elif path == "/api/content/parse":
+                result = content.parse_answer(body["text"])
+                result["prompts"] = content.format_prompts(result["scenes"])
+                return self.reply(result)
             elif path == "/api/content/duration":
                 seconds = content.video_duration(body.get("video_url", ""), self.server.video_fetch)
                 return self.reply({"seconds": seconds, "segment": content.SEGMENT_SECONDS})

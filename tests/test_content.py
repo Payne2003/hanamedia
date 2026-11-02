@@ -95,6 +95,37 @@ class ContentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "quá lâu"):
             gemini.generate("Chia cảnh")
 
+    def test_web_prompt_contains_link_rules_and_format(self):
+        prompt = content.web_prompt("generate", "Chia 3 giây", "https://youtu.be/dQw4w9WgXcQ")
+        for text in ("Chia 3 giây", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "Bối cảnh 1: ..., góc quay:", "DANH SÁCH CẢNH"):
+            self.assertIn(text, prompt)
+        review = content.web_prompt("review", "", "", scenes=[SCENE])
+        self.assertIn(content.format_prompts([SCENE])[0], review)
+        with self.assertRaises(ValueError):
+            content.web_prompt("generate", "")
+
+    def test_pasted_gemini_answer_is_parsed(self):
+        answer = """Chắc chắn rồi! Dưới đây là phân tích:
+**VẤN ĐỀ:**
+- Thiếu cảnh kết
+**KỊCH BẢN VIDEO GỐC:**
+Báo tuyết rình đàn dê.
+
+**DANH SÁCH CẢNH:**
+1. **Bối cảnh 1:** Vách đá xám, cỏ xanh, góc quay: Cận cảnh, tĩnh, hành vi nhân vật: Thư giãn, Nội dung hành động nhân vật: Dê gặm cỏ;
+- Bối cảnh 2: Gờ đá; góc quay: Toàn cảnh; hành vi nhân vật: Cẩn trọng; nội dung hành động: Báo lẻn đi.
+Hy vọng hữu ích!"""
+        result = content.parse_answer(answer)
+        self.assertEqual(result["original_script"], "Báo tuyết rình đàn dê.")
+        self.assertEqual(result["issues"], ["Thiếu cảnh kết"])
+        self.assertEqual(result["scenes"][0], {"setting": "Vách đá xám, cỏ xanh", "camera": "Cận cảnh, tĩnh",
+                                               "behavior": "Thư giãn", "action": "Dê gặm cỏ"})
+        self.assertEqual(result["scenes"][1]["action"], "Báo lẻn đi.")
+        json_answer = '```json\n{"original_script": "K", "scenes": [%s]}\n```' % json.dumps(SCENE, ensure_ascii=False)
+        self.assertEqual(content.parse_answer(json_answer)["scenes"], [SCENE])
+        with self.assertRaisesRegex(ValueError, "Không tìm thấy"):
+            content.parse_answer("Xin chào, tôi không xem được video.")
+
     def test_review_returns_fixed_scenes_and_issues(self):
         calls = []
         reply = {"issues": ["Thiếu cảnh kết"], "scenes": [SCENE, SCENE]}
@@ -118,6 +149,7 @@ class ContentTests(unittest.TestCase):
 
     def test_api_errors_are_explained(self):
         gemini = content.Gemini(KEY, transport=fake_transport({}, [], status=429))
+        gemini.sleep = lambda _: None
         busy = content.Gemini(KEY, transport=fake_transport({}, [], status=503))
         busy.sleep = lambda _: None
         with self.assertRaisesRegex(ValueError, "quá tải"):
@@ -162,6 +194,15 @@ class ContentHTTPTests(unittest.TestCase):
         data = json.loads(connection.getresponse().read())
         connection.close()
         return data
+
+    def test_web_mode_endpoints_need_no_api_key(self):
+        status, data = self.post("/api/content/web-prompt", {"kind": "generate", "brief": "Chia cảnh",
+                                                             "video_url": "https://youtu.be/dQw4w9WgXcQ"})
+        self.assertEqual(status, 200)
+        self.assertIn("dQw4w9WgXcQ", data["prompt"])
+        status, data = self.post("/api/content/parse", {"text": content.format_prompts([SCENE])[0]})
+        self.assertEqual((status, data["scenes"], data["prompts"]), (200, [SCENE], content.format_prompts([SCENE])))
+        self.assertEqual(self.calls, [])
 
     def test_key_is_required_saved_and_never_returned(self):
         status, data = self.post("/api/content/generate", {"brief": "Chia cảnh"})

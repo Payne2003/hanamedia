@@ -26,6 +26,15 @@ Cũng có chế độ **Tự gửi prompt & tải video**, dùng menu **ba chấ
 
 Bấm **✎ Viết content** trên thanh điều hướng để mở trang Viết content (bấm **Studio** hoặc **← Về Studio** để quay lại; địa chỉ `http://127.0.0.1:8765/#content` mở thẳng trang này).
 
+Có hai cách dùng, chọn ở đầu khung **Đầu vào**:
+
+- **Gemini trên web (mặc định, không cần API):**
+  1. Nhập prompt và link video, bấm **① Chép yêu cầu & mở Gemini**. Tool chép sẵn yêu cầu đầy đủ (prompt, link, quy tắc cảnh, định dạng trả lời) và mở gemini.google.com.
+  2. Trong Gemini, dán (Ctrl+V), chọn model tùy ý (Flash, Pro, Argon…) rồi gửi. Gemini viết xong thì bấm biểu tượng sao chép dưới câu trả lời.
+  3. Quay lại tool, dán vào ô **② Dán câu trả lời của Gemini**, bấm **③ Đọc kết quả**. Tool tách kịch bản và từng cảnh. Nếu Gemini trả lời thành nhiều phần (bạn bảo "viết tiếp"), tick **Nối thêm vào các cảnh đang có** rồi dán từng phần.
+  4. **Kiểm tra thiếu cảnh / lỗi** cũng làm như vậy: tool chép yêu cầu kiểm tra kèm danh sách cảnh, bạn dán vào Gemini, dán câu trả lời về và bấm **Đọc kết quả kiểm tra**.
+- **Gemini API (tự động):** tool tự gọi Gemini bằng khóa API, theo các bước dưới đây.
+
 1. **Cài đặt Gemini** (một lần): dán khóa API lấy tại https://aistudio.google.com/apikey và chọn model (mặc định `gemini-3.8-flash`; Google không cho khóa mới dùng `gemini-2.5-*` nữa). Khóa chỉ lưu trong `data/` trên máy và chỉ gửi tới Google Gemini; giao diện không hiển thị lại khóa.
 2. **Đầu vào**: (1) Prompt — yêu cầu cho Gemini (đã có mẫu sẵn, sửa tùy ý); (2) Link video gốc — link **YouTube** công khai hoặc không công khai (`youtube.com/watch`, `youtu.be`, `/shorts`). Có thể bỏ trống link để Gemini tự viết kịch bản theo yêu cầu. Gemini không đọc trực tiếp link TikTok/Facebook: đăng video lên YouTube rồi dán link.
 3. Bấm **Phân tích bằng Gemini**. Video dài hơn khoảng 1,5 phút được tự chia thành từng đoạn 1 phút: Gemini xem lần lượt từng đoạn, thanh tiến độ hiện "Đoạn 3/10", cảnh hiện dần bên phải. Độ dài video được đọc từ YouTube; nếu không đọc được, điền ô **Độ dài video** (ví dụ `9:13`) hoặc ghi mốc thời gian trong prompt. Gemini quá tải hoặc lỗi giữa chừng thì các cảnh đã xong được giữ lại; bấm **Tiếp tục phân tích** để chạy tiếp từ đoạn lỗi, hoặc **Dừng** để ngừng sau đoạn hiện tại. Đầu ra gồm **Kịch bản video gốc** và danh sách cảnh, mỗi cảnh có: bối cảnh, góc quay, hành vi nhân vật, nội dung hành động nhân vật. Có thể sửa, thêm, xóa, đổi thứ tự cảnh.

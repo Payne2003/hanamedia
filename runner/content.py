@@ -16,11 +16,11 @@ import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-4"
+VERSION = "content-5"
 SEGMENT_SECONDS = 60  # Video dài được chia đoạn 1 phút cho mỗi lần gọi Gemini.
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models/"
 DEFAULT_MODEL = "gemini-3.8-flash"
-# Dùng lần lượt khi model đang chọn báo quá tải (500/503).
+# Dùng lần lượt khi model đang chọn báo quá tải (500/503) hoặc hết hạn mức (429, tính riêng từng model).
 FALLBACK_MODELS = ("gemini-3.5-flash", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-3.5-flash-lite")
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
@@ -184,6 +184,109 @@ def format_prompts(scenes):
     return [scene_prompt(index, scene) for index, scene in enumerate(scenes, 1)]
 
 
+# ---- Chế độ "Gemini trên web": tool soạn yêu cầu, người dùng tự dán vào gemini.google.com rồi dán kết quả về ----
+WEB_FORMAT = """Trả lời theo đúng định dạng sau, không thêm bảng, không dùng markdown:
+KỊCH BẢN VIDEO GỐC:
+(kịch bản video gốc, kể theo thứ tự thời gian)
+
+DANH SÁCH CẢNH:
+Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;
+Bối cảnh 2: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;
+(mỗi cảnh đúng một dòng, đánh số liên tục, viết đủ tất cả cảnh, không tóm tắt, không bỏ dòng nào)"""
+
+
+def web_prompt(kind, brief, video_url="", language="vi", scenes=None):
+    """Yêu cầu để dán vào ứng dụng Gemini trên web."""
+    language = LANGUAGES.get(language, LANGUAGES["vi"])
+    video_url = youtube_url(video_url)
+    brief = str(brief or "").strip()[:20000]
+    if kind == "review":
+        scenes = clean_scenes(scenes or [])
+        if not scenes:
+            raise ValueError("Chưa có cảnh để kiểm tra.")
+        task = ("Bạn là người kiểm duyệt kịch bản cho video tạo bằng AI. "
+                + ("Xem lại video gốc và so sánh với danh sách cảnh bên dưới: tìm đoạn bị bỏ sót, cảnh sai thứ tự, mô tả sai. "
+                   if video_url else "So sánh danh sách cảnh với yêu cầu: tìm phần còn thiếu hoặc mạch truyện bị đứt. ")
+                + "Đồng thời sửa cảnh mà AI video khó hoặc không tạo được (trường trống, quá nhiều hành động, người nổi tiếng, "
+                "logo, chữ trên màn hình, nội dung dễ bị từ chối). Thêm cảnh còn thiếu vào đúng vị trí.")
+        body = (f"{task}\n\nYêu cầu gốc:\n{brief or '(không có)'}\n\nDanh sách cảnh hiện tại:\n"
+                + "\n".join(format_prompts(scenes))
+                + "\n\nĐầu câu trả lời, ghi các vấn đề đã sửa dưới tiêu đề VẤN ĐỀ: (mỗi vấn đề một dòng bắt đầu bằng dấu -). "
+                "Sau đó viết lại TOÀN BỘ danh sách cảnh đã sửa.")
+    else:
+        if not brief:
+            raise ValueError("Nhập yêu cầu (prompt) cho Gemini.")
+        source = ("Xem kỹ video gốc từ đầu đến cuối, viết lại kịch bản video gốc và chia toàn bộ video thành các cảnh."
+                  if video_url else "Không có video gốc. Tự viết kịch bản theo yêu cầu rồi chia thành các cảnh.")
+        body = f"Bạn là biên kịch và đạo diễn hình ảnh cho video tạo bằng AI. {source}\n\nYêu cầu:\n{brief}"
+    parts = [body]
+    if video_url:
+        parts.append(f"Video gốc: {video_url}")
+    parts += [SCENE_RULES.replace('Trường "setting"', "Bối cảnh").replace('Trường "camera"', "Góc quay")
+              .replace('Trường "behavior"', "Hành vi nhân vật").replace('Trường "action"', "Nội dung hành động nhân vật"),
+              f"Viết bằng {language}.", WEB_FORMAT]
+    return "\n\n".join(parts)
+
+
+SCENE_LINE = re.compile(
+    r"b[ốo]i\s*c[ảa]nh\s*(\d+)\s*[:：]\s*(?P<setting>.*?)[,;]\s*g[óo]c\s*quay\s*[:：]\s*(?P<camera>.*?)[,;]\s*"
+    r"h[àa]nh\s*vi(?:\s*nh[âa]n\s*v[ậa]t)?\s*[:：]\s*(?P<behavior>.*?)[,;]\s*"
+    r"n[ộo]i\s*dung(?:\s*h[àa]nh\s*[đd][ộo]ng)?(?:\s*nh[âa]n\s*v[ậa]t)?\s*[:：]\s*(?P<action>.*?)\s*;?\s*$",
+    re.IGNORECASE)
+
+
+def parse_answer(text):
+    """Đọc câu trả lời dán từ Gemini web: kịch bản, vấn đề và các dòng cảnh (hoặc JSON)."""
+    text = str(text or "").replace("\r", "")[:2_000_000]
+    if not text.strip():
+        raise ValueError("Dán câu trả lời của Gemini vào ô trước.")
+    stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
+    if stripped.startswith("{"):
+        try:
+            data = json.loads(stripped)
+            scenes = clean_scenes(data.get("scenes"))
+            if scenes:
+                return {"original_script": str(data.get("original_script") or "").strip()[:40000], "scenes": scenes,
+                        "issues": [clean_text(i, 500) for i in data.get("issues") or [] if clean_text(i, 500)][:50]}
+        except (ValueError, AttributeError):
+            pass
+    scenes, script, issues, section = [], [], [], "script"
+    for raw in text.split("\n"):
+        line = re.sub(r"[*_#`>|]+", "", raw).strip()
+        line = re.sub(r"^[-•–]\s*", "", line) if not line.startswith("- ") or section != "issues" else line
+        if not line:
+            continue
+        match = SCENE_LINE.search(line)
+        if match:
+            scenes.append({field: clean_text(match.group(field)) for field in FIELDS})
+            section = "scenes"
+            continue
+        head = line.lower()
+        if re.match(r"^v[ấa]n\s*[đd][ềe]", head):
+            section = "issues"
+            rest = re.sub(r"^[^:：]*[:：]\s*", "", line) if re.search(r"[:：]", line) else ""
+            if rest:
+                issues.append(clean_text(rest, 500))
+            continue
+        if re.match(r"^(k[ịi]ch\s*b[ảa]n|danh\s*s[áa]ch\s*c[ảa]nh)", head):
+            section = "scenes" if head.startswith("danh") else "script"
+            if section == "script" and not scenes:
+                script = []  # Bỏ câu dẫn trước tiêu đề "KỊCH BẢN".
+            rest = re.sub(r"^[^:：]*[:：]\s*", "", line) if re.search(r"[:：]", line) else ""
+            if rest and section == "script":
+                script.append(rest)
+            continue
+        if section == "issues":
+            issues.append(clean_text(line.lstrip("- "), 500))
+        elif section == "script" and not scenes:
+            script.append(line)
+    if not scenes:
+        raise ValueError("Không tìm thấy dòng cảnh nào. Mỗi cảnh cần dạng: Bối cảnh 1: ..., góc quay: ..., "
+                         "hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;")
+    return {"original_script": "\n".join(script).strip()[:40000], "scenes": scenes[:MAX_SCENES],
+            "issues": [i for i in issues if i][:50]}
+
+
 def default_transport(url, payload, headers, timeout):
     request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
     try:
@@ -225,7 +328,7 @@ class Gemini:
                 # Mất kết nối hoặc Gemini xử lý quá lâu: thử model kế tiếp.
                 failure, status = error, None
                 continue
-            if status not in (500, 503):
+            if status not in (429, 500, 503):
                 break
         if status is None:
             if "timed out" in str(failure).lower() or isinstance(failure, TimeoutError):
