@@ -118,6 +118,7 @@ class ContentTests(unittest.TestCase):
 
     def test_api_errors_are_explained(self):
         gemini = content.Gemini(KEY, transport=fake_transport({}, [], status=429))
+        gemini.sleep = lambda _: None
         busy = content.Gemini(KEY, transport=fake_transport({}, [], status=503))
         busy.sleep = lambda _: None
         with self.assertRaisesRegex(ValueError, "quá tải"):

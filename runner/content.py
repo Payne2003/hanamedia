@@ -20,7 +20,7 @@ VERSION = "content-4"
 SEGMENT_SECONDS = 60  # Video dài được chia đoạn 1 phút cho mỗi lần gọi Gemini.
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models/"
 DEFAULT_MODEL = "gemini-3.8-flash"
-# Dùng lần lượt khi model đang chọn báo quá tải (500/503).
+# Dùng lần lượt khi model đang chọn báo quá tải (500/503) hoặc hết hạn mức (429, tính riêng từng model).
 FALLBACK_MODELS = ("gemini-3.5-flash", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-3.5-flash-lite")
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
@@ -225,7 +225,7 @@ class Gemini:
                 # Mất kết nối hoặc Gemini xử lý quá lâu: thử model kế tiếp.
                 failure, status = error, None
                 continue
-            if status not in (500, 503):
+            if status not in (429, 500, 503):
                 break
         if status is None:
             if "timed out" in str(failure).lower() or isinstance(failure, TimeoutError):
