@@ -223,7 +223,7 @@ $('importButton').onclick=()=>$('importFile').click();$('importFile').onchange=a
 // ---- Viết content: Prompt + link video gốc → Gemini → cảnh → hàng loạt prompt ----
 const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior','Hành vi nhân vật'],['action','Nội dung hành động nhân vật']];
 const defaultBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
-let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[],mode:'web',webKind:'generate'},contentBusy=false;
+let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[],mode:'auto',webKind:'generate'},contentBusy=false;
 try{content={...content,...JSON.parse(localStorage.getItem('hana-content')||'{}')};}catch{}
 const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
 const oneLine=value=>String(value||'').replace(/\s+/g,' ').trim().replace(/[\s.,;]+$/,'');
@@ -244,7 +244,7 @@ function renderScenes(){
   $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b><span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}</div></article>`).join('');
   renderContentOutput();
 }
-const CONTENT_VERSION='content-5';
+const CONTENT_VERSION='content-6';
 function renderGeminiStatus(){
   if(!state)return;
   const info=state.content,outdated=!info||info.version!==CONTENT_VERSION;
@@ -334,9 +334,10 @@ async function startContent(fresh){
 }
 
 function renderContentMode(){
-  const web=content.mode!=='api';
+  const web=content.mode==='web';
+  document.querySelectorAll('#contentView .auto-only').forEach(e=>e.hidden=content.mode!=='auto');
   document.querySelectorAll('[data-content-mode]').forEach(b=>b.classList.toggle('active',b.dataset.contentMode===content.mode));
-  document.querySelectorAll('#contentView .api-only').forEach(e=>e.hidden=web);
+  document.querySelectorAll('#contentView .api-only').forEach(e=>e.hidden=content.mode!=='api');
   document.querySelectorAll('#contentView .web-only').forEach(e=>e.hidden=!web);
   $('webParse').textContent=content.webKind==='review'?'③ Đọc kết quả kiểm tra':'③ Đọc kết quả';
   $('webAppend').closest('label').hidden=content.webKind==='review';
@@ -363,6 +364,45 @@ $('webParse').onclick=async()=>{
     toast(kind==='review'?`Đã cập nhật ${result.scenes.length} cảnh sau kiểm tra · ${result.issues.length} vấn đề.`:`Đã đọc ${result.scenes.length} cảnh. Tổng ${content.scenes.length} cảnh.`);
   }catch(error){toast(error.message,true);}
 };
+
+// ---- Gemini Pro tự động: tool điều khiển Chrome đăng nhập tài khoản Google ----
+let autoJob=null;
+function applyAutoSettings(){const web=state?.content?.web;if(!web)return;if(document.activeElement!==$('autoEmail'))$('autoEmail').value=web.email||'';if(document.activeElement!==$('autoModel'))$('autoModel').value=web.model||'';}
+async function saveAutoSettings(){await api('/api/content/web-settings',{email:$('autoEmail').value.trim(),model:$('autoModel').value.trim()});}
+$('autoEmail').onchange=()=>saveAutoSettings().catch(error=>toast(error.message,true));
+$('autoModel').onchange=()=>saveAutoSettings().catch(error=>toast(error.message,true));
+async function runAuto(kind){
+  if(autoJob)return;
+  if(kind!=='review'&&!content.brief.trim())return toast('Nhập yêu cầu (prompt) cho Gemini.',true);
+  if(kind!=='review'&&content.scenes.length&&!confirm('Chạy lại sẽ thay thế danh sách cảnh hiện tại. Tiếp tục?'))return;
+  try{
+    await saveAutoSettings();
+    const {id}=await api('/api/content/web-run',{kind,brief:content.brief,video_url:content.video,language:content.language,scenes:kind==='review'?content.scenes:undefined});
+    autoJob={id,kind};renderAuto();refresh();
+  }catch(error){toast(error.message,true);}
+}
+function renderAuto(){
+  const web=state?.content?.web,running=Boolean(autoJob);
+  $('autoProgress').hidden=!running;$('runAuto').disabled=running;
+  if(content.mode==='auto')$('reviewContent').disabled=running;
+  $('runAuto').textContent=running&&autoJob.kind!=='review'?'Gemini đang chạy…':'✦ Chạy tự động trên Gemini';
+  if(running)$('autoStatus').textContent=web&&web.id===autoJob.id?(web.status||''):'Đang mở Gemini…';
+}
+function pollAuto(){
+  const web=state?.content?.web;applyAutoSettings();
+  if(!autoJob||!web){renderAuto();return;}
+  if(web.id!==autoJob.id||web.busy){renderAuto();return;}
+  const job=autoJob;autoJob=null;renderAuto();
+  if(web.error)return toast(web.error,true);
+  const result=web.result;if(!result)return;
+  if(job.kind==='review'){content.scenes=result.scenes;content.issues=result.issues;}
+  else{content.scenes=result.scenes;content.script=result.original_script;content.issues=result.issues||[];content.progress=null;}
+  saveContent();renderScenes();
+  toast(job.kind==='review'?`Đã kiểm tra: ${result.scenes.length} cảnh · ${result.issues.length} vấn đề.`:`Gemini đã viết ${result.scenes.length} cảnh (${result.rounds} lượt trả lời). Bấm “Kiểm tra thiếu cảnh / lỗi” để rà lại.`);
+}
+$('runAuto').onclick=()=>runAuto('generate');
+$('stopAuto').onclick=()=>api('/api/content/web-stop',{}).then(()=>$('autoStatus').textContent='Đang dừng…').catch(error=>toast(error.message,true));
+setInterval(pollAuto,1000);
 $('runContent').onclick=()=>startContent(false);
 $('restartContent').onclick=()=>startContent(true);
 $('stopContent').onclick=()=>{contentStop=true;$('contentProgressText').textContent='Sẽ dừng sau khi đoạn hiện tại xong…';};
@@ -370,6 +410,7 @@ $('contentDuration').oninput=()=>{content.duration=$('contentDuration').value.tr
 $('reviewContent').onclick=async()=>{
   if(contentBusy||!content.scenes.length)return;
   if(content.mode==='web')return webCopy('review');
+  if(content.mode==='auto')return runAuto('review');
   const p=content.progress,segments=p&&p.video===content.video&&p.segments.length>1?p.segments:null;
   let seg=0;content.scenes.forEach(scene=>{if(Number.isInteger(scene.seg))seg=scene.seg;else scene.seg=seg;});
   const groups=segments?segments.map((clip,i)=>({clip,i,scenes:content.scenes.filter(s=>s.seg===i)})).filter(g=>g.scenes.length):[{clip:null,i:0,scenes:content.scenes}];
@@ -410,7 +451,7 @@ $('copyContent').onclick=()=>navigator.clipboard.writeText($('contentPrompts').v
 $('downloadContent').onclick=()=>{const blob=new Blob([[content.script?'KỊCH BẢN VIDEO GỐC\n'+content.script+'\n\nPROMPT\n':'',$('contentPrompts').value].join('')],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='content-prompt.txt';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};
 
 try{$('prompts').value=localStorage.getItem('huy-runner-draft')||'';const pending=JSON.parse(localStorage.getItem('huy-runner-pending')||'null');if(pending&&typeof pending.id==='string'&&typeof pending.signature==='string')pendingBatch=pending;}catch{}
-renderMode();await refresh();if(location.hash==='#content')showView('content');setInterval(refresh,2000);
+renderMode();await refresh();if(state?.content?.web?.busy)autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(location.hash==='#content')showView('content');setInterval(refresh,2000);
 
 document.addEventListener('click',e=>{const b=e.target.closest('[data-review],[data-close-review]');if(!b)return;action(async()=>{await api(b.dataset.review?'/api/review':'/api/review-close',{id:b.dataset.review||b.dataset.closeReview});b.blur();toast(b.dataset.review?'Đang mở đúng phiên tài khoản. Đóng phiên trong mục Tài khoản khi kiểm tra xong.':'Đang đóng phiên kiểm tra.');});});
 

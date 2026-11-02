@@ -26,9 +26,15 @@ Cũng có chế độ **Tự gửi prompt & tải video**, dùng menu **ba chấ
 
 Bấm **✎ Viết content** trên thanh điều hướng để mở trang Viết content (bấm **Studio** hoặc **← Về Studio** để quay lại; địa chỉ `http://127.0.0.1:8765/#content` mở thẳng trang này).
 
-Có hai cách dùng, chọn ở đầu khung **Đầu vào**:
+Có ba cách dùng, chọn ở đầu khung **Đầu vào**:
 
-- **Gemini trên web (mặc định, không cần API):**
+- **Gemini Pro tự động (mặc định, không cần API):** dùng gói Gemini của tài khoản Google (ví dụ Google AI Pro).
+  1. Nhập **Tài khoản Google** và **Model** (ví dụ `Pro`, `Argon`; để trống thì dùng model đang chọn trong Gemini).
+  2. Bấm **Chạy tự động trên Gemini**. Tool mở một Chrome riêng (hồ sơ trong `data/profiles/gemini-web`) vào gemini.google.com. **Lần đầu** đăng nhập tài khoản Google trong cửa sổ đó (tool không đọc/lưu mật khẩu); các lần sau Chrome tự nhớ.
+  3. Tool tự dán yêu cầu, gửi, chờ Gemini viết xong; nếu câu trả lời bị cắt thì tự nhắn "viết tiếp" (tối đa 12 lần) rồi ghép và tách cảnh. **Kiểm tra thiếu cảnh / lỗi** cũng chạy tự động.
+  4. Trong lúc chạy, giữ cửa sổ Gemini mở và không gõ vào đó. Bấm **Dừng** để ngừng.
+  Tool dò ô nhập, nút Gửi và câu trả lời theo giao diện Gemini hiện tại; nếu Google đổi giao diện mà tool báo không điền/không đọc được, dùng tạm chế độ **Tự dán**. Việc điều khiển trình duyệt tự động có thể trái điều khoản sử dụng của Google; dùng ở mức vừa phải trên tài khoản của chính bạn.
+- **Tự dán (không cần API):**
   1. Nhập prompt và link video, bấm **① Chép yêu cầu & mở Gemini**. Tool chép sẵn yêu cầu đầy đủ (prompt, link, quy tắc cảnh, định dạng trả lời) và mở gemini.google.com.
   2. Trong Gemini, dán (Ctrl+V), chọn model tùy ý (Flash, Pro, Argon…) rồi gửi. Gemini viết xong thì bấm biểu tượng sao chép dưới câu trả lời.
   3. Quay lại tool, dán vào ô **② Dán câu trả lời của Gemini**, bấm **③ Đọc kết quả**. Tool tách kịch bản và từng cảnh. Nếu Gemini trả lời thành nhiều phần (bạn bảo "viết tiếp"), tick **Nối thêm vào các cảnh đang có** rồi dán từng phần.

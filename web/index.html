@@ -57,13 +57,19 @@
       <div class="content-columns">
         <div class="content-input card">
           <section class="content-step first"><h3><span>1</span>Đầu vào</h3>
-            <div class="content-mode" role="group" aria-label="Cách dùng Gemini"><button type="button" data-content-mode="web">Gemini trên web<small>Tự dán · không cần API</small></button><button type="button" data-content-mode="api">Gemini API<small>Tự động · cần khóa</small></button></div>
+            <div class="content-mode" role="group" aria-label="Cách dùng Gemini"><button type="button" data-content-mode="auto">Gemini Pro<small>Tự động · tài khoản Google</small></button><button type="button" data-content-mode="web">Tự dán<small>Chép &amp; dán tay</small></button><button type="button" data-content-mode="api">Gemini API<small>Cần khóa API</small></button></div>
             <label for="contentBrief">Prompt · yêu cầu cho Gemini</label>
             <textarea id="contentBrief" rows="6" maxlength="20000"></textarea>
             <label>Link video gốc <small>(YouTube công khai · có thể bỏ trống)</small><input id="contentVideo" type="url" placeholder="https://www.youtube.com/watch?v=..."></label>
             <div class="api-only"><label>Độ dài video <small>(phút:giây · tự điền khi đọc được từ YouTube)</small><input id="contentDuration" inputmode="numeric" maxlength="8" placeholder="Ví dụ 9:13"></label>
             <p class="detail">Video dài hơn 1 phút được chia thành từng đoạn 1 phút; Gemini phân tích lần lượt và cảnh hiện dần bên phải.</p>
             </div><label>Ngôn ngữ kịch bản<select id="contentLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
+            <div class="auto-only">
+              <div class="content-grid"><label>Tài khoản Google<input id="autoEmail" type="email" maxlength="254" placeholder="ten@gmail.com"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40" placeholder="Pro"><datalist id="autoModels"><option value="Pro"><option value="Argon"><option value="Flash"></datalist></label></div>
+              <button id="runAuto" type="button" class="primary full">✦ Chạy tự động trên Gemini</button>
+              <div id="autoProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="autoStatus"></span><button id="stopAuto" type="button">Dừng</button></div></div>
+              <p class="detail">Tool mở một Chrome riêng vào gemini.google.com. Lần đầu: đăng nhập tài khoản Google ở trên trong cửa sổ đó (tool không đọc mật khẩu), các lần sau Chrome tự nhớ. Tool tự dán yêu cầu, chờ Gemini viết, tự nhắn “viết tiếp” khi câu trả lời bị cắt rồi đọc kết quả. Giữ cửa sổ Gemini mở, không gõ vào đó khi tool đang chạy.</p>
+            </div>
             <div class="web-only web-steps">
               <button id="webCopy" type="button" class="primary full">① Chép yêu cầu &amp; mở Gemini</button>
               <p class="detail" id="webHint">Chrome mở gemini.google.com. Dán (Ctrl+V) vào ô Hỏi Gemini, chọn model rồi gửi. Gemini viết xong: bấm biểu tượng sao chép dưới câu trả lời.</p>
