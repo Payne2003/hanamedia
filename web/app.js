@@ -226,7 +226,7 @@ const defaultBrief='Phân tích video gốc và chia thành từng cảnh theo �
 let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[]},contentBusy=false;
 try{content={...content,...JSON.parse(localStorage.getItem('hana-content')||'{}')};}catch{}
 const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
-const oneLine=value=>String(value||'').replace(/\s+/g,' ').trim();
+const oneLine=value=>String(value||'').replace(/\s+/g,' ').trim().replace(/[\s.,;]+$/,'');
 const contentPrompts=()=>content.scenes.map((s,i)=>`Bối cảnh ${i+1}: ${oneLine(s.setting)}, góc quay: ${oneLine(s.camera)}, hành vi nhân vật: ${oneLine(s.behavior)}, Nội dung hành động nhân vật: ${oneLine(s.action)};`);
 function localSceneIssues(){return content.scenes.flatMap((s,i)=>{const missing=sceneFields.filter(([f])=>!oneLine(s[f])).map(([,n])=>n.toLowerCase());return missing.length?[`Cảnh ${i+1} thiếu: ${missing.join(', ')}.`]:[];});}
 function renderContentOutput(){
@@ -244,7 +244,7 @@ function renderScenes(){
   $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b><span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}</div></article>`).join('');
   renderContentOutput();
 }
-const CONTENT_VERSION='content-3';
+const CONTENT_VERSION='content-4';
 function renderGeminiStatus(){
   if(!state)return;
   const info=state.content,outdated=!info||info.version!==CONTENT_VERSION;
@@ -265,7 +265,7 @@ function showView(view){
   const isContent=view==='content';
   $('studioView').hidden=isContent;$('contentView').hidden=!isContent;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
-  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;renderGeminiStatus();if(state?.content&&!state.content.configured)$('geminiSettings').open=true;renderScenes();}
+  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;$('contentDuration').value=content.duration||'';renderGeminiStatus();renderRunButton();if(state?.content&&!state.content.configured)$('geminiSettings').open=true;renderScenes();}
   const hash=isContent?'#content':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);
 }
@@ -273,7 +273,7 @@ document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>showView(b.data
 $('closeContent').onclick=()=>showView('studio');
 window.addEventListener('hashchange',()=>showView(location.hash==='#content'?'content':'studio'));
 $('contentBrief').oninput=()=>{content.brief=$('contentBrief').value;saveContent();};
-$('contentVideo').oninput=()=>{content.video=$('contentVideo').value.trim();saveContent();};
+$('contentVideo').oninput=()=>{content.video=$('contentVideo').value.trim();content.duration='';$('contentDuration').value='';saveContent();renderRunButton();};
 $('contentLanguage').onchange=()=>{content.language=$('contentLanguage').value;saveContent();};
 $('contentScript').oninput=()=>{content.script=$('contentScript').value;saveContent();};
 $('saveGemini').onclick=async()=>{
@@ -286,19 +286,80 @@ $('saveGemini').onclick=async()=>{
   $('geminiKey').value='';$('geminiSettings').open=false;toast('Đã lưu khóa API Gemini.');
 };
 $('clearGemini').onclick=()=>action(async()=>{await api('/api/content/settings',{clear_key:true,model:$('geminiModel').value.trim()});toast('Đã xóa khóa API Gemini khỏi máy.');}).then(renderGeminiStatus);
-$('runContent').onclick=async()=>{
+const fmtTime=t=>`${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
+function parseTime(value){const m=String(value||'').trim().match(/^(?:(\d+):)?(\d{1,3}):(\d{2})$/)||String(value||'').trim().match(/^()(\d{1,4})()$/);if(!m)return 0;return m[3]===''?Number(m[2])*60:(Number(m[1]||0)*3600+Number(m[2])*60+Number(m[3]));}
+function briefDuration(){const times=[...content.brief.matchAll(/(?<![\d:])(\d{1,2}):(\d{2})(?![\d:])/g)].map(m=>Number(m[1])*60+Number(m[2]));return times.length?Math.max(...times):0;}
+let contentStop=false;
+function renderRunButton(){
+  const p=content.progress,resumable=p&&p.next<p.segments.length;
+  $('runContent').textContent=resumable?`▶ Tiếp tục phân tích (đoạn ${p.next+1}/${p.segments.length})`:'✦ Phân tích bằng Gemini';
+  $('restartContent').hidden=!resumable||contentBusy;
+}
+function setContentProgress(done,total,text){$('contentProgress').hidden=total<=0;$('contentProgressBar').style.width=`${total?Math.round(done/total*100):0}%`;$('contentProgressText').textContent=text;}
+async function startContent(fresh){
+  if(contentBusy)return;
   if(!content.brief.trim())return toast('Nhập yêu cầu (prompt) cho Gemini.',true);
-  if(content.scenes.length&&!confirm('Phân tích lại sẽ thay thế danh sách cảnh hiện tại. Tiếp tục?'))return;
-  const result=await geminiCall('/api/content/generate',{brief:content.brief,video_url:content.video,language:content.language},content.video?'Gemini đang xem video… (có thể 1–3 phút)':'Gemini đang viết…');
-  if(!result)return;
-  content.script=result.original_script;content.scenes=result.scenes;content.issues=[];renderScenes();
-  toast(`Gemini đã chia ${result.scenes.length} cảnh. Bấm “Kiểm tra thiếu cảnh / lỗi” để rà lại.`);
-};
+  let p=content.progress;
+  if(fresh||!p||p.next>=p.segments.length||p.video!==content.video){
+    if(content.scenes.length&&!confirm('Phân tích lại sẽ thay thế danh sách cảnh hiện tại. Tiếp tục?'))return;
+    let duration=0,segment=60;
+    if(content.video){
+      try{const info=await api('/api/content/duration',{video_url:content.video});segment=info.segment||60;duration=info.seconds||0;if(duration){content.duration=fmtTime(duration);$('contentDuration').value=content.duration;}}catch(error){return toast(error.message,true);}
+      duration=duration||parseTime(content.duration)||briefDuration();
+    }
+    const segments=[];
+    if(content.video&&duration>segment*1.5){for(let start=0;start<duration;start+=segment)segments.push([start,Math.min(duration,start+segment)]);if(segments.length>1&&segments.at(-1)[1]-segments.at(-1)[0]<15){const last=segments.pop();segments.at(-1)[1]=last[1];}}
+    else segments.push(null);
+    p=content.progress={video:content.video,segments,next:0};content.script='';content.scenes=[];content.issues=[];renderScenes();
+  }
+  contentBusy=true;contentStop=false;$('runContent').disabled=$('reviewContent').disabled=true;$('restartContent').hidden=true;
+  const total=p.segments.length;let failed='';
+  try{
+    while(p.next<total&&!contentStop){
+      const clip=p.segments[p.next];
+      const label=clip?`Đoạn ${p.next+1}/${total} · Gemini đang xem ${fmtTime(clip[0])}–${fmtTime(clip[1])}…`:(content.video?'Gemini đang xem video… (có thể vài phút)':'Gemini đang viết…');
+      $('runContent').textContent=clip?`Đang phân tích đoạn ${p.next+1}/${total}…`:'Gemini đang xử lý…';setContentProgress(p.next,clip?total:1,label);
+      try{
+        const body={brief:content.brief,video_url:content.video,language:content.language};if(clip){body.start=clip[0];body.end=clip[1];}
+        const result=await api('/api/content/generate',body);
+        const script=(result.original_script||'').trim();
+        content.script=[content.script,clip&&total>1?`[${fmtTime(clip[0])}–${fmtTime(clip[1])}]\n${script}`:script].filter(Boolean).join('\n\n');
+        content.scenes.push(...result.scenes.map(scene=>({...scene,seg:p.next})));p.next+=1;renderScenes();
+      }catch(error){failed=error.message;if(/khóa API/.test(error.message))$('geminiSettings').open=true;break;}
+    }
+  }finally{contentBusy=false;$('runContent').disabled=$('reviewContent').disabled=false;$('contentProgress').hidden=true;saveContent();renderRunButton();}
+  if(failed)toast(total>1?`Dừng ở đoạn ${p.next+1}/${total}: ${failed} Đã giữ ${content.scenes.length} cảnh; bấm “Tiếp tục phân tích”.`:failed,true);
+  else if(contentStop)toast(`Đã dừng sau ${p.next}/${total} đoạn. Bấm “Tiếp tục phân tích” để chạy tiếp.`);
+  else toast(`Gemini đã chia ${content.scenes.length} cảnh. Bấm “Kiểm tra thiếu cảnh / lỗi” để rà lại.`);
+}
+$('runContent').onclick=()=>startContent(false);
+$('restartContent').onclick=()=>startContent(true);
+$('stopContent').onclick=()=>{contentStop=true;$('contentProgressText').textContent='Sẽ dừng sau khi đoạn hiện tại xong…';};
+$('contentDuration').oninput=()=>{content.duration=$('contentDuration').value.trim();saveContent();};
 $('reviewContent').onclick=async()=>{
-  const result=await geminiCall('/api/content/review',{brief:content.brief,video_url:content.video,language:content.language,scenes:content.scenes},'Gemini đang kiểm tra…');
-  if(!result)return;
-  const before=content.scenes.length;content.scenes=result.scenes;content.issues=result.issues;renderScenes();
-  toast(result.issues.length?`Đã sửa ${result.issues.length} vấn đề · ${before} → ${result.scenes.length} cảnh.`:'Không thấy thiếu cảnh hay lỗi.');
+  if(contentBusy||!content.scenes.length)return;
+  const p=content.progress,segments=p&&p.video===content.video&&p.segments.length>1?p.segments:null;
+  let seg=0;content.scenes.forEach(scene=>{if(Number.isInteger(scene.seg))seg=scene.seg;else scene.seg=seg;});
+  const groups=segments?segments.map((clip,i)=>({clip,i,scenes:content.scenes.filter(s=>s.seg===i)})).filter(g=>g.scenes.length):[{clip:null,i:0,scenes:content.scenes}];
+  contentBusy=true;contentStop=false;$('runContent').disabled=$('reviewContent').disabled=true;
+  const before=content.scenes.length,issues=[];let failed='',done=0;
+  try{
+    for(const group of groups){
+      if(contentStop)break;
+      setContentProgress(done,groups.length,group.clip?`Kiểm tra đoạn ${done+1}/${groups.length} · ${fmtTime(group.clip[0])}–${fmtTime(group.clip[1])}…`:'Gemini đang kiểm tra…');
+      $('reviewContent').textContent=group.clip?`Đang kiểm tra ${done+1}/${groups.length}…`:'Gemini đang kiểm tra…';
+      try{
+        const body={brief:content.brief,video_url:content.video,language:content.language,scenes:group.scenes};if(group.clip){body.start=group.clip[0];body.end=group.clip[1];}
+        const result=await api('/api/content/review',body);
+        const fixed=result.scenes.map(scene=>({...scene,seg:group.i})),at=content.scenes.indexOf(group.scenes[0]);
+        content.scenes=content.scenes.filter(s=>!group.scenes.includes(s));content.scenes.splice(at,0,...fixed);
+        issues.push(...result.issues.map(issue=>group.clip?`[${fmtTime(group.clip[0])}–${fmtTime(group.clip[1])}] ${issue}`:issue));
+        content.issues=issues.slice();done+=1;renderScenes();
+      }catch(error){failed=error.message;break;}
+    }
+  }finally{contentBusy=false;$('runContent').disabled=$('reviewContent').disabled=false;$('reviewContent').textContent='↻ Kiểm tra thiếu cảnh / lỗi';$('contentProgress').hidden=true;saveContent();renderRunButton();}
+  if(failed)toast(`Dừng kiểm tra ở đoạn ${done+1}/${groups.length}: ${failed}`,true);
+  else toast(issues.length?`Đã sửa ${issues.length} vấn đề · ${before} → ${content.scenes.length} cảnh.`:'Không thấy thiếu cảnh hay lỗi.');
 };
 $('addScene').onclick=()=>{content.scenes.push({setting:'',camera:'',behavior:'',action:''});renderScenes();$('sceneList').lastElementChild?.querySelector('textarea')?.focus();};
 $('sceneList').addEventListener('input',e=>{const t=e.target.closest('[data-scene]');if(!t)return;content.scenes[Number(t.dataset.scene)][t.dataset.field]=t.value;renderContentOutput();});

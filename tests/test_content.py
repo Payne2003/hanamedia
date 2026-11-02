@@ -38,6 +38,10 @@ class ContentTests(unittest.TestCase):
                          "Bối cảnh 1: Bãi biển lúc bình minh, góc quay: Toàn cảnh, lia chậm, "
                          "hành vi nhân vật: Cô gái mỉm cười, Nội dung hành động nhân vật: Cô gái chạy dọc bờ biển;")
 
+    def test_trailing_punctuation_is_trimmed_in_prompts(self):
+        scene = dict(SCENE, camera="Trung cảnh, máy quay cố định.")
+        self.assertIn("góc quay: Trung cảnh, máy quay cố định, hành vi", content.format_prompts([scene])[0])
+
     def test_generate_sends_video_and_cleans_scenes(self):
         calls = []
         reply = {"original_script": "Kịch bản", "scenes": [dict(SCENE, action="Chạy\n nhanh"),
@@ -53,6 +57,43 @@ class ContentTests(unittest.TestCase):
         self.assertEqual(len(result["scenes"]), 2)
         self.assertEqual(result["scenes"][0]["action"], "Chạy nhanh")
         self.assertEqual(result["issues"], ["Cảnh 2 thiếu: góc quay."])
+
+    def test_segment_clip_is_sent_to_gemini(self):
+        calls = []
+        gemini = content.Gemini(KEY, transport=fake_transport({"original_script": "K", "scenes": [SCENE]}, calls))
+        gemini.generate("Chia cảnh", "https://youtu.be/dQw4w9WgXcQ", start=60, end=120)
+        part = calls[0][1]["contents"][0]["parts"][0]
+        self.assertEqual(part["video_metadata"], {"start_offset": "60s", "end_offset": "120s"})
+        self.assertIn("01:00 đến 02:00", calls[0][1]["contents"][0]["parts"][1]["text"])
+        gemini.review("", "https://youtu.be/dQw4w9WgXcQ", [SCENE], start=0, end=60)
+        self.assertEqual(calls[1][1]["contents"][0]["parts"][0]["video_metadata"]["end_offset"], "60s")
+        with self.assertRaises(ValueError):
+            gemini.generate("Chia cảnh", "https://youtu.be/dQw4w9WgXcQ", start=90, end=30)
+
+    def test_video_duration_is_read_from_youtube_page(self):
+        page = 'xx "videoDetails":{"videoId":"dQw4w9WgXcQ","lengthSeconds":"553","keywords":[]} yy'
+        self.assertEqual(content.video_duration("https://youtu.be/dQw4w9WgXcQ", lambda url: page), 553)
+        self.assertIsNone(content.video_duration("https://youtu.be/dQw4w9WgXcQ", lambda url: "no data"))
+        def offline(url):
+            raise OSError("blocked")
+        self.assertIsNone(content.video_duration("https://youtu.be/dQw4w9WgXcQ", offline))
+        self.assertEqual(content.timestamp(553), "09:13")
+
+    def test_timeout_tries_next_model_then_explains(self):
+        calls = []
+        ok = fake_transport({"original_script": "K", "scenes": [SCENE]}, calls)
+        def flaky(url, payload, headers, timeout):
+            if "/gemini-3.8-flash:" in url:
+                raise TimeoutError("timed out")
+            return ok(url, payload, headers, timeout)
+        gemini = content.Gemini(KEY, transport=flaky)
+        self.assertEqual(len(gemini.generate("Chia cảnh")["scenes"]), 1)
+        def dead(url, payload, headers, timeout):
+            raise TimeoutError("timed out")
+        gemini = content.Gemini(KEY, transport=dead)
+        gemini.sleep = lambda _: None
+        with self.assertRaisesRegex(ValueError, "quá lâu"):
+            gemini.generate("Chia cảnh")
 
     def test_review_returns_fixed_scenes_and_issues(self):
         calls = []

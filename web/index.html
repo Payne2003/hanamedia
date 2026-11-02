@@ -60,12 +60,14 @@
             <label for="contentBrief">Prompt · yêu cầu cho Gemini</label>
             <textarea id="contentBrief" rows="6" maxlength="20000"></textarea>
             <label>Link video gốc <small>(YouTube công khai · có thể bỏ trống)</small><input id="contentVideo" type="url" placeholder="https://www.youtube.com/watch?v=..."></label>
+            <label>Độ dài video <small>(phút:giây · tự điền khi đọc được từ YouTube)</small><input id="contentDuration" inputmode="numeric" maxlength="8" placeholder="Ví dụ 9:13"></label>
+            <p class="detail">Video dài hơn 1 phút được chia thành từng đoạn 1 phút; Gemini phân tích lần lượt và cảnh hiện dần bên phải.</p>
             <label>Ngôn ngữ kịch bản<select id="contentLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
-            <button id="runContent" type="button" class="primary full">✦ Phân tích bằng Gemini</button>
+            <button id="runContent" type="button" class="primary full">✦ Phân tích bằng Gemini</button><div id="contentProgress" class="content-progress" hidden><div class="job-progress running"><span id="contentProgressBar"></span></div><div class="content-progress-row"><span id="contentProgressText"></span><button id="stopContent" type="button">Dừng</button></div></div><button id="restartContent" type="button" class="text-button" hidden>Phân tích lại từ đầu</button>
           </section>
           <section class="content-step"><details id="geminiSettings" class="gemini-settings"><summary>⚙ Cài đặt Gemini <span id="geminiStatus" class="gemini-status">Chưa có khóa API</span></summary>
             <label>Khóa API Gemini<input id="geminiKey" type="password" autocomplete="off" placeholder="Dán khóa từ aistudio.google.com/apikey"></label>
-            <label>Model<input id="geminiModel" list="geminiModels" maxlength="80" placeholder="gemini-3.8-flash"><datalist id="geminiModels"><option value="gemini-3.8-flash"><option value="gemini-3.5-flash"><option value="gemini-3.1-pro-preview"><option value="gemini-flash-latest"></datalist></label>
+            <label>Model<input id="geminiModel" list="geminiModels" maxlength="80" placeholder="gemini-3.8-flash"><datalist id="geminiModels"><option value="gemini-3.8-flash"><option value="gemini-3.5-flash"><option value="gemini-3.1-pro-preview"><option value="gemini-flash-latest"><option value="gemini-3.5-flash-lite"><option value="gemini-4-argon"></datalist></label>
             <div id="geminiError" class="content-error" role="alert" hidden></div><div class="content-actions"><button id="saveGemini" type="button" class="primary">Lưu cài đặt</button><button id="clearGemini" type="button">Xóa khóa</button></div>
             <p class="detail">Khóa chỉ lưu trong thư mục data trên máy này và chỉ được gửi tới Google Gemini. Không chia sẻ thư mục data.</p>
           </details></section>

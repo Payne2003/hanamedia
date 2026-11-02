@@ -16,11 +16,12 @@ import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-3"
+VERSION = "content-4"
+SEGMENT_SECONDS = 60  # Video dài được chia đoạn 1 phút cho mỗi lần gọi Gemini.
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models/"
 DEFAULT_MODEL = "gemini-3.8-flash"
 # Dùng lần lượt khi model đang chọn báo quá tải (500/503).
-FALLBACK_MODELS = ("gemini-3.5-flash", "gemini-3-flash-preview", "gemini-flash-latest")
+FALLBACK_MODELS = ("gemini-3.5-flash", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-3.5-flash-lite")
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")
@@ -115,6 +116,31 @@ def api_key_value(value):
     return value
 
 
+def timestamp(seconds):
+    seconds = int(seconds)
+    return f"{seconds // 3600}:{seconds // 60 % 60:02d}:{seconds % 60:02d}" if seconds >= 3600 else f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+
+def default_fetch(url, timeout=20):
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en;q=0.8"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read(3_000_000).decode("utf-8", "replace")
+
+
+def video_duration(video_url, fetch=default_fetch):
+    """Độ dài video YouTube (giây), đọc từ trang xem video. None nếu không đọc được."""
+    video_url = youtube_url(video_url)
+    if not video_url:
+        return None
+    try:
+        page = fetch(video_url + "&hl=en")
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+    match = re.search(r'"lengthSeconds"\s*:\s*"(\d+)"', page) or re.search(r'"approxDurationMs"\s*:\s*"(\d+)\d{3}"', page)
+    seconds = int(match.group(1)) if match else 0
+    return seconds if 0 < seconds <= 6 * 3600 else None
+
+
 def clean_text(value, limit=FIELD_LIMIT):
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     return text[:limit]
@@ -149,8 +175,9 @@ def local_issues(scenes):
 
 def scene_prompt(index, scene):
     """Một dòng prompt theo cấu trúc trong sơ đồ."""
-    return (f"Bối cảnh {index}: {scene['setting']}, góc quay: {scene['camera']}, "
-            f"hành vi nhân vật: {scene['behavior']}, Nội dung hành động nhân vật: {scene['action']};")
+    part = {field: re.sub(r"[\s.,;]+$", "", scene[field]) for field in FIELDS}
+    return (f"Bối cảnh {index}: {part['setting']}, góc quay: {part['camera']}, "
+            f"hành vi nhân vật: {part['behavior']}, Nội dung hành động nhân vật: {part['action']};")
 
 
 def format_prompts(scenes):
@@ -172,10 +199,13 @@ class Gemini:
         self.transport, self.timeout = transport, timeout
         self.sleep, self.retry_delay = time.sleep, 8
 
-    def ask(self, text, schema, video_url=""):
+    def ask(self, text, schema, video_url="", clip=None):
         parts = []
         if video_url:
-            parts.append({"file_data": {"file_uri": video_url, "mime_type": "video/*"}})
+            part = {"file_data": {"file_uri": video_url, "mime_type": "video/*"}}
+            if clip:
+                part["video_metadata"] = {"start_offset": f"{clip[0]}s", "end_offset": f"{clip[1]}s"}
+            parts.append(part)
         parts.append({"text": text})
         payload = {
             "contents": [{"role": "user", "parts": parts}],
@@ -185,15 +215,22 @@ class Gemini:
         headers = {"Content-Type": "application/json", "x-goog-api-key": self.api_key}
         models = [self.model] + [model for model in FALLBACK_MODELS if model != self.model]
         # Hai vòng: nếu mọi model đều quá tải, đợi rồi thử lại một lần.
+        status, body, failure = None, b"", None
         for attempt, model in enumerate(models + models):
             if attempt == len(models):
                 self.sleep(self.retry_delay)
             try:
                 status, body = self.transport(API_ROOT + model + ":generateContent", payload, headers, self.timeout)
-            except (urllib.error.URLError, TimeoutError, OSError):
-                raise ValueError("Không kết nối được Gemini. Kiểm tra Internet rồi thử lại.")
+            except (urllib.error.URLError, TimeoutError, OSError) as error:
+                # Mất kết nối hoặc Gemini xử lý quá lâu: thử model kế tiếp.
+                failure, status = error, None
+                continue
             if status not in (500, 503):
                 break
+        if status is None:
+            if "timed out" in str(failure).lower() or isinstance(failure, TimeoutError):
+                raise ValueError("Gemini xử lý quá lâu nên bị ngắt. Thử lại, hoặc chia đoạn ngắn hơn.")
+            raise ValueError("Không kết nối được Gemini. Kiểm tra Internet rồi thử lại.")
         self.used_model = model
         try:
             data = json.loads(body or b"{}")
@@ -232,34 +269,52 @@ class Gemini:
             raise ValueError("Gemini trả về dữ liệu không đúng định dạng. Bấm thử lại.")
         return result
 
-    def generate(self, brief, video_url="", language="vi"):
+    def generate(self, brief, video_url="", language="vi", start=None, end=None):
         brief = clean_text(brief, 20000)
         if not brief:
             raise ValueError("Nhập yêu cầu (prompt) cho Gemini.")
         video_url = youtube_url(video_url)
         language = LANGUAGES.get(language, LANGUAGES["vi"])
-        source = ("Xem kỹ video gốc đính kèm từ đầu đến cuối. Viết lại kịch bản video gốc và chia toàn bộ video thành các cảnh."
-                  if video_url else
-                  "Không có video gốc. Tự viết kịch bản video gốc theo yêu cầu rồi chia thành các cảnh.")
+        clip = None
+        if video_url and start is not None and end is not None:
+            start, end = int(start), int(end)
+            if not 0 <= start < end <= 6 * 3600:
+                raise ValueError("Đoạn video không hợp lệ.")
+            clip = (start, end)
+        if clip:
+            source = (f"Video gốc đính kèm chỉ là đoạn từ {timestamp(start)} đến {timestamp(end)} của video đầy đủ. "
+                      "Chỉ phân tích đúng đoạn này, từ đầu đến cuối đoạn, không bỏ sót. "
+                      "Viết kịch bản của đoạn này (ghi mốc thời gian theo video đầy đủ) và chia đoạn này thành các cảnh. "
+                      "Nếu yêu cầu của người dùng nói về khoảng thời gian dài hơn, chỉ áp dụng cho đoạn này.")
+        elif video_url:
+            source = "Xem kỹ video gốc đính kèm từ đầu đến cuối. Viết lại kịch bản video gốc và chia toàn bộ video thành các cảnh."
+        else:
+            source = "Không có video gốc. Tự viết kịch bản video gốc theo yêu cầu rồi chia thành các cảnh."
         text = (f"Bạn là biên kịch và đạo diễn hình ảnh cho video tạo bằng AI.\n{source}\n\n"
                 f"Yêu cầu của người dùng:\n{brief}\n\n{SCENE_RULES}\n\n"
                 f"Viết toàn bộ nội dung bằng {language}. Trả về JSON đúng schema: "
                 "original_script là kịch bản video gốc; scenes là danh sách cảnh.")
-        result = self.ask(text, GENERATE_SCHEMA, video_url)
+        result = self.ask(text, GENERATE_SCHEMA, video_url, clip)
         scenes = clean_scenes(result.get("scenes"))
         if not scenes:
             raise ValueError("Gemini chưa chia được cảnh nào. Kiểm tra link video hoặc viết yêu cầu rõ hơn.")
         return {"original_script": str(result.get("original_script") or "").strip()[:40000],
                 "scenes": scenes, "issues": local_issues(scenes)}
 
-    def review(self, brief, video_url, scenes, language="vi"):
+    def review(self, brief, video_url, scenes, language="vi", start=None, end=None):
         scenes = clean_scenes(scenes)
         if not scenes:
             raise ValueError("Chưa có cảnh để kiểm tra.")
         video_url = youtube_url(video_url)
         language = LANGUAGES.get(language, LANGUAGES["vi"])
+        clip = (int(start), int(end)) if video_url and start is not None and end is not None else None
+        if clip and not 0 <= clip[0] < clip[1] <= 6 * 3600:
+            raise ValueError("Đoạn video không hợp lệ.")
         compare = ("So sánh danh sách cảnh với video gốc đính kèm: tìm đoạn bị bỏ sót, cảnh sai thứ tự, mô tả sai so với video."
                    if video_url else "So sánh danh sách cảnh với yêu cầu: tìm phần còn thiếu hoặc mạch truyện bị đứt.")
+        if clip:
+            compare = (f"Video đính kèm chỉ là đoạn {timestamp(clip[0])}–{timestamp(clip[1])} của video đầy đủ và danh sách cảnh "
+                       "dưới đây chỉ thuộc đoạn này. " + compare)
         text = (f"Bạn là người kiểm duyệt kịch bản cho video tạo bằng AI.\n{compare}\n"
                 "Đồng thời tìm cảnh mà AI video khó hoặc không tạo được: trường bị trống, quá nhiều hành động trong một cảnh, "
                 "người thật/người nổi tiếng, logo/thương hiệu, chữ trên màn hình, nội dung bạo lực/nhạy cảm dễ bị từ chối. "
@@ -268,7 +323,7 @@ class Gemini:
                 f"Danh sách cảnh hiện tại (JSON):\n{json.dumps(scenes, ensure_ascii=False)}\n\n{SCENE_RULES}\n\n"
                 f"Viết bằng {language}. Trả về JSON: issues là các vấn đề đã tìm thấy và cách sửa (rỗng nếu không có); "
                 "scenes là TOÀN BỘ danh sách cảnh sau khi sửa, theo đúng thứ tự.")
-        result = self.ask(text, REVIEW_SCHEMA, video_url)
+        result = self.ask(text, REVIEW_SCHEMA, video_url, clip)
         fixed = clean_scenes(result.get("scenes")) or scenes
         issues = [clean_text(item, 500) for item in (result.get("issues") or []) if clean_text(item, 500)]
         return {"scenes": fixed, "issues": issues[:50], "local_issues": local_issues(fixed)}
