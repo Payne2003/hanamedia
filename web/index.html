@@ -60,8 +60,10 @@
             <label for="contentBrief">Prompt · yêu cầu cho Gemini</label>
             <textarea id="contentBrief" rows="6" maxlength="20000"></textarea>
             <label>Link video gốc <small>(YouTube công khai · có thể bỏ trống)</small><input id="contentVideo" type="url" placeholder="https://www.youtube.com/watch?v=..."></label>
+            <label>Độ dài video <small>(phút:giây · tự điền khi đọc được từ YouTube)</small><input id="contentDuration" inputmode="numeric" maxlength="8" placeholder="Ví dụ 9:13"></label>
+            <p class="detail">Video dài hơn 1 phút được chia thành từng đoạn 1 phút; Gemini phân tích lần lượt và cảnh hiện dần bên phải.</p>
             <label>Ngôn ngữ kịch bản<select id="contentLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
-            <button id="runContent" type="button" class="primary full">✦ Phân tích bằng Gemini</button>
+            <button id="runContent" type="button" class="primary full">✦ Phân tích bằng Gemini</button><div id="contentProgress" class="content-progress" hidden><div class="job-progress running"><span id="contentProgressBar"></span></div><div class="content-progress-row"><span id="contentProgressText"></span><button id="stopContent" type="button">Dừng</button></div></div><button id="restartContent" type="button" class="text-button" hidden>Phân tích lại từ đầu</button>
           </section>
           <section class="content-step"><details id="geminiSettings" class="gemini-settings"><summary>⚙ Cài đặt Gemini <span id="geminiStatus" class="gemini-status">Chưa có khóa API</span></summary>
             <label>Khóa API Gemini<input id="geminiKey" type="password" autocomplete="off" placeholder="Dán khóa từ aistudio.google.com/apikey"></label>

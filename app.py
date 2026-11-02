@@ -33,6 +33,7 @@ class AppServer(ThreadingHTTPServer):
         self.secret = secrets.token_urlsafe(32)
         self.folder_lock = threading.Lock()
         self.gemini_transport = content.default_transport
+        self.video_fetch = content.default_fetch
 
     def handle_error(self, request, client_address):
         error = sys.exc_info()[1]
@@ -240,17 +241,22 @@ class Handler(BaseHTTPRequestHandler):
                 elif body.get("clear_key"):
                     store.save_setting("gemini_api_key", "")
                 store.save_setting("gemini_model", content.model_name(body.get("model")))
+            elif path == "/api/content/duration":
+                seconds = content.video_duration(body.get("video_url", ""), self.server.video_fetch)
+                return self.reply({"seconds": seconds, "segment": content.SEGMENT_SECONDS})
             elif path in ("/api/content/generate", "/api/content/review"):
                 api_key = store.setting("gemini_api_key")
                 if not api_key:
                     raise ValueError("Chưa có khóa API Gemini. Mở Cài đặt Gemini trong cửa sổ Viết content để nhập khóa.")
                 gemini = content.Gemini(api_key, store.setting("gemini_model") or content.DEFAULT_MODEL,
-                                        self.server.gemini_transport)
+                                        self.server.gemini_transport, timeout=420)
                 language = body.get("language", "vi")
                 if path == "/api/content/generate":
-                    result = gemini.generate(body["brief"], body.get("video_url", ""), language)
+                    result = gemini.generate(body["brief"], body.get("video_url", ""), language,
+                                             body.get("start"), body.get("end"))
                 else:
-                    result = gemini.review(body.get("brief", ""), body.get("video_url", ""), body["scenes"], language)
+                    result = gemini.review(body.get("brief", ""), body.get("video_url", ""), body["scenes"], language,
+                                           body.get("start"), body.get("end"))
                 result["prompts"] = content.format_prompts(result["scenes"])
                 return self.reply(result)
             elif path == "/api/open-folder":
