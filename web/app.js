@@ -223,7 +223,7 @@ $('importButton').onclick=()=>$('importFile').click();$('importFile').onchange=a
 // ---- Viết content: Prompt + link video gốc → Gemini → cảnh → hàng loạt prompt ----
 const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior','Hành vi nhân vật'],['action','Nội dung hành động nhân vật']];
 const defaultBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
-let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[]},contentBusy=false;
+let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[],mode:'web',webKind:'generate'},contentBusy=false;
 try{content={...content,...JSON.parse(localStorage.getItem('hana-content')||'{}')};}catch{}
 const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
 const oneLine=value=>String(value||'').replace(/\s+/g,' ').trim().replace(/[\s.,;]+$/,'');
@@ -244,7 +244,7 @@ function renderScenes(){
   $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b><span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}</div></article>`).join('');
   renderContentOutput();
 }
-const CONTENT_VERSION='content-4';
+const CONTENT_VERSION='content-5';
 function renderGeminiStatus(){
   if(!state)return;
   const info=state.content,outdated=!info||info.version!==CONTENT_VERSION;
@@ -265,7 +265,7 @@ function showView(view){
   const isContent=view==='content';
   $('studioView').hidden=isContent;$('contentView').hidden=!isContent;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
-  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;$('contentDuration').value=content.duration||'';renderGeminiStatus();renderRunButton();if(state?.content&&!state.content.configured)$('geminiSettings').open=true;renderScenes();}
+  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;$('contentDuration').value=content.duration||'';renderContentMode();renderGeminiStatus();renderRunButton();if(state?.content&&!state.content.configured)$('geminiSettings').open=true;renderScenes();}
   const hash=isContent?'#content':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);
 }
@@ -332,12 +332,44 @@ async function startContent(fresh){
   else if(contentStop)toast(`Đã dừng sau ${p.next}/${total} đoạn. Bấm “Tiếp tục phân tích” để chạy tiếp.`);
   else toast(`Gemini đã chia ${content.scenes.length} cảnh. Bấm “Kiểm tra thiếu cảnh / lỗi” để rà lại.`);
 }
+
+function renderContentMode(){
+  const web=content.mode!=='api';
+  document.querySelectorAll('[data-content-mode]').forEach(b=>b.classList.toggle('active',b.dataset.contentMode===content.mode));
+  document.querySelectorAll('#contentView .api-only').forEach(e=>e.hidden=web);
+  document.querySelectorAll('#contentView .web-only').forEach(e=>e.hidden=!web);
+  $('webParse').textContent=content.webKind==='review'?'③ Đọc kết quả kiểm tra':'③ Đọc kết quả';
+  $('webAppend').closest('label').hidden=content.webKind==='review';
+}
+document.querySelectorAll('[data-content-mode]').forEach(b=>b.onclick=()=>{content.mode=b.dataset.contentMode;saveContent();renderContentMode();renderGeminiStatus();});
+async function webCopy(kind){
+  try{
+    const {prompt}=await api('/api/content/web-prompt',{kind,brief:content.brief,video_url:content.video,language:content.language,scenes:kind==='review'?content.scenes:undefined});
+    const tab=window.open('https://gemini.google.com/app','hana-gemini');
+    try{await navigator.clipboard.writeText(prompt);}catch{$('webAnswer').value=prompt;$('webAnswer').select();document.execCommand('copy');$('webAnswer').value='';}
+    content.webKind=kind;saveContent();renderContentMode();$('webAnswer').value='';
+    toast(kind==='review'?'Đã chép yêu cầu kiểm tra. Dán vào Gemini, rồi dán câu trả lời vào ô ② bên trái và bấm “Đọc kết quả kiểm tra”.':`Đã chép yêu cầu${tab?' và mở Gemini':''}. Dán vào ô Hỏi Gemini (Ctrl+V) rồi gửi.`);
+    if(kind==='review')$('webAnswer').focus();
+  }catch(error){toast(error.message,true);}
+}
+$('webCopy').onclick=()=>webCopy('generate');
+$('webParse').onclick=async()=>{
+  try{
+    const result=await api('/api/content/parse',{text:$('webAnswer').value});
+    if(content.webKind==='review'){content.scenes=result.scenes;content.issues=result.issues;if(result.original_script)content.script=result.original_script;}
+    else if($('webAppend').checked){content.scenes.push(...result.scenes);if(result.original_script)content.script=[content.script,result.original_script].filter(Boolean).join('\n\n');}
+    else{if(content.scenes.length&&!confirm('Thay các cảnh hiện có bằng kết quả vừa dán?'))return;content.scenes=result.scenes;content.script=result.original_script;content.issues=[];content.progress=null;}
+    const kind=content.webKind;content.webKind='generate';$('webAnswer').value='';saveContent();renderScenes();renderContentMode();
+    toast(kind==='review'?`Đã cập nhật ${result.scenes.length} cảnh sau kiểm tra · ${result.issues.length} vấn đề.`:`Đã đọc ${result.scenes.length} cảnh. Tổng ${content.scenes.length} cảnh.`);
+  }catch(error){toast(error.message,true);}
+};
 $('runContent').onclick=()=>startContent(false);
 $('restartContent').onclick=()=>startContent(true);
 $('stopContent').onclick=()=>{contentStop=true;$('contentProgressText').textContent='Sẽ dừng sau khi đoạn hiện tại xong…';};
 $('contentDuration').oninput=()=>{content.duration=$('contentDuration').value.trim();saveContent();};
 $('reviewContent').onclick=async()=>{
   if(contentBusy||!content.scenes.length)return;
+  if(content.mode==='web')return webCopy('review');
   const p=content.progress,segments=p&&p.video===content.video&&p.segments.length>1?p.segments:null;
   let seg=0;content.scenes.forEach(scene=>{if(Number.isInteger(scene.seg))seg=scene.seg;else scene.seg=seg;});
   const groups=segments?segments.map((clip,i)=>({clip,i,scenes:content.scenes.filter(s=>s.seg===i)})).filter(g=>g.scenes.length):[{clip:null,i:0,scenes:content.scenes}];
