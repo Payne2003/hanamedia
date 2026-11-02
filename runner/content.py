@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlparse
 
+VERSION = "content-3"
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models/"
 DEFAULT_MODEL = "gemini-3.8-flash"
 # Dùng lần lượt khi model đang chọn báo quá tải (500/503).
@@ -103,9 +104,14 @@ def model_name(value):
 
 
 def api_key_value(value):
-    value = (value or "").strip()
-    if not re.fullmatch(r"[A-Za-z0-9_.\-]{20,200}", value):
-        raise ValueError("Khóa API Gemini không hợp lệ. Lấy khóa tại Google AI Studio (aistudio.google.com/apikey).")
+    # Bỏ khoảng trắng, xuống dòng và dấu ngoặc dính theo khi sao chép khóa.
+    value = re.sub(r"\s+", "", str(value or "")).strip("\"'`“”‘’<>")
+    if value.lower().startswith("key="):
+        value = value[4:]
+    # Google đã đổi định dạng khóa (AIza..., AQ....): chỉ cần ký tự in được, không khoảng trắng.
+    if not re.fullmatch(r"[\x21-\x7e]{20,300}", value):
+        raise ValueError("Khóa API Gemini không hợp lệ: khóa phải dài ít nhất 20 ký tự, không dấu tiếng Việt. "
+                         "Sao chép lại khóa tại aistudio.google.com/apikey.")
     return value
 
 
