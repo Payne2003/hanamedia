@@ -9,8 +9,8 @@
   <header>
     <a class="brand" href="/"><span class="logo">HM</span><span>HANA MEDIA<small>AI IMAGE & VIDEO</small></span></a>
     <nav class="primary-nav" aria-label="Điều hướng chính">
-      <button type="button" class="active" data-nav="studio">▦ Studio</button>
-      <button type="button" id="openContent">✎ Viết content</button>
+      <button type="button" class="active" data-nav="studio" id="navStudio">▦ Studio</button>
+      <button type="button" data-nav="content" id="openContent">✎ Viết content</button>
       <button type="button" id="openLibrary">▧ Thư viện</button>
       <button type="button" id="accountsButton">♙ Tài khoản <b id="accountCount">0/10</b></button>
       <button type="button" data-coming>◉ Proxy</button>
@@ -19,6 +19,7 @@
     <div class="header-actions"><span id="connection" class="connection">Đang kết nối…</span><span class="running-pill"><i></i><b id="headerRuns">0</b> luồng đang chạy</span></div>
   </header>
   <main>
+    <div id="studioView">
     <section class="studio-toolbar">
       <div class="project-controls"><button id="pickFolder" class="project-button"><span>▰</span><span><b>Mặc định</b><small id="folderPath">Chưa chọn thư mục lưu</small></span><span>⌄</span></button><button id="openFolder" class="icon-button" aria-label="Mở thư mục kết quả" title="Mở thư mục kết quả">↗</button></div>
       <div class="studio-overview"><span><b id="topTotal">0</b> tác vụ</span><span><b id="topFiles">0</b> file</span><span class="live-stat"><i></i><b id="topRunning">0</b> đang chạy</span></div>
@@ -49,34 +50,44 @@
         </div>
       </aside>
     </div>
+    </div>
+    <section id="contentView" class="content-page" hidden>
+      <div class="content-page-heading"><div><div class="eyebrow">PROMPT + VIDEO GỐC → GEMINI → HÀNG LOẠT PROMPT</div><h1>Viết content</h1><p>Gemini xem video gốc, viết lại kịch bản và chia cảnh: <b>bối cảnh, góc quay, hành vi nhân vật, nội dung hành động nhân vật</b>. Kiểm tra lại thiếu cảnh/lỗi rồi đưa hàng loạt prompt vào Studio.</p></div><button id="closeContent" type="button">← Về Studio</button></div>
+      <div class="content-columns">
+        <div class="content-input card">
+          <section class="content-step first"><h3><span>1</span>Đầu vào</h3>
+            <label for="contentBrief">Prompt · yêu cầu cho Gemini</label>
+            <textarea id="contentBrief" rows="6" maxlength="20000"></textarea>
+            <label>Link video gốc <small>(YouTube công khai · có thể bỏ trống)</small><input id="contentVideo" type="url" placeholder="https://www.youtube.com/watch?v=..."></label>
+            <label>Ngôn ngữ kịch bản<select id="contentLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
+            <button id="runContent" type="button" class="primary full">✦ Phân tích bằng Gemini</button>
+          </section>
+          <section class="content-step"><details id="geminiSettings" class="gemini-settings"><summary>⚙ Cài đặt Gemini <span id="geminiStatus" class="gemini-status">Chưa có khóa API</span></summary>
+            <label>Khóa API Gemini<input id="geminiKey" type="password" autocomplete="off" placeholder="Dán khóa từ aistudio.google.com/apikey"></label>
+            <label>Model<input id="geminiModel" list="geminiModels" maxlength="80" placeholder="gemini-2.5-flash"><datalist id="geminiModels"><option value="gemini-2.5-flash"><option value="gemini-2.5-pro"><option value="gemini-2.5-flash-lite"></datalist></label>
+            <div class="content-actions"><button id="saveGemini" type="button" class="primary">Lưu cài đặt</button><button id="clearGemini" type="button">Xóa khóa</button></div>
+            <p class="detail">Khóa chỉ lưu trong thư mục data trên máy này và chỉ được gửi tới Google Gemini. Không chia sẻ thư mục data.</p>
+          </details></section>
+        </div>
+        <div class="content-output card">
+          <div id="contentEmpty" class="empty"><span>✎</span><h3>Chưa có kịch bản</h3><p>Nhập yêu cầu và link video gốc bên trái, rồi bấm Phân tích bằng Gemini.</p></div>
+          <section class="content-step first" id="contentResult" hidden><h3><span>2</span>Đầu ra</h3>
+            <details class="original-script"><summary>Kịch bản video gốc</summary><textarea id="contentScript" rows="8"></textarea></details>
+            <div class="scene-heading"><b id="sceneCount">0 cảnh</b><span class="bulk-spacer"></span><button id="addScene" type="button">+ Thêm cảnh</button><button id="reviewContent" type="button">↻ Kiểm tra thiếu cảnh / lỗi</button></div>
+            <div id="contentIssues" class="content-issues" hidden></div>
+            <div id="sceneList" class="scene-list"></div>
+          </section>
+          <section class="content-step" id="contentOutput" hidden><h3><span>3</span>Hàng loạt prompt</h3>
+            <textarea id="contentPrompts" rows="8" readonly></textarea>
+            <div class="content-actions"><button id="useContent" type="button" class="primary">→ Đưa vào Studio</button><button id="copyContent" type="button">⧉ Chép</button><button id="downloadContent" type="button">⇩ Tải .txt</button></div>
+          </section>
+        </div>
+      </div>
+    </section>
   </main>
   <dialog id="accounts"><div class="dialog-heading"><div><div class="eyebrow">EMAIL + OTP · KHÔNG MẬT KHẨU</div><h2>Tài khoản Muse</h2></div><button id="closeAccounts" aria-label="Đóng">✕</button></div><p class="dialog-description">Mỗi tài khoản có phiên Chrome riêng. Tool thử lấy OTP mới từ link hộp thư; nếu hộp thư lỗi, nhập mã trực tiếp trên cửa sổ Muse.</p><div id="accountList"></div><form id="accountForm"><h3>Thêm tài khoản</h3><div class="form-grid"><label>Email Muse<input id="email" type="email" autocomplete="off" required maxlength="254" placeholder="email@tuan89.site"></label><label>Ngân sách credit dự kiến<input id="budget" type="number" required min="0" step="0.01" value="10"></label></div><label>Link hộp thư OTP<input id="mailbox" type="url" placeholder="Tự điền link Tuan89 theo email nếu để trống"></label><button class="primary" type="submit">+ Thêm tài khoản</button></form><p class="subtle-note">Phiên đăng nhập được giữ trên máy. Không chia sẻ thư mục data. Tài khoản hết ngân sách hoặc cần kiểm tra sẽ không nhận tác vụ mới.</p></dialog>
   <dialog id="player"><div class="dialog-heading"><h2 id="playerTitle">Video của cảnh</h2><button id="closePlayer" aria-label="Đóng video">✕</button></div><video id="videoPlayer" controls playsinline></video><p id="playerPrompt"></p></dialog>
   <dialog id="imageLibrary"><div class="dialog-heading"><div><div class="eyebrow">THƯ VIỆN CỤC BỘ</div><h2>Ảnh tham chiếu</h2></div><button id="closeImageLibrary" aria-label="Đóng thư viện">✕</button></div><p class="dialog-description">Chọn ảnh đã tạo từ Flow hoặc ảnh đã thêm trước đây để gắn vào prompt đang chọn.</p><div id="imageLibraryGrid" class="image-library-grid"></div></dialog>
-  <dialog id="contentDialog" class="content-dialog"><div class="dialog-heading"><div><div class="eyebrow">PROMPT + VIDEO GỐC → GEMINI → HÀNG LOẠT PROMPT</div><h2>Viết content</h2></div><button id="closeContent" aria-label="Đóng">✕</button></div>
-    <p class="dialog-description">Gemini xem video gốc, viết lại kịch bản và chia cảnh: <b>bối cảnh, góc quay, hành vi nhân vật, nội dung hành động nhân vật</b>. Kiểm tra lại thiếu cảnh/lỗi rồi đưa hàng loạt prompt vào khung tạo video.</p>
-    <details id="geminiSettings" class="gemini-settings"><summary>⚙ Cài đặt Gemini <span id="geminiStatus" class="gemini-status">Chưa có khóa API</span></summary>
-      <div class="content-grid"><label>Khóa API Gemini<input id="geminiKey" type="password" autocomplete="off" placeholder="Dán khóa từ aistudio.google.com/apikey"></label><label>Model<input id="geminiModel" list="geminiModels" maxlength="80" placeholder="gemini-2.5-flash"><datalist id="geminiModels"><option value="gemini-2.5-flash"><option value="gemini-2.5-pro"><option value="gemini-2.5-flash-lite"></datalist></label></div>
-      <div class="content-actions"><button id="saveGemini" type="button" class="primary">Lưu cài đặt</button><button id="clearGemini" type="button">Xóa khóa</button></div>
-      <p class="detail">Khóa chỉ lưu trong thư mục data trên máy này và chỉ được gửi tới Google Gemini. Không chia sẻ thư mục data.</p>
-    </details>
-    <section class="content-step"><h3><span>1</span>Đầu vào</h3>
-      <label for="contentBrief">Prompt · yêu cầu cho Gemini</label>
-      <textarea id="contentBrief" rows="4" maxlength="20000"></textarea>
-      <div class="content-grid"><label>Link video gốc <small>(YouTube công khai · có thể bỏ trống)</small><input id="contentVideo" type="url" placeholder="https://www.youtube.com/watch?v=..."></label><label>Ngôn ngữ kịch bản<select id="contentLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label></div>
-      <button id="runContent" type="button" class="primary full">✦ Phân tích bằng Gemini</button>
-    </section>
-    <section class="content-step" id="contentResult" hidden><h3><span>2</span>Đầu ra</h3>
-      <details class="original-script"><summary>Kịch bản video gốc</summary><textarea id="contentScript" rows="6"></textarea></details>
-      <div class="scene-heading"><b id="sceneCount">0 cảnh</b><span class="bulk-spacer"></span><button id="addScene" type="button">+ Thêm cảnh</button><button id="reviewContent" type="button">↻ Kiểm tra thiếu cảnh / lỗi</button></div>
-      <div id="contentIssues" class="content-issues" hidden></div>
-      <div id="sceneList" class="scene-list"></div>
-    </section>
-    <section class="content-step" id="contentOutput" hidden><h3><span>3</span>Hàng loạt prompt</h3>
-      <textarea id="contentPrompts" rows="7" readonly></textarea>
-      <div class="content-actions"><button id="useContent" type="button" class="primary">→ Đưa vào khung tạo video</button><button id="copyContent" type="button">⧉ Chép</button><button id="downloadContent" type="button">⇩ Tải .txt</button></div>
-    </section>
-  </dialog>
   <div id="toast" role="status" hidden></div>
   <script type="module" src="/app.js"></script>
 </body>

@@ -24,7 +24,7 @@ Cũng có chế độ **Tự gửi prompt & tải video**, dùng menu **ba chấ
 
 ## Viết content bằng Gemini (Prompt + video gốc → hàng loạt prompt)
 
-Bấm **✎ Viết content** trên thanh điều hướng.
+Bấm **✎ Viết content** trên thanh điều hướng để mở trang Viết content (bấm **Studio** hoặc **← Về Studio** để quay lại; địa chỉ `http://127.0.0.1:8765/#content` mở thẳng trang này).
 
 1. **Cài đặt Gemini** (một lần): dán khóa API lấy tại https://aistudio.google.com/apikey và chọn model (mặc định `gemini-2.5-flash`; `gemini-2.5-pro` kỹ hơn nhưng chậm hơn). Khóa chỉ lưu trong `data/` trên máy và chỉ gửi tới Google Gemini; giao diện không hiển thị lại khóa.
 2. **Đầu vào**: (1) Prompt — yêu cầu cho Gemini (đã có mẫu sẵn, sửa tùy ý); (2) Link video gốc — link **YouTube** công khai hoặc không công khai (`youtube.com/watch`, `youtu.be`, `/shorts`). Có thể bỏ trống link để Gemini tự viết kịch bản theo yêu cầu. Gemini không đọc trực tiếp link TikTok/Facebook: đăng video lên YouTube rồi dán link.
@@ -32,9 +32,9 @@ Bấm **✎ Viết content** trên thanh điều hướng.
 4. Bấm **Kiểm tra thiếu cảnh / lỗi**: Gemini so lại với video gốc, bổ sung cảnh bị bỏ sót và viết lại cảnh dễ bị AI video từ chối/không tạo được (người nổi tiếng, logo, chữ trên màn hình, quá nhiều hành động…). Danh sách vấn đề hiện ở khung **Cần xem lại**. Lặp lại đến khi không còn vấn đề. Tool cũng tự báo cảnh bị trống trường.
 5. **Hàng loạt prompt** được ghép theo cấu trúc, mỗi cảnh một dòng:
    `Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;`
-   Bấm **Đưa vào khung tạo video** rồi **Tạo & chạy** như bình thường, hoặc **Chép** / **Tải .txt**.
+   Bấm **Đưa vào Studio** (tool chuyển về trang Studio, prompt đã nằm trong khung tạo video) rồi **Tạo & chạy** như bình thường, hoặc **Chép** / **Tải .txt**.
 
-Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt khi đóng cửa sổ. Phân tích video dài có thể mất vài phút và dùng hạn mức Gemini của khóa API. Đã kiểm thử bằng Gemini giả lập; cần một khóa thật để kiểm tra với video thật.
+Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt khi chuyển trang hoặc tải lại. Phân tích video dài có thể mất vài phút và dùng hạn mức Gemini của khóa API. Đã kiểm thử bằng Gemini giả lập; cần một khóa thật để kiểm tra với video thật.
 
 ## Mức độ đã xác minh — đọc trước khi chạy
 
