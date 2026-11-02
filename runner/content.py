@@ -11,12 +11,15 @@ Chỉ dùng thư viện chuẩn (urllib). Khóa API lưu trong SQLite trên máy
 """
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, urlparse
 
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models/"
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
+# Dùng lần lượt khi model đang chọn báo quá tải (500/503).
+FALLBACK_MODELS = ("gemini-3.5-flash", "gemini-3-flash-preview", "gemini-flash-latest")
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")
@@ -95,13 +98,13 @@ def youtube_url(value):
 def model_name(value):
     value = (value or DEFAULT_MODEL).strip().removeprefix("models/")
     if not re.fullmatch(r"[a-z0-9][a-z0-9.\-]{1,79}", value):
-        raise ValueError("Tên model Gemini không hợp lệ, ví dụ: gemini-2.5-flash.")
+        raise ValueError("Tên model Gemini không hợp lệ, ví dụ: gemini-3.8-flash.")
     return value
 
 
 def api_key_value(value):
     value = (value or "").strip()
-    if not re.fullmatch(r"[A-Za-z0-9_\-]{20,200}", value):
+    if not re.fullmatch(r"[A-Za-z0-9_.\-]{20,200}", value):
         raise ValueError("Khóa API Gemini không hợp lệ. Lấy khóa tại Google AI Studio (aistudio.google.com/apikey).")
     return value
 
@@ -161,6 +164,7 @@ class Gemini:
     def __init__(self, api_key, model=DEFAULT_MODEL, transport=default_transport, timeout=600):
         self.api_key, self.model = api_key_value(api_key), model_name(model)
         self.transport, self.timeout = transport, timeout
+        self.sleep, self.retry_delay = time.sleep, 8
 
     def ask(self, text, schema, video_url=""):
         parts = []
@@ -173,10 +177,18 @@ class Gemini:
                                  "responseSchema": schema},
         }
         headers = {"Content-Type": "application/json", "x-goog-api-key": self.api_key}
-        try:
-            status, body = self.transport(API_ROOT + self.model + ":generateContent", payload, headers, self.timeout)
-        except (urllib.error.URLError, TimeoutError, OSError):
-            raise ValueError("Không kết nối được Gemini. Kiểm tra Internet rồi thử lại.")
+        models = [self.model] + [model for model in FALLBACK_MODELS if model != self.model]
+        # Hai vòng: nếu mọi model đều quá tải, đợi rồi thử lại một lần.
+        for attempt, model in enumerate(models + models):
+            if attempt == len(models):
+                self.sleep(self.retry_delay)
+            try:
+                status, body = self.transport(API_ROOT + model + ":generateContent", payload, headers, self.timeout)
+            except (urllib.error.URLError, TimeoutError, OSError):
+                raise ValueError("Không kết nối được Gemini. Kiểm tra Internet rồi thử lại.")
+            if status not in (500, 503):
+                break
+        self.used_model = model
         try:
             data = json.loads(body or b"{}")
         except ValueError:
@@ -186,9 +198,12 @@ class Gemini:
             if status in (401, 403) or "API key" in message:
                 raise ValueError("Gemini từ chối khóa API. Kiểm tra lại khóa trong mục Cài đặt Gemini.")
             if status == 404:
-                raise ValueError(f"Không tìm thấy model {self.model}. Đổi tên model trong Cài đặt Gemini.")
+                raise ValueError(f"Model {self.model} không dùng được với khóa này. Đổi model trong Cài đặt Gemini "
+                                 f"(khuyên dùng {DEFAULT_MODEL}). {message}".strip())
             if status == 429:
                 raise ValueError("Gemini báo hết hạn mức (429). Đợi một lúc hoặc dùng khóa/model khác.")
+            if status in (500, 503):
+                raise ValueError("Gemini đang quá tải (lỗi tạm thời). Đợi một lát rồi bấm lại.")
             if status == 400 and video_url:
                 raise ValueError("Gemini không đọc được video. Video phải công khai/không công khai trên YouTube. " + message)
             raise ValueError(f"Gemini lỗi {status}. {message}".strip())
