@@ -18,6 +18,7 @@ def chatgpt_login_url(email=""):
 # Ô nhập: ProseMirror #prompt-textarea (bản cũ là <textarea>).
 JS_FIND_INPUT = r"""
 const selectors = ['#prompt-textarea[contenteditable="true"]', 'div#prompt-textarea', 'textarea#prompt-textarea',
+  'form[data-chatgpt-composer] .ProseMirror[contenteditable="true"]', '.ProseMirror[contenteditable="true"][role="textbox"]',
   '[contenteditable="true"][data-virtualkeyboard="true"]', 'form [contenteditable="true"]', 'textarea[name="prompt-textarea"]'];
 for (const selector of selectors) {
   for (const element of document.querySelectorAll(selector)) {
@@ -44,19 +45,25 @@ return false;
 # Trạng thái trang ChatGPT. "text" chỉ lấy phần .markdown của tin nhắn trợ lý cuối (bỏ phần "Thought for…").
 JS_STATE = r"""
 const visible = e => { const box = e.getBoundingClientRect(); return box.width > 0 && box.height > 0; };
-// Tin nhắn trợ lý: bản cũ dùng data-message-author-role, bản mới có thể dùng article[data-turn="assistant"].
-let responses = [...document.querySelectorAll('[data-message-author-role="assistant"]')]
-  .filter((element, index, all) => !all.some(other => other !== element && other.contains(element)));
+// Tin nhắn trợ lý. Giao diện ChatGPT 2026: khối [data-content-search-unit-key$=":assistant"] (có h4 data-conversation-role);
+// bản cũ: [data-message-author-role="assistant"] hoặc article[data-turn="assistant"].
+const outermost = list => list.filter((element, index, all) => !all.some(other => other !== element && other.contains(element)));
+let responses = outermost([...document.querySelectorAll('[data-content-search-unit-key$=":assistant"], [data-chatgpt-search-unit-key$=":assistant"]')]);
+if (!responses.length) responses = outermost([...document.querySelectorAll('[data-message-author-role="assistant"]')]);
+if (!responses.length) responses = [...document.querySelectorAll('h4[data-conversation-role="assistant"]')].map(h => h.parentElement);
 if (!responses.length) responses = [...document.querySelectorAll('[data-turn="assistant"], article[data-testid^="conversation-turn"]:has(.markdown)')];
 const last = responses[responses.length - 1];
+// Lượt trả lời (chứa cả hàng nút Sao chép/Đọc to...) và trạng thái của nó: data-talvt-turn-state="complete" khi viết xong.
+const turn = last ? (last.closest('[data-talvt-turn-state]') || last.closest('article, [data-testid^="conversation-turn"]') || last.parentElement || last) : null;
+const turnState = turn ? (turn.getAttribute('data-talvt-turn-state') || '') : '';
 let text = '', done = false;
 if (last) {
-  const bodies = [...last.querySelectorAll('.markdown, [class*="markdown"]')]
+  const bodies = [...last.querySelectorAll('[data-markdown-text-style="assistant-message"], .markdown, [class*="markdown"]')]
     .filter(e => !e.closest('[class*="thought"], [class*="reasoning"], details'));
-  // Nếu mọi khối .markdown đều nằm trong vùng bị coi là "suy nghĩ" thì vẫn lấy khối cuối; cuối cùng lấy cả tin nhắn.
-  const all = [...last.querySelectorAll('.markdown, [class*="markdown"]')];
-  const body = bodies[bodies.length - 1] || all[all.length - 1] || null;
-  text = body ? (body.innerText || '') : (last.innerText || '');
+  // Nếu mọi khối đều nằm trong vùng bị coi là "suy nghĩ" thì vẫn lấy khối cuối; cuối cùng lấy cả tin nhắn.
+  const all = [...last.querySelectorAll('[data-markdown-text-style="assistant-message"], .markdown, [class*="markdown"]')];
+  const body = outermost(bodies).pop() || outermost(all).pop() || null;
+  text = body ? (body.innerText || '') : (last.innerText || '').replace(/^\s*ChatGPT đã nói:\s*/i, '');
   // ChatGPT hiển thị danh sách bằng <ol><li>: số thứ tự không có trong innerText -> dựng lại và gắn số.
   if (body && body.querySelector('li')) {
     const lines = [];
@@ -77,17 +84,18 @@ if (last) {
     }
     if (lines.length) text = lines.join('\n');
   }
-  // Viết xong: hiện các nút Sao chép / Thích / Không thích / Đọc to dưới câu trả lời.
-  const turn = last.closest('article, [data-testid^="conversation-turn"]') || last.parentElement || last;
-  done = [...turn.querySelectorAll('button')].some(b => visible(b) &&
-    /copy|sao chép|good response|bad response|thích|read aloud|đọc to/i.test(
+  // Viết xong: lượt có trạng thái "complete", hoặc đã hiện các nút Sao chép / Đọc to / Tạo lại dưới câu trả lời.
+  done = turnState === 'complete' || [...turn.querySelectorAll('button')].some(b => visible(b) &&
+    !b.closest('[data-chatgpt-search-unit-key$=":user"], [data-content-search-unit-key$=":user"], [data-user-message-bubble]') &&
+    /copy|sao chép|good response|bad response|đánh giá|read aloud|đọc to|tạo lại/i.test(
       (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('data-testid') || '')));
 }
 // Đang viết: chỉ tính nút Dừng của ô nhắn tin (không tính các nút "Dừng đọc"... khác trên trang).
-const busy = [...document.querySelectorAll('button[data-testid="stop-button"], #composer-submit-button, form button[aria-label]')].some(b => {
-  const label = (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('data-testid') || '');
-  return visible(b) && /stop-button|stop streaming|stop generating|dừng phát|dừng tạo|ngừng/i.test(label);
-}) || Boolean(last && last.querySelector('.result-streaming'));
+const busy = (turnState !== '' && turnState !== 'complete') ||
+  [...document.querySelectorAll('button[data-testid="stop-button"], #composer-submit-button, form button[aria-label]')].some(b => {
+    const label = (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('data-testid') || '');
+    return visible(b) && /stop-button|stop streaming|stop generating|dừng phát|dừng tạo|dừng trả lời|ngừng/i.test(label);
+  }) || Boolean(last && last.querySelector('.result-streaming'));
 const host = location.hostname;
 // Trang xác minh Cloudflare: tiêu đề "Just a moment…" / "Chờ một chút…"; ô xác minh nằm trong iframe riêng.
 const challenge = /just a moment|chờ một chút|verify you are human|xác minh bạn là con người/i.test(document.title + ' ' +
@@ -99,7 +107,7 @@ return {count: responses.length, busy, done, text, email: '', signIn, loggedOut,
 """
 
 JS_OPEN_MODEL_MENU = r"""
-const picker = document.querySelector('[data-testid="model-switcher-dropdown-button"], button[aria-label*="Model"], button[aria-label*="mô hình"]');
+const picker = document.querySelector('[data-testid="model-switcher-dropdown-button"], button[data-composer-navigation-target="reasoning"], button[aria-label*="Model"], button[aria-label*="mô hình"]');
 if (!picker) return null;
 picker.click();
 return (picker.innerText || '').trim();

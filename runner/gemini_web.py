@@ -388,7 +388,7 @@ class GeminiWebSession:
             path.parent.mkdir(parents=True, exist_ok=True)
             page = self.state()
             html = self.driver.execute_script(
-                "const r=[...document.querySelectorAll('model-response, [data-message-author-role=\"assistant\"], [data-turn=\"assistant\"]')].pop();"
+                "const r=[...document.querySelectorAll('model-response, [data-message-author-role=\"assistant\"], [data-turn=\"assistant\"], [data-content-search-unit-key$=\":assistant\"]')].pop() || document.querySelector('main') ;"
                 "return (r ? r.outerHTML : document.body.outerHTML).slice(0, 300000);")
             path.write_text(f"LÝ DO: {reason}\nURL: {self.driver.current_url}\nSTATE: "
                             f"{ {k: v for k, v in page.items() if k != 'text'} }\n\n--- TEXT TOOL ĐỌC ĐƯỢC ---\n"
