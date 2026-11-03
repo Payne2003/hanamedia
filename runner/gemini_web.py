@@ -131,6 +131,27 @@ if (last) {
     .filter(e => !e.closest('model-thoughts, .model-thoughts, [class*="thought"]'));
   const body = bodies[bodies.length - 1];
   text = body ? (body.innerText || '') : '';
+  // Gemini hiển thị danh sách đánh số bằng <ol><li>: số thứ tự chỉ là hình vẽ, không có trong innerText.
+  // Dựng lại chữ theo từng khối và gắn số cho từng <li> (tính cả thuộc tính start của <ol>).
+  if (body && body.querySelector('li')) {
+    const lines = [];
+    for (const block of body.querySelectorAll('li, p, h1, h2, h3, h4, h5, h6, pre')) {
+      if (block.tagName !== 'LI' && block.closest('li')) continue;
+      const line = (block.innerText || '').replace(/\s*\n\s*/g, ' ').trim();
+      if (block.tagName === 'LI') {
+        const list = block.parentElement;
+        const items = [...list.children].filter(child => child.tagName === 'LI');
+        const start = list.tagName === 'OL' ? parseInt(list.getAttribute('start') || '1', 10) || 1 : 0;
+        const tail = line.match(/\s*(END OF LIST|HẾT DANH SÁCH)\s*$/i);
+        const clean = tail ? line.slice(0, tail.index).trim() : line;
+        lines.push(start ? `${start + items.indexOf(block)}. ${clean}` : clean);
+        if (tail) lines.push(tail[1]);
+      } else if (line) {
+        lines.push(line);
+      }
+    }
+    if (lines.length) text = lines.join('\n');
+  }
   // Gemini chỉ hiện nút Sao chép / Thích / Không thích dưới câu trả lời khi đã viết xong.
   done = [...last.querySelectorAll('button, [role="button"]')].some(b => visible(b) &&
     /sao chép|copy|thích|good response|bad response|chia sẻ|share|thử lại|redo|regenerate/i.test(
@@ -477,7 +498,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         answer = session.ask(content.continue_english(after, total), status, stop, email,
                              label=f"Đã có {len(found)}/{total} prompt · Gemini đang viết tiếp")
         rounds += 1
-        more = content.parse_english(answer, total)
+        more = content.parse_english(answer, total, range(after + 1, total + 1))
         if not any(number > after for number in more):
             break
         for number, prompt in more.items():
@@ -492,7 +513,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
                              label=f"Thiếu {len(missing)} prompt · Gemini đang viết lại (lần {attempt + 1})")
         rounds += 1
         fixed = 0
-        for number, prompt in content.parse_english(answer, total).items():
+        for number, prompt in content.parse_english(answer, total, missing).items():
             if number in missing and (number not in found or content.is_english(prompt)):
                 found[number] = prompt
                 fixed += content.is_english(prompt)
