@@ -351,6 +351,10 @@ END OF LIST"""
         self.assertIn("2. Cảnh B", request)
         self.assertNotIn("1. Cảnh A", request)
         self.assertIn("cinematic 9:16", request)
+        self.assertIn("16:9 widescreen", request)
+        self.assertIn('"16:9 aspect ratio"', request)
+        self.assertIn("9:16 vertical", content.english_request(["A"], aspect="9:16"))
+        self.assertNotIn("aspect ratio", content.english_request(["A"], aspect="none"))
 
     def test_run_english_continues_and_retries_missing_scenes(self):
         from runner import gemini_web

@@ -39,7 +39,7 @@ Bấm **✎ Viết content** trên thanh điều hướng để mở trang Viế
 
 Khung **④ Prompt tiếng Anh · Gemini Pro** ở cuối trang Viết content:
 
-1. **Đầu vào**: bấm **Lấy từ danh sách cảnh** (lấy hàng loạt prompt ở bước 3) hoặc tự dán danh sách `Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;` (mỗi dòng một cảnh, hoặc cả danh sách trong `[ ... ]` nối bằng dấu `;`). Có thể thêm **Phong cách chung** cho mọi prompt.
+1. **Đầu vào**: bấm **Lấy từ danh sách cảnh** (lấy hàng loạt prompt ở bước 3) hoặc tự dán danh sách `Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;` (mỗi dòng một cảnh, hoặc cả danh sách trong `[ ... ]` nối bằng dấu `;`). Chọn **Tỷ lệ khung hình** (mặc định **16:9** ngang; có 9:16 dọc, 1:1 vuông): Gemini viết khung hình theo tỷ lệ đó và kết thúc mỗi prompt bằng `16:9 aspect ratio`. Có thể thêm **Phong cách chung** cho mọi prompt.
 2. Bấm **Viết prompt tiếng Anh bằng Gemini**. Gemini viết mỗi cảnh thành một prompt tiếng Anh, đánh số theo cảnh. Câu trả lời bị cắt thì tool nhắn viết tiếp.
 3. Theo sơ đồ: cảnh nào **thiếu** hoặc **vẫn còn tiếng Việt**, tool tự hỏi lại Gemini riêng những cảnh đó (tối đa 3 lượt). Nếu vẫn thiếu, khung **Còn thiếu** ghi rõ số cảnh và dòng đó để trống để bạn sửa tay hoặc chạy lại.
 4. **Đầu ra**: mỗi dòng 1 prompt tiếng Anh, đúng thứ tự cảnh, sửa được trực tiếp. Bấm **Đưa vào Studio**, **Chép** hoặc **Tải .txt**.
