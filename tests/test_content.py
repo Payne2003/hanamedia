@@ -14,6 +14,18 @@ SCENE = {"setting": "Bãi biển lúc bình minh", "camera": "Toàn cảnh, lia 
 
 
 class ContentTests(unittest.TestCase):
+    def test_scenes_merged_on_one_line_are_split(self):
+        from runner.content import parse_answer
+        text = ("KỊCH BẢN VIDEO GỐC: Dê núi trên vách đá.\n\nDANH SÁCH CẢNH: Bối cảnh 1: Vách đá, ban ngày, góc quay: Toàn cảnh, "
+                "hành vi nhân vật: Đứng yên, Nội dung hành động nhân vật: Giữ thăng bằng; Bối cảnh 2: Sườn núi, góc quay: Cận cảnh, "
+                "hành vi nhân vật: Nằm im, Nội dung hành động nhân vật: Ngẩng đầu; Bối cảnh 3: Thung lũng, góc quay: Trung cảnh, "
+                "hành vi nhân vật: Chạy, Nội dung hành động nhân vật: Hú vang. HẾT DANH SÁCH")
+        result = parse_answer(text)
+        self.assertEqual(len(result["scenes"]), 3)
+        self.assertEqual(result["scenes"][1]["setting"], "Sườn núi")
+        self.assertEqual(result["scenes"][2]["camera"], "Trung cảnh")
+        self.assertEqual(result["original_script"], "Dê núi trên vách đá.")
+
     def test_youtube_links_are_normalized_and_others_rejected(self):
         expected = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         for link in ("https://youtu.be/dQw4w9WgXcQ?t=3", "youtube.com/watch?v=dQw4w9WgXcQ&list=x",

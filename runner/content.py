@@ -12,7 +12,7 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-17"
+VERSION = "content-18"
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")
@@ -169,6 +169,9 @@ def parse_answer(text):
                         "issues": [clean_text(i, 500) for i in data.get("issues") or [] if clean_text(i, 500)][:50]}
         except (ValueError, AttributeError):
             pass
+    # Nhiều cảnh dính trên một dòng ("...; Bối cảnh 2: ...") khi trang gộp các dòng: tách trước mỗi "Bối cảnh N:".
+    text = re.sub(r"(?<=\S)[ \t]*(?=b[ốo]i\s*c[ảa]nh\s*\d+\s*[:：])", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<=\S)[ \t]*(?=(?:HẾT DANH SÁCH|END OF LIST|DANH SÁCH CẢNH\s*[:：]))", "\n", text)
     scenes, script, issues, section = [], [], [], "script"
     for raw in text.split("\n"):
         line = re.sub(r"[*_#`>|]+", "", raw).strip()
