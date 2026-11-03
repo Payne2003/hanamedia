@@ -1,4 +1,5 @@
 import queue
+import shutil
 import threading
 from pathlib import Path
 from .flow import FlowImageSession, default_chrome_profile
@@ -165,6 +166,22 @@ class Engine:
             if stop:
                 self.review_stops[account_id] = stop
             self.launch(self.login_worker, self.store.account(account_id), stop)
+
+    def remove_account(self, account_id):
+        """Xóa tài khoản: đóng phiên Chrome đang giữ, xóa khỏi danh sách và xóa hồ sơ Chrome (phiên đăng nhập) trên máy."""
+        with self.lock:
+            if account_id in self.review_stops:
+                raise ValueError("Tài khoản đang mở phiên. Bấm Đóng phiên rồi xóa.")
+            email = self.store.delete_account(account_id)
+            browser = self.browsers.pop(account_id, None)
+        if browser:
+            browser.close()
+        profile = self.data / "profiles" / account_id
+        if profile.resolve().parent == (self.data / "profiles").resolve():  # chỉ xóa đúng thư mục hồ sơ của tài khoản
+            shutil.rmtree(profile, ignore_errors=True)
+        shutil.rmtree(self.data / "login-downloads" / account_id, ignore_errors=True)
+        self.changed.set()
+        return email
 
     def review_worker(self, account_id, browser, stop):
         while not stop.wait(1) and not self.closing:
