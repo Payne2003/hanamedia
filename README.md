@@ -84,6 +84,17 @@ Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt 
 9. Tool chờ tải hoàn tất, kiểm tra MP4, đổi tên theo mã cảnh rồi hiển thị **Xong**. Bấm **Xem** để kiểm tra video đã gắn vào cảnh.
 10. Sau khi thử thành công, chọn **Tự gửi prompt & tải video**, nhập nhiều prompt và tăng dần số tài khoản đồng thời. Có thể thử chạy ẩn sau đó.
 
+## Prompt Studio: sửa từng prompt trong hàng đợi
+
+Bấm vào **tên hoặc nội dung** một prompt trong **Hàng đợi** để mở **Chi tiết Prompt / Prompt Studio** (địa chỉ `#job=<mã>`; nút trình duyệt Quay lại cũng dùng được).
+
+- Sửa **Prompt** (nội dung gửi lên Muse) và các ghi chú cảnh: **Bối cảnh**, **Hành vi nhân vật**, **Nội dung hành động nhân vật**, **Góc quay**. Prompt dạng `Bối cảnh N: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;` được tự tách vào các ô này.
+- **Ảnh tham chiếu**: kéo thả hoặc **Chọn tệp** (JPG, PNG, WEBP, tối đa 10 MB, tối đa 10 ảnh); bấm ✕ để bỏ ảnh. Ảnh tải lên cũng được lưu vào Thư viện.
+- **Loại**: Video (prompt → video) hoặc Ảnh → video (cần ít nhất 1 ảnh). **Tài khoản**: để "Chờ tài khoản" cho tool tự chia, hoặc chọn một tài khoản cụ thể.
+- **Lưu** để lưu và quay về hàng đợi; **Hủy** để bỏ thay đổi; **Quay lại hàng đợi** để thoát (hỏi nếu còn thay đổi chưa lưu).
+- **Chạy lại** (hoặc chọn Trạng thái "Chờ (chạy lại prompt này)") đưa prompt **Xong** hoặc **Lỗi** về **Chờ**; video cũ vẫn giữ trong thư mục lưu. Prompt lỗi sau khi đã gửi lên Muse cần xác nhận vì có thể đã tốn credit.
+- Prompt **Đang chạy** chỉ xem được, không sửa. Prompt Xong/Lỗi mở ở chế độ xem: bấm **Sửa Prompt** để sửa.
+
 ## Xóa tài khoản
 
 Trong **Tài khoản**, bấm **✕ Xóa** ở tài khoản cần bỏ (ví dụ đã hết hạn hoặc hết credit) rồi xác nhận. Tool đóng phiên Chrome của tài khoản đó, xóa phiên đăng nhập trong `data/profiles/<mã tài khoản>` và bỏ tài khoản khỏi danh sách. Prompt đang **Chờ** của tài khoản này được chia lại cho các tài khoản còn lại; video đã tải và lịch sử tác vụ giữ nguyên (cột tài khoản hiện **TK đã xóa**). Không xóa được tài khoản đang chạy tác vụ, đang đăng nhập hoặc đang mở phiên: đợi xong hoặc bấm **Đóng phiên** trước.
