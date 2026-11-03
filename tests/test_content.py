@@ -325,3 +325,79 @@ class GeminiFillTests(unittest.TestCase):
         result, sent = self.run_fill(paste_works=False, shift_enter_sends=True)
         self.assertIsInstance(result, Exception)
         self.assertEqual(sent, 1)
+
+
+class EnglishPromptTests(unittest.TestCase):
+    def test_input_is_split_from_lines_or_bracketed_list(self):
+        one_line = ("Input: [ Bối cảnh 1: Bãi biển, góc quay: Toàn cảnh, hành vi nhân vật: Vui, Nội dung hành động nhân vật: Chạy; "
+                    "Bối cảnh 2: Rừng, góc quay: Cận, hành vi nhân vật: Sợ, Nội dung hành động nhân vật: Trốn;]")
+        lines = content.split_scene_lines(one_line)
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[1].startswith("Bối cảnh 2: Rừng"))
+        self.assertEqual(len(content.split_scene_lines("Cảnh A\n\nCảnh B\n")), 2)
+        with self.assertRaises(ValueError):
+            content.split_scene_lines("  ")
+
+    def test_answer_parsing_prefers_english_and_reports_missing(self):
+        answer = """Sure! Here are the prompts:
+**1.** Bối cảnh bãi biển lúc bình minh, toàn cảnh, cô gái vui vẻ chạy dọc bờ biển.
+1. Wide shot of a sunny beach at dawn, a young woman runs happily along the shoreline.
+Scene 3: Close-up of a frightened man hiding behind a large tree in a dark forest.
+END OF LIST"""
+        found = content.parse_english(answer, 3)
+        self.assertTrue(found[1].startswith("Wide shot"))
+        self.assertEqual(content.missing_english(found, 3), [2])
+        request = content.english_request(["Cảnh A", "Cảnh B", "Cảnh C"], [2], "cinematic 9:16")
+        self.assertIn("2. Cảnh B", request)
+        self.assertNotIn("1. Cảnh A", request)
+        self.assertIn("cinematic 9:16", request)
+
+    def test_run_english_continues_and_retries_missing_scenes(self):
+        from runner import gemini_web
+        en = lambda n: f"{n}. English prompt for scene {n}, wide shot, a person walks slowly."
+
+        class Session:
+            def __init__(self):
+                self.sent = []
+                self.answers = [
+                    "\n".join([en(1), "2. Bối cảnh rừng, cận cảnh nhân vật sợ hãi trốn sau thân cây lớn.", en(3)]),
+                    en(4),                       # viết tiếp, vẫn chưa có END
+                    "Nothing more to add.",      # viết tiếp không ra cảnh mới -> dừng
+                    "\n".join([en(2), en(5), content.END_EN]),  # hỏi lại riêng cảnh 2 và 5
+                ]
+            def new_chat(self):
+                pass
+            def wait_ready(self, status, stop, email=""):
+                pass
+            def choose_model(self, name):
+                return name
+            def ask(self, text, status, stop, email="", label=""):
+                self.sent.append(text)
+                return self.answers.pop(0)
+
+        session = Session()
+        lines = [f"Bối cảnh {n}: cảnh {n}" for n in range(1, 6)]
+        result = gemini_web.run_english(session, lines, lambda _: None, threading.Event(), model="Pro")
+        self.assertEqual(result["missing"], [])
+        self.assertEqual(result["english"][1], "English prompt for scene 2, wide shot, a person walks slowly.")
+        self.assertEqual(result["rounds"], 4)
+        self.assertIn("Continue with scene 4", session.sent[1])
+        self.assertIn("2. Bối cảnh 2", session.sent[3])
+        self.assertIn("5. Bối cảnh 5", session.sent[3])
+        self.assertNotIn("1. Bối cảnh 1", session.sent[3])
+
+    def test_still_missing_after_retries_is_reported(self):
+        from runner import gemini_web
+
+        class Session:
+            def new_chat(self):
+                pass
+            def wait_ready(self, status, stop, email=""):
+                pass
+            def choose_model(self, name):
+                return ""
+            def ask(self, text, status, stop, email="", label=""):
+                return "1. A long English prompt for the first scene only.\n" + content.END_EN
+
+        result = gemini_web.run_english(Session(), ["A", "B"], lambda _: None, threading.Event())
+        self.assertEqual((result["missing"], result["english"][1], result["rounds"]), ([2], "", 4))

@@ -400,6 +400,51 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
     return result
 
 
+MAX_MISSING_ROUNDS = 3
+
+
+def run_english(session, lines, status, stop, email="", model="", style=""):
+    """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
+    total = len(lines)
+    session.new_chat()
+    session.wait_ready(status, stop, email)
+    if model:
+        picked = session.choose_model(model)
+        status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
+    rounds = 1
+    answer = session.ask(content.english_request(lines, style=style), status, stop, email,
+                         label=f"Gemini đang viết {total} prompt tiếng Anh")
+    found = content.parse_english(answer, total)
+    # Câu trả lời bị cắt: nhắn viết tiếp từ cảnh sau cùng đã có.
+    for _ in range(MAX_CONTINUE):
+        if content.END_EN.lower() in answer.lower() or not found or max(found) >= total:
+            break
+        after = max(found)
+        answer = session.ask(content.continue_english(after, total), status, stop, email,
+                             label=f"Đã có {len(found)}/{total} prompt · Gemini đang viết tiếp")
+        rounds += 1
+        more = content.parse_english(answer, total)
+        if not any(number > after for number in more):
+            break
+        for number, prompt in more.items():
+            if number not in found or not content.is_english(found[number]):
+                found[number] = prompt
+    # Theo sơ đồ: thiếu cảnh nào thì quay lại hỏi riêng những cảnh đó.
+    for attempt in range(MAX_MISSING_ROUNDS):
+        missing = content.missing_english(found, total)
+        if not missing:
+            break
+        answer = session.ask(content.english_request(lines, missing, style), status, stop, email,
+                             label=f"Thiếu {len(missing)} prompt · Gemini đang viết lại (lần {attempt + 1})")
+        rounds += 1
+        for number, prompt in content.parse_english(answer, total).items():
+            if number in missing and (number not in found or content.is_english(prompt)):
+                found[number] = prompt
+    missing = content.missing_english(found, total)
+    return {"english": [found.get(number, "") for number in range(1, total + 1)], "missing": missing,
+            "total": total, "rounds": rounds}
+
+
 class GeminiWebRunner:
     """Chạy Gemini web trong một luồng riêng; giao diện đọc trạng thái qua snapshot()."""
 
@@ -421,14 +466,15 @@ class GeminiWebRunner:
         with self.lock:
             self.job.update(values)
 
-    def start(self, kind, prompt, email="", model=""):
+    def start(self, kind, prompt, email="", model="", lines=None, style=""):
+        """kind: "generate"/"review" (prompt = yêu cầu viết cảnh) hoặc "english" (lines = danh sách cảnh)."""
         with self.lock:
             if self.job["busy"]:
                 raise ValueError("Gemini web đang chạy một yêu cầu khác. Đợi xong hoặc bấm Dừng.")
             job_id = uuid.uuid4().hex
             self.job = {"id": job_id, "kind": kind, "busy": True, "status": "Đang mở Gemini…", "result": None, "error": ""}
         self.stop.clear()
-        self.requests.put((job_id, kind, prompt, email.strip(), model.strip()))
+        self.requests.put((job_id, kind, prompt, email.strip(), model.strip(), lines, style))
         return job_id
 
     def cancel(self):
@@ -459,7 +505,7 @@ class GeminiWebRunner:
             item = self.requests.get()
             if item is None:
                 return
-            job_id, kind, prompt, email, model = item
+            job_id, kind, prompt, email, model, lines, style = item
             status = lambda text: self.set(status=text)
             try:
                 if self.login_window_open():
@@ -469,6 +515,13 @@ class GeminiWebRunner:
                         self.session.close()
                     status("Đang mở Chrome cho Gemini…")
                     self.session = self.factory(self.profile)
+                if kind == "english":
+                    result = run_english(self.session, lines, status, self.stop, email, model, style)
+                    done = result["total"] - len(result["missing"])
+                    self.set(busy=False, result=result,
+                             status=f"Xong: {done}/{result['total']} prompt tiếng Anh sau {result['rounds']} lượt"
+                                    + (f" · còn thiếu {len(result['missing'])}" if result["missing"] else ""))
+                    continue
                 result = run_conversation(self.session, prompt, status, self.stop, email, model, kind == "review")
                 result["prompts"] = content.format_prompts(result["scenes"])
                 self.set(busy=False, result=result,

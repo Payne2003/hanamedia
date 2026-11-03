@@ -84,6 +84,24 @@
           </section>
         </div>
       </div>
+      <div class="english-card card">
+        <div class="english-heading"><h3><span>4</span>Prompt tiếng Anh · Gemini Pro</h3><p>Mỗi “Bối cảnh N: …” thành 1 prompt tiếng Anh, mỗi dòng một prompt. Cảnh nào thiếu hoặc chưa phải tiếng Anh, tool tự hỏi lại Gemini riêng những cảnh đó.</p></div>
+        <div class="english-columns">
+          <div>
+            <div class="english-label"><label for="englishInput">Đầu vào · danh sách cảnh</label><button id="englishFromScenes" type="button" class="text-button">↓ Lấy từ danh sách cảnh</button></div>
+            <textarea id="englishInput" rows="9" maxlength="600000" placeholder="Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;&#10;Bối cảnh 2: ..."></textarea>
+            <label>Phong cách chung <small>(không bắt buộc · ví dụ: cinematic, 9:16, ánh sáng tự nhiên)</small><input id="englishStyle" maxlength="2000" placeholder="Thêm vào mọi prompt"></label>
+            <button id="runEnglish" type="button" class="primary full">✦ Viết prompt tiếng Anh bằng Gemini</button>
+            <div id="englishProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="englishStatus"></span><button id="stopEnglish" type="button">Dừng</button></div></div>
+          </div>
+          <div>
+            <div class="english-label"><label for="englishOutput">Đầu ra · mỗi dòng 1 prompt tiếng Anh</label><b id="englishCount"></b></div>
+            <textarea id="englishOutput" rows="9" placeholder="Kết quả hiện ở đây. Có thể sửa trực tiếp."></textarea>
+            <div id="englishMissing" class="content-issues" hidden></div>
+            <div class="content-actions"><button id="useEnglish" type="button" class="primary">→ Đưa vào Studio</button><button id="copyEnglish" type="button">⧉ Chép</button><button id="downloadEnglish" type="button">⇩ Tải .txt</button></div>
+          </div>
+        </div>
+      </div>
     </section>
   </main>
   <dialog id="accounts"><div class="dialog-heading"><div><div class="eyebrow">EMAIL + OTP · KHÔNG MẬT KHẨU</div><h2>Tài khoản Muse</h2></div><button id="closeAccounts" aria-label="Đóng">✕</button></div><p class="dialog-description">Mỗi tài khoản có phiên Chrome riêng. Tool thử lấy OTP mới từ link hộp thư; nếu hộp thư lỗi, nhập mã trực tiếp trên cửa sổ Muse.</p><div id="accountList"></div><form id="accountForm"><h3>Thêm tài khoản</h3><div class="form-grid"><label>Email Muse<input id="email" type="email" autocomplete="off" required maxlength="254" placeholder="email@tuan89.site"></label><label>Ngân sách credit dự kiến<input id="budget" type="number" required min="0" step="0.01" value="10"></label></div><label>Link hộp thư OTP<input id="mailbox" type="url" placeholder="Tự điền link Tuan89 theo email nếu để trống"></label><button class="primary" type="submit">+ Thêm tài khoản</button></form><p class="subtle-note">Phiên đăng nhập được giữ trên máy. Không chia sẻ thư mục data. Tài khoản hết ngân sách hoặc cần kiểm tra sẽ không nhận tác vụ mới.</p></dialog>
