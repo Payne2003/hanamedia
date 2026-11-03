@@ -61,7 +61,7 @@ Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt 
 - Tạo ảnh dùng giao diện Google Flow trên Chrome profile `Profile 2` trong `%LOCALAPPDATA%\Google\Chrome\User Data`, không dùng API riêng/không công khai. Profile này phải được đóng trong các cửa sổ Chrome khác trước khi bấm **Mở Flow và điền prompt**; Chrome không cho hai tiến trình dùng chung profile cùng lúc. Tool điền prompt nhưng người dùng cần chọn **Hình ảnh**, bấm tạo và tải ảnh trong Flow; sau đó nhập ảnh tải xuống vào thư viện. Đăng nhập Google trực tiếp trên cửa sổ Flow; tool không đọc/lưu mật khẩu.
 - Đã quan sát đăng nhập Muse bằng email + OTP, gửi một yêu cầu video 5 giây, nhận video thật có thời lượng 5 giây và menu Tải xuống trên tài khoản mẫu trong trình duyệt ngày 02/11/2026.
 - Luồng tải ảnh lên Muse phụ thuộc vào ô chọn ảnh của giao diện Muse hiện tại và chưa được xác minh bằng một video ảnh → video thật. Nếu Muse không cung cấp ô tải ảnh tương thích hoặc không nhận nhiều ảnh, tác vụ sẽ báo lỗi trước khi gửi prompt.
-- Mã Selenium bám theo các nhãn/DOM vừa quan sát. Đây là bản triển khai để thử trên Windows; **chưa kiểm thử trọn quy trình bằng chính gói này trên Windows và chưa thử 10 tài khoản thật cùng lúc**. Phiên Chrome riêng, chế độ ẩn, thư mục tải và lấy OTP tự động cần kiểm tra trên máy cài đặt.
+- Mã Selenium bám theo các nhãn/DOM vừa quan sát. Đây là bản triển khai để thử trên Windows; **chưa kiểm thử trọn quy trình bằng chính gói này trên Windows và chưa thử nhiều tài khoản thật cùng lúc**. Phiên Chrome riêng, chế độ ẩn, thư mục tải và lấy OTP tự động cần kiểm tra trên máy cài đặt.
 - Đã chạy các bài kiểm tra tự động cho hàng đợi, đồng thời, ngân sách, chống thêm trùng, khôi phục sau gián đoạn, OTP/link hộp thư, file MP4 chưa tải xong và bảo vệ HTTP cục bộ. Test không tạo video thật.
 - Chưa tự đọc số dư credit Muse. Credit trong tool là **ngân sách dự kiến do bạn nhập**, giữ chỗ khi giao tác vụ. Cập nhật theo số dư/chi phí thực tế trên Muse. Hết ngân sách hoặc tài khoản cần kiểm tra thì không giao thêm việc.
 - Tạo ảnh độc lập chưa tích hợp. Ảnh tham chiếu có thể gắn riêng cho từng prompt → video; ảnh được giữ trong `data/input-images/` khi tác vụ còn trong hàng đợi.
@@ -79,6 +79,13 @@ Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt 
 1. Bấm **Chọn thư mục lưu**, chọn thư mục bạn muốn, ví dụ `D:\Video-Muse`.
 2. Mở **Tài khoản**, thêm email, ngân sách dự kiến và link hộp thư của chính tài khoản đó. Email `@tuan89.site` tự ghép link hộp thư nếu để trống.
 3. Bấm **Đăng nhập**. Một Chrome riêng được mở. Tool nhập email, tìm OTP mới từ hộp thư và đăng nhập. Nếu hộp thư không kết nối hoặc cần xác minh, giao diện ghi rõ; nhập mã trực tiếp trên cửa sổ Muse. Không gửi OTP cho người khác.
+
+### Đăng nhập hàng loạt tài khoản (không giới hạn số tài khoản)
+
+- **Thêm nhiều email một lần**: trong **Tài khoản**, dán mỗi dòng một email vào ô *Email Muse* rồi bấm **+ Thêm tài khoản**. Email `@tuan89.site` tự có link hộp thư OTP; email trùng được bỏ qua, email sai định dạng được báo lại.
+- **Đăng nhập tất cả tài khoản chưa sẵn sàng**: chọn số Chrome đăng nhập cùng lúc (mặc định 2) rồi bấm nút. Với từng tài khoản tool làm đúng các bước: mở muse.ai → nhập email → **Tiếp tục** → mở hộp thư Tuan89 → chờ thư **mới** của Meta (`Use code …… to log in` hoặc `Dùng mã …… để đăng nhập`) → nhập mã vào 6 ô (giữ **Nhớ thiết bị này**) → Muse tự xác nhận hoặc tool bấm **Tiếp**. Đăng nhập xong thì đóng Chrome của tài khoản đó, phiên được lưu trong hồ sơ riêng `data/profiles/<mã tài khoản>`.
+- Tool nhận biết thư mới theo **giờ nhận thư**, vì Meta hay gửi lại đúng mã cũ trong thư mới. Thư đã có trước khi bấm Tiếp tục thì không dùng. Sau 60 giây chưa thấy thư, tool bấm **Gửi lại mã** một lần; sau 3 phút vẫn chưa được thì tài khoản chuyển sang **Cần kiểm tra**, các tài khoản khác vẫn chạy tiếp.
+- Nếu Muse hiện xác minh/CAPTCHA, tool không vượt qua: tài khoản đó dừng, bạn mở phiên và tự xử lý.
 4. Ban đầu chọn **1 tài khoản**, bỏ chọn chạy ẩn. Chọn **Điền sẵn prompt để tôi gửi & tải** để kiểm tra điều khiển và thư mục trước.
 5. Nhập một prompt: `Bình minh trên mặt biển, máy quay chuyển động chậm, video 5 giây, không có chữ.` Nếu muốn ảnh → video, chọn đúng prompt trong mục **Ảnh nhân vật cho prompt** rồi gắn một hoặc nhiều ảnh.
 6. Bấm **Tạo & chạy**. Chọn nhiều ảnh chỉ hoạt động khi Muse cho phép tải nhiều file trong cùng ô chọn ảnh.

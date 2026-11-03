@@ -196,7 +196,11 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise ValueError("Dữ liệu không hợp lệ.")
             if path == "/api/accounts":
+                if "emails" in body:
+                    return self.reply({"ok": True, **store.add_accounts(body["emails"], body["budget"])})
                 store.add_account(body["email"], body.get("mailbox", ""), body["budget"])
+            elif path == "/api/accounts/login-all":
+                return self.reply({"ok": True, "count": engine.login_all(body.get("parallel", 2))})
             elif path == "/api/accounts/delete":
                 if not re.fullmatch(r"[a-f0-9]{32}", str(body.get("id", ""))):
                     raise ValueError("Tài khoản không hợp lệ.")

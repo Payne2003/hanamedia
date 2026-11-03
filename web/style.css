@@ -127,3 +127,7 @@ footer{padding:7px 12px;color:#717993;font-size:8px}
 @media(max-width:900px){.job-columns{grid-template-columns:1fr}.job-left{border-right:0;border-bottom:1px solid var(--border)}.job-grid{grid-template-columns:1fr}}
 .english-structured{display:flex!important;gap:8px;align-items:flex-start;margin:10px 0 0!important;font-weight:400!important}.english-structured input{width:16px;margin-top:2px}.english-structured small{display:block;color:#6f758e;font-size:10px;margin-top:2px}.english-structured code{font-size:10px;color:#c4b3ff}
 .english-options{grid-template-columns:2fr 1fr 1fr}@media(max-width:700px){.english-options{grid-template-columns:1fr}}
+
+.login-all{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:0 0 14px}
+.login-all label{display:flex;flex-direction:column;gap:4px;font-size:13px}
+#accountForm textarea{width:100%;font:inherit}

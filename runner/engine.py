@@ -21,6 +21,8 @@ class Engine:
         self.threads = set()
         self.review_stops = {}
         self.browsers = {}
+        self.login_all_status = ""
+        self.login_all_running = False
         self.flow_downloads = self.data / "flow-downloads"
         self.flow_downloads.mkdir(parents=True, exist_ok=True)
         self.flow_requests = queue.Queue()
@@ -45,8 +47,8 @@ class Engine:
         thread.start()
 
     def start(self, limit, headless, automatic=True):
-        if type(limit) is not int or not 1 <= limit <= 10 or type(headless) is not bool or type(automatic) is not bool:
-            raise ValueError("Số tài khoản chạy đồng thời phải từ 1 đến 10.")
+        if type(limit) is not int or not 1 <= limit <= 20 or type(headless) is not bool or type(automatic) is not bool:
+            raise ValueError("Số tài khoản chạy đồng thời phải từ 1 đến 20.")
         destination = self.store.setting("output_folder")
         if not destination or not Path(destination).is_dir():
             raise ValueError("Chọn thư mục lưu trước khi chạy.")
@@ -178,11 +180,11 @@ class Engine:
                 account_state = "attention"
             self.store.finish(job["id"], error=message, account_state=account_state)
 
-    def login(self, account_id, review=False):
+    def login(self, account_id, review=False, keep=True, slots=None):
         with self.lock:
             if self.closing:
                 raise ValueError("Bộ chạy đang tắt.")
-            if len(self.threads) >= self.limit:
+            if len(self.threads) >= (slots or self.limit):
                 raise ValueError("Đã đủ số phiên Chrome đồng thời. Đợi một tài khoản rảnh.")
             # Giữ chỗ tài khoản TRƯỚC khi đụng vào Chrome: không bao giờ đóng hay dùng chung Chrome của tác vụ đang chạy.
             existing = self.browsers.get(account_id)
@@ -197,7 +199,50 @@ class Engine:
             stop = threading.Event() if review else None
             if stop:
                 self.review_stops[account_id] = stop
-            self.launch(self.login_worker, self.store.account(account_id), stop, browser)
+            self.launch(self.login_worker, self.store.account(account_id), stop, browser, keep)
+
+    def login_all(self, parallel):
+        """Đăng nhập lần lượt mọi tài khoản đang bật mà chưa sẵn sàng, tối đa `parallel` Chrome cùng lúc.
+        Đăng nhập xong thì đóng Chrome (phiên lưu trong hồ sơ riêng) để không mở hàng trăm cửa sổ."""
+        if type(parallel) is not int or not 1 <= parallel <= 20:
+            raise ValueError("Số Chrome đăng nhập cùng lúc phải từ 1 đến 20.")
+        with self.lock:
+            if self.closing:
+                raise ValueError("Bộ chạy đang tắt.")
+            if self.login_all_running:
+                raise ValueError("Đang đăng nhập hàng loạt. Đợi xong lượt này.")
+            pending = [a["id"] for a in self.store.snapshot()["accounts"] if a["enabled"] and a["state"] in ("new", "attention")]
+            if not pending:
+                raise ValueError("Không có tài khoản nào cần đăng nhập.")
+            self.login_all_running = True
+            self.login_all_status = f"Đăng nhập hàng loạt: 0/{len(pending)}"
+        threading.Thread(target=self.login_all_worker, args=(pending, parallel), daemon=True).start()
+        return len(pending)
+
+    def login_all_worker(self, pending, parallel):
+        done = 0
+        try:
+            for account_id in pending:
+                while not self.closing:
+                    with self.lock:
+                        logins = sum(1 for a in self.store.snapshot()["accounts"] if a["state"] == "authenticating")
+                        if logins < parallel and len(self.threads) < max(self.limit, parallel):
+                            break
+                    self.changed.wait(1)
+                if self.closing:
+                    break
+                try:
+                    self.login(account_id, keep=False, slots=max(self.limit, parallel))
+                except ValueError:
+                    pass  # tài khoản vừa bận/bị xóa: bỏ qua
+                done += 1
+                self.login_all_status = f"Đăng nhập hàng loạt: {done}/{len(pending)}"
+            while not self.closing and any(a["state"] == "authenticating" for a in self.store.snapshot()["accounts"]):
+                self.changed.wait(1)
+            self.login_all_status = f"Đã chạy đăng nhập {done}/{len(pending)} tài khoản. Xem trạng thái từng tài khoản bên dưới."
+        finally:
+            with self.lock:
+                self.login_all_running = False
 
     def remove_account(self, account_id):
         """Xóa tài khoản: đóng phiên Chrome đang giữ, xóa khỏi danh sách và xóa hồ sơ Chrome (phiên đăng nhập) trên máy."""
@@ -243,7 +288,7 @@ class Engine:
             if stop:
                 stop.set()
 
-    def login_worker(self, account, stop=None, old=None):
+    def login_worker(self, account, stop=None, old=None, keep_open=True):
         if old:
             old.close()  # Chrome cũ (nếu có) đã được tách khỏi danh sách khi giữ chỗ; đóng để mở lại có cửa sổ
         browser = None
@@ -262,6 +307,8 @@ class Engine:
             # Đăng nhập xong thì GIỮ Chrome này cho tài khoản (không đóng rồi mở lại ở tác vụ đầu tiên).
             try:
                 keep = not self.closing and self.alive(browser) and browser.session_ready()
+                if not keep_open and keep and not stop:
+                    keep, detail = False, "Đã đăng nhập; phiên được lưu trong hồ sơ Chrome của tài khoản"
             except Exception:
                 keep = False
             if not keep and stop:
@@ -281,7 +328,8 @@ class Engine:
     def snapshot(self):
         with self.lock:
             return {"enabled": self.enabled, "parallel": self.limit, "headless": self.headless, "automatic": self.automatic,
-                    "output_folder": self.store.setting("output_folder", ""), "flow_status": self.flow_status}
+                    "output_folder": self.store.setting("output_folder", ""), "flow_status": self.flow_status,
+                    "login_all": self.login_all_status, "login_all_running": self.login_all_running}
 
     def shutdown(self):
         with self.lock:
