@@ -106,26 +106,59 @@ class Engine:
                 self.changed.wait(1)
                 self.changed.clear()
 
+    @staticmethod
+    def alive(browser):
+        """Chrome/ChromeDriver còn sống không (người dùng có thể đã tự đóng cửa sổ)."""
+        try:
+            return bool(browser.driver.window_handles)
+        except Exception:
+            return False
+
+    def session(self, job, account, headless, target):
+        """Phiên Muse cho tác vụ: dùng lại Chrome đang mở của tài khoản nếu còn sống, kiểm tra phiên trước khi gửi,
+        chỉ đăng nhập lại khi phiên đã mất. Một tài khoản chỉ có một Chrome; tài khoản đang 'busy' nên chỉ thread này dùng nó."""
+        phase = lambda value, job_id=job["id"]: self.store.phase(job_id, value)
+        with self.lock:
+            browser = self.browsers.get(account["id"])
+        if browser is not None and not self.alive(browser):
+            with self.lock:
+                if self.browsers.get(account["id"]) is browser:
+                    self.browsers.pop(account["id"])
+            browser.close()
+            browser = None
+        if browser is None:
+            browser = MuseBrowser(self.data / "profiles" / account["id"], target, headless, phase)
+            with self.lock:
+                self.browsers[account["id"]] = browser
+            browser.phase = phase
+            browser.login(account)
+            return browser
+        browser.phase = phase
+        self.store.phase(job["id"], "Kiểm tra phiên Muse")
+        try:
+            ready = browser.session_ready()
+        except Exception:
+            ready = False
+        if not ready:
+            browser.login(account)  # mở lại muse.ai; nếu phiên hết hạn thì đi qua bước OTP như lần đầu
+        return browser
+
     def work(self, job, account, headless, folder, automatic):
-        browser = None
+        browser = file = None
         try:
             target = Path(folder) / ("huy-" + job["id"])
             target.mkdir(parents=True, exist_ok=True)
-            browser = self.browsers.get(account["id"])
-            if browser is None:
-                browser = MuseBrowser(self.data / "profiles" / account["id"], target, headless,
-                                      lambda p: self.store.phase(job["id"], p))
-                browser.login(account)
-                with self.lock:
-                    self.browsers[account["id"]] = browser
-            browser.phase = lambda phase, job_id=job["id"]: self.store.phase(job_id, phase)
+            browser = self.session(job, account, headless, target)
             browser.set_download_directory(target)
             self.store.phase(job["id"], "Chuẩn bị gửi prompt", browser.driver.current_url)
             file = browser.generate(job["prompt"], job["id"], lambda: self.store.submitting(job["id"]),
                                     automatic=automatic, images=job["images"])
             final = target / f"Prompt {job['ordinal'] + 1}.mp4"
             if file != final:
-                file.rename(final)
+                try:
+                    file.rename(final)
+                except OSError:
+                    final = file  # video đã tải về: giữ tên gốc chứ không báo lỗi tác vụ
             self.store.finish(job["id"], output=str(final))
         except Exception as error:
             message = str(error) if isinstance(error, MuseFailure) else "Bộ chạy gặp lỗi Chrome hoặc đọc/ghi file. Kiểm tra Muse và quyền ghi thư mục; không tự gửi lại."
@@ -151,21 +184,20 @@ class Engine:
                 raise ValueError("Bộ chạy đang tắt.")
             if len(self.threads) >= self.limit:
                 raise ValueError("Đã đủ số phiên Chrome đồng thời. Đợi một tài khoản rảnh.")
+            # Giữ chỗ tài khoản TRƯỚC khi đụng vào Chrome: không bao giờ đóng hay dùng chung Chrome của tác vụ đang chạy.
             existing = self.browsers.get(account_id)
-            if review and existing and not getattr(existing, "headless", False):
+            if review and existing and not getattr(existing, "headless", False) and self.alive(existing):
+                self.store.reserve_login(account_id, "reviewing", "Đang mở phiên Muse hiện tại để kiểm tra.")
                 stop = threading.Event()
                 self.review_stops[account_id] = stop
-                self.store.set_account(account_id, "reviewing", "Đang mở phiên Muse hiện tại để kiểm tra.")
                 self.launch(self.review_worker, account_id, existing, stop)
                 return
-            browser = self.browsers.pop(account_id, None)
-            if browser:
-                browser.close()
             self.store.reserve_login(account_id)
+            browser = self.browsers.pop(account_id, None)
             stop = threading.Event() if review else None
             if stop:
                 self.review_stops[account_id] = stop
-            self.launch(self.login_worker, self.store.account(account_id), stop)
+            self.launch(self.login_worker, self.store.account(account_id), stop, browser)
 
     def remove_account(self, account_id):
         """Xóa tài khoản: đóng phiên Chrome đang giữ, xóa khỏi danh sách và xóa hồ sơ Chrome (phiên đăng nhập) trên máy."""
@@ -211,30 +243,40 @@ class Engine:
             if stop:
                 stop.set()
 
-    def login_worker(self, account, stop=None):
+    def login_worker(self, account, stop=None, old=None):
+        if old:
+            old.close()  # Chrome cũ (nếu có) đã được tách khỏi danh sách khi giữ chỗ; đóng để mở lại có cửa sổ
         browser = None
+        keep = False
         state, detail = "attention", "Không khởi động được phiên Chrome."
         try:
             browser = MuseBrowser(self.data / "profiles" / account["id"], self.data / "login-downloads" / account["id"], False,
                                   lambda p: self.store.set_account(account["id"], "authenticating", p))
             browser.login(account)
-            state, detail = "ready", "Đã xác minh phiên đăng nhập"
+            state, detail = "ready", "Đã xác minh phiên đăng nhập; giữ Chrome mở cho tác vụ tiếp theo"
             if stop:
                 self.store.set_account(account["id"], "reviewing", "Đang mở phiên để kiểm tra. Bấm Đóng phiên khi xong.")
                 while not stop.wait(1) and not self.closing:
-                    try:
-                        if not browser.driver.window_handles:
-                            break
-                    except Exception:
+                    if not self.alive(browser):
                         break
+            # Đăng nhập xong thì GIỮ Chrome này cho tài khoản (không đóng rồi mở lại ở tác vụ đầu tiên).
+            try:
+                keep = not self.closing and self.alive(browser) and browser.session_ready()
+            except Exception:
+                keep = False
+            if not keep and stop:
+                state, detail = "attention", "Phiên Muse đã đóng hoặc cần đăng nhập lại."
         except Exception as error:
             detail = str(error) if isinstance(error, MuseFailure) else "Không đăng nhập được. Kiểm tra Chrome và hộp thư rồi thử lại."
         finally:
-            if browser:
-                browser.close()
             with self.lock:
                 self.review_stops.pop(account["id"], None)
+                if keep:
+                    self.browsers[account["id"]] = browser
+            if browser and not keep:
+                browser.close()
             self.store.set_account(account["id"], state, detail)
+            self.changed.set()
 
     def snapshot(self):
         with self.lock:

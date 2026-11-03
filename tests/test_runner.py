@@ -187,7 +187,7 @@ class StoreTests(unittest.TestCase):
             def __init__(self, profile, downloads, headless, phase):
                 self.downloads = Path(downloads)
                 self.phase = phase
-                self.driver = type("Driver", (), {"current_url": "https://muse.ai"})()
+                self.driver = type("Driver", (), {"current_url": "https://muse.ai", "window_handles": ["main"]})()
                 self.login_count = self.generate_count = self.close_count = 0
                 self.instances.append(self)
 
@@ -240,7 +240,7 @@ class StoreTests(unittest.TestCase):
 
             def __init__(self, profile, downloads, headless, phase):
                 self.downloads = Path(downloads)
-                self.driver = type("Driver", (), {"current_url": "https://muse.ai"})()
+                self.driver = type("Driver", (), {"current_url": "https://muse.ai", "window_handles": ["main"]})()
                 self.login_count = self.generate_count = self.close_count = 0
                 self.instances.append(self)
 
@@ -284,6 +284,107 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(browser.close_count, 1)
         finally:
             engine.shutdown()
+
+    def session_browser(self):
+        class FakeBrowser:
+            instances = []
+            ready = True
+
+            def __init__(self, profile, downloads, headless, phase):
+                self.downloads, self.headless = Path(downloads), headless
+                self.driver = type("Driver", (), {"current_url": "https://muse.ai", "window_handles": ["main"]})()
+                self.login_count = self.generate_count = self.close_count = 0
+                self.instances.append(self)
+
+            def login(self, account):
+                self.login_count += 1
+                FakeBrowser.ready = True
+
+            def session_ready(self):
+                return FakeBrowser.ready
+
+            def set_download_directory(self, downloads):
+                self.downloads = Path(downloads)
+
+            def generate(self, prompt, job_id, before_submit, automatic=True, images=None):
+                self.generate_count += 1
+                before_submit()
+                file = self.downloads / (job_id + ".mp4")
+                file.write_bytes(b"fixture video")
+                return file
+
+            def close(self):
+                self.close_count += 1
+                self.driver.window_handles = []
+        return FakeBrowser
+
+    def test_login_keeps_chrome_open_and_first_job_reuses_it(self):
+        account = self.account()
+        self.jobs(1)
+        engine = Engine(self.store, self.root / "engine-data")
+        FakeBrowser = self.session_browser()
+        try:
+            with patch("runner.engine.MuseBrowser", FakeBrowser):
+                self.store.reserve_login(account["id"])
+                engine.login_worker(self.store.account(account["id"]))
+                self.assertEqual(self.store.account(account["id"])["state"], "ready")
+                browser = FakeBrowser.instances[0]
+                self.assertEqual(browser.close_count, 0)
+                self.assertIs(engine.browsers[account["id"]], browser)
+                job, claimed = self.store.claim(1)
+                engine.work(job, claimed, False, str(self.root / "output"), True)
+                self.assertEqual(len(FakeBrowser.instances), 1)
+                self.assertEqual(browser.login_count, 1)
+                self.assertEqual(self.store.snapshot()["totals"]["done"], 1)
+        finally:
+            engine.shutdown()
+            engine.close_browsers()
+
+    def test_login_never_closes_chrome_of_a_running_job(self):
+        account = self.account()
+        self.store.set_account(account["id"], "ready")
+        self.jobs(1)
+        engine = Engine(self.store, self.root / "engine-data")
+        FakeBrowser = self.session_browser()
+        try:
+            running = FakeBrowser(None, self.root / "d", False, None)
+            engine.browsers[account["id"]] = running
+            self.store.claim(1)  # tài khoản chuyển sang busy
+            for review in (False, True):
+                with self.assertRaises(ValueError):
+                    engine.login(account["id"], review=review)
+            self.assertEqual(running.close_count, 0)
+            self.assertIs(engine.browsers[account["id"]], running)
+            self.assertEqual(self.store.account(account["id"])["state"], "busy")
+        finally:
+            engine.shutdown()
+
+    def test_work_checks_session_and_replaces_dead_chrome(self):
+        account = self.account()
+        self.store.set_account(account["id"], "ready")
+        self.jobs(3)
+        engine = Engine(self.store, self.root / "engine-data")
+        FakeBrowser = self.session_browser()
+        try:
+            with patch("runner.engine.MuseBrowser", FakeBrowser):
+                job, claimed = self.store.claim(1)
+                engine.work(job, claimed, False, str(self.root / "output"), True)
+                first = FakeBrowser.instances[0]
+                FakeBrowser.ready = False  # phiên Muse hết hạn nhưng Chrome còn mở: đăng nhập lại trên chính Chrome đó
+                job, claimed = self.store.claim(1)
+                engine.work(job, claimed, False, str(self.root / "output"), True)
+                self.assertEqual(len(FakeBrowser.instances), 1)
+                self.assertEqual(first.login_count, 2)
+                first.driver.window_handles = []  # người dùng tự đóng Chrome: mở Chrome mới
+                job, claimed = self.store.claim(1)
+                engine.work(job, claimed, False, str(self.root / "output"), True)
+                self.assertEqual(len(FakeBrowser.instances), 2)
+                self.assertEqual(first.close_count, 1)
+                self.assertIs(engine.browsers[account["id"]], FakeBrowser.instances[1])
+                self.assertEqual(self.store.snapshot()["totals"]["done"], 3)
+        finally:
+            engine.shutdown()
+            engine.close_browsers()
 
     def test_delete_is_atomic_when_a_selected_job_is_running(self):
         self.jobs(2)

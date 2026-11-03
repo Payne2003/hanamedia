@@ -146,10 +146,12 @@ class Store:
         self.plan_waiting()
         return email
 
-    def reserve_login(self, account_id):
+    def reserve_login(self, account_id, state="authenticating", detail="Mở Chrome"):
+        """Giữ chỗ tài khoản cho đăng nhập/mở phiên. Từ chối nếu tài khoản đang chạy tác vụ hoặc đang đăng nhập."""
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            cursor = db.execute("UPDATE accounts SET state='authenticating',detail='Mở Chrome' WHERE id=? AND state NOT IN ('busy','authenticating','reviewing')", (account_id,))
+            cursor = db.execute("UPDATE accounts SET state=?,detail=? WHERE id=? AND state NOT IN ('busy','authenticating','reviewing')",
+                                (state, detail, account_id))
             if cursor.rowcount != 1:
                 raise ValueError("Tài khoản đang bận hoặc không tồn tại.")
 
