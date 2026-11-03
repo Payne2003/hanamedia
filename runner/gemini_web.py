@@ -388,7 +388,7 @@ class GeminiWebSession:
             path.parent.mkdir(parents=True, exist_ok=True)
             page = self.state()
             html = self.driver.execute_script(
-                "const r=[...document.querySelectorAll('model-response, [data-message-author-role=\"assistant\"]')].pop();"
+                "const r=[...document.querySelectorAll('model-response, [data-message-author-role=\"assistant\"], [data-turn=\"assistant\"]')].pop();"
                 "return (r ? r.outerHTML : document.body.outerHTML).slice(0, 300000);")
             path.write_text(f"LÝ DO: {reason}\nURL: {self.driver.current_url}\nSTATE: "
                             f"{ {k: v for k, v in page.items() if k != 'text'} }\n\n--- TEXT TOOL ĐỌC ĐƯỢC ---\n"
@@ -410,18 +410,35 @@ class GeminiWebSession:
             from selenium.webdriver.common.keys import Keys
             field.send_keys(Keys.ENTER)
         deadline, started = time.monotonic() + timeout, time.monotonic()
-        last_text, stable_since = None, time.monotonic()
+        last_text, stable_since, dumped = None, time.monotonic(), time.monotonic()
+        take = getattr(self, "take_now", None)
+        if take:
+            take.clear()
         while time.monotonic() < deadline:
             if stop.is_set():
                 raise GeminiWebError("Đã dừng.")
             time.sleep(2)
             page = self.state()
+            current = page.get("text") or ""
+            if take and take.is_set():
+                # Người dùng bấm "Lấy kết quả ngay": đọc câu trả lời hiện có, không chờ thêm.
+                take.clear()
+                if current.strip():
+                    return current
+                where = self.dump("Bấm Lấy kết quả ngay nhưng tool không đọc thấy chữ nào")
+                raise GeminiWebError(f"Tool chưa đọc thấy câu trả lời của {self.NAME} trên trang."
+                                     + (f" Gửi file chẩn đoán {where} cho người hỗ trợ." if where else ""))
+            if time.monotonic() - dumped >= 60:  # Đang chờ lâu: lưu trạng thái trang để chẩn đoán nếu bị kẹt.
+                self.dump(f"Đang chờ {self.NAME} (đã {int(time.monotonic() - started)} giây)", current)
+                dumped = time.monotonic()
             if int(page.get("count") or 0) <= before:
                 if time.monotonic() - started > 120:
-                    raise GeminiWebError(f"{self.NAME} chưa nhận yêu cầu sau 2 phút. Kiểm tra cửa sổ {self.NAME} (có thể cần bấm Gửi).")
+                    where = self.dump(f"{self.NAME} chưa nhận yêu cầu sau 2 phút (không thấy tin nhắn trả lời mới)")
+                    raise GeminiWebError(f"{self.NAME} chưa nhận yêu cầu sau 2 phút, hoặc tool không nhận ra câu trả lời. "
+                                         f"Kiểm tra cửa sổ {self.NAME}."
+                                         + (f" Gửi file chẩn đoán {where} cho người hỗ trợ." if where else ""))
                 status(f"{label}… chờ {self.NAME} nhận yêu cầu")
                 continue
-            current = page.get("text") or ""
             if current != last_text:
                 last_text, stable_since = current, time.monotonic()
             steady = time.monotonic() - stable_since
@@ -543,7 +560,7 @@ class GeminiWebRunner:
                  login_done="thấy trang Gemini"):
         self.profile, self.factory = Path(profile), session_factory
         self.name, self.login_address, self.login_done = name, login_address or login_url, login_done
-        self.lock, self.stop = threading.Lock(), threading.Event()
+        self.lock, self.stop, self.take = threading.Lock(), threading.Event(), threading.Event()
         self.requests = queue.Queue()
         self.session = None
         self.login_process = None
@@ -572,6 +589,12 @@ class GeminiWebRunner:
 
     def cancel(self):
         self.stop.set()
+
+    def take_now(self):
+        """Đọc ngay câu trả lời đang hiện trên trang (khi người dùng thấy AI đã viết xong mà tool vẫn chờ)."""
+        if not self.snapshot()["busy"]:
+            raise ValueError(f"{self.name} không có yêu cầu nào đang chạy.")
+        self.take.set()
 
     def login_window_open(self):
         return bool(self.login_process and self.login_process.poll() is None)
@@ -610,6 +633,7 @@ class GeminiWebRunner:
                     self.session = self.factory(self.profile)
                     try:
                         self.session.debug_path = self.profile.parent / f"{self.name.lower()}-debug.txt"
+                        self.session.take_now = self.take
                     except Exception:
                         pass
                 if kind == "english":

@@ -579,3 +579,43 @@ class ChatGPTEngineTests(unittest.TestCase):
             server.server_close()
             server.gemini_web.close()
             server.chatgpt_web.close()
+
+
+class TakeNowTests(unittest.TestCase):
+    def test_take_now_returns_visible_answer_while_tool_still_waits(self):
+        from unittest.mock import patch
+        from runner import gemini_web
+        take = threading.Event()
+        states = iter([{"count": 0, "busy": False}] * 4 + [{"count": 1, "busy": True, "text": "1. A long English prompt.\nEND OF LIST"}] * 50)
+
+        class Driver:
+            current_url = "https://chatgpt.com/"
+            def execute_script(self, script, *args):
+                if script is gemini_web.JS_STATE:
+                    state = next(states)
+                    if state.get("count"):
+                        take.set()  # người dùng bấm "Lấy kết quả ngay" khi tool vẫn tưởng đang viết
+                    return state
+                if script is gemini_web.JS_FIND_INPUT:
+                    return object()
+                if script is gemini_web.JS_SEND:
+                    return True
+
+        session = gemini_web.GeminiWebSession.__new__(gemini_web.GeminiWebSession)
+        session.driver, session.take_now = Driver(), take
+        session.fill = lambda field, text, before: {"ok": True}
+        with patch.object(gemini_web.time, "sleep", lambda _: None):
+            self.assertEqual(session.ask("Yêu cầu", lambda _: None, threading.Event()), "1. A long English prompt.\nEND OF LIST")
+
+    def test_take_now_requires_running_job(self):
+        from runner import gemini_web
+        with tempfile.TemporaryDirectory() as folder:
+            runner = gemini_web.GeminiWebRunner(Path(folder))
+            with self.assertRaisesRegex(ValueError, "không có yêu cầu"):
+                runner.take_now()
+            runner.close()
+
+    def test_chatgpt_busy_ignores_unrelated_stop_buttons(self):
+        from runner import chatgpt_web
+        self.assertNotIn("|dừng/i", chatgpt_web.JS_STATE)
+        self.assertIn('data-turn="assistant"', chatgpt_web.JS_STATE)

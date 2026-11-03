@@ -44,15 +44,19 @@ return false;
 # Trạng thái trang ChatGPT. "text" chỉ lấy phần .markdown của tin nhắn trợ lý cuối (bỏ phần "Thought for…").
 JS_STATE = r"""
 const visible = e => { const box = e.getBoundingClientRect(); return box.width > 0 && box.height > 0; };
-const responses = [...document.querySelectorAll('[data-message-author-role="assistant"]')]
+// Tin nhắn trợ lý: bản cũ dùng data-message-author-role, bản mới có thể dùng article[data-turn="assistant"].
+let responses = [...document.querySelectorAll('[data-message-author-role="assistant"]')]
   .filter((element, index, all) => !all.some(other => other !== element && other.contains(element)));
+if (!responses.length) responses = [...document.querySelectorAll('[data-turn="assistant"], article[data-testid^="conversation-turn"]:has(.markdown)')];
 const last = responses[responses.length - 1];
 let text = '', done = false;
 if (last) {
   const bodies = [...last.querySelectorAll('.markdown, [class*="markdown"]')]
     .filter(e => !e.closest('[class*="thought"], [class*="reasoning"], details'));
-  const body = bodies[bodies.length - 1];
-  text = body ? (body.innerText || '') : '';
+  // Nếu mọi khối .markdown đều nằm trong vùng bị coi là "suy nghĩ" thì vẫn lấy khối cuối; cuối cùng lấy cả tin nhắn.
+  const all = [...last.querySelectorAll('.markdown, [class*="markdown"]')];
+  const body = bodies[bodies.length - 1] || all[all.length - 1] || null;
+  text = body ? (body.innerText || '') : (last.innerText || '');
   // ChatGPT hiển thị danh sách bằng <ol><li>: số thứ tự không có trong innerText -> dựng lại và gắn số.
   if (body && body.querySelector('li')) {
     const lines = [];
@@ -79,10 +83,11 @@ if (last) {
     /copy|sao chép|good response|bad response|thích|read aloud|đọc to/i.test(
       (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('data-testid') || '')));
 }
-const busy = [...document.querySelectorAll('button')].some(b => {
+// Đang viết: chỉ tính nút Dừng của ô nhắn tin (không tính các nút "Dừng đọc"... khác trên trang).
+const busy = [...document.querySelectorAll('button[data-testid="stop-button"], #composer-submit-button, form button[aria-label]')].some(b => {
   const label = (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('data-testid') || '');
-  return visible(b) && /stop-button|stop streaming|stop generating|dừng/i.test(label);
-}) || Boolean(last && last.querySelector('.result-streaming, [class*="streaming-animation"]'));
+  return visible(b) && /stop-button|stop streaming|stop generating|dừng phát|dừng tạo|ngừng/i.test(label);
+}) || Boolean(last && last.querySelector('.result-streaming'));
 const host = location.hostname;
 // Trang xác minh Cloudflare: tiêu đề "Just a moment…" / "Chờ một chút…"; ô xác minh nằm trong iframe riêng.
 const challenge = /just a moment|chờ một chút|verify you are human|xác minh bạn là con người/i.test(document.title + ' ' +
