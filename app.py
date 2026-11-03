@@ -276,6 +276,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.chatgpt_web.open_login()
                 else:
                     self.server.gemini_web.open_login(store.setting("gemini_web_email") or "")
+            elif path == "/api/content/web-take":
+                (self.server.chatgpt_web if body.get("engine") == "chatgpt" else self.server.gemini_web).take_now()
             elif path == "/api/content/web-stop":
                 (self.server.chatgpt_web if body.get("engine") == "chatgpt" else self.server.gemini_web).cancel()
             elif path == "/api/open-folder":

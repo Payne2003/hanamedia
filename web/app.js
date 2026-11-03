@@ -244,7 +244,7 @@ function renderScenes(){
   $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b><span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}</div></article>`).join('');
   renderContentOutput();
 }
-const CONTENT_VERSION='content-13';
+const CONTENT_VERSION='content-14';
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
   const isContent=view==='content';
@@ -304,6 +304,7 @@ function pollAuto(){
 $('runAuto').onclick=()=>runAuto('generate');
 $('reviewContent').onclick=()=>runAuto('review');
 $('loginAuto').onclick=async()=>{try{await saveAutoSettings();await api('/api/content/web-login',{});await refresh();toast('Đã mở Chrome. Đăng nhập Google, thấy trang Gemini thì đóng hẳn cửa sổ đó rồi bấm Chạy.');}catch(error){toast(error.message,true);}};
+$('takeAuto').onclick=()=>api('/api/content/web-take',{engine:'gemini'}).then(()=>$('autoStatus').textContent='Đang đọc câu trả lời trên trang…').catch(error=>toast(error.message,true));
 $('stopAuto').onclick=()=>api('/api/content/web-stop',{}).then(()=>$('autoStatus').textContent='Đang dừng…').catch(error=>toast(error.message,true));
 setInterval(pollAuto,1000);
 $('addScene').onclick=()=>{content.scenes.push({setting:'',camera:'',behavior:'',action:''});renderScenes();$('sceneList').lastElementChild?.querySelector('textarea')?.focus();};
@@ -389,6 +390,7 @@ $('runEnglish').onclick=async()=>{
     refresh();toast(`Đã gửi ${total} cảnh cho ${engineNames[engine]}.`);
   }catch(error){toast(error.message,true);}
 };
+$('takeEnglish').onclick=()=>api('/api/content/web-take',{engine:content.englishEngine}).then(()=>$('englishStatus').textContent='Đang đọc câu trả lời trên trang…').catch(error=>toast(error.message,true));
 $('stopEnglish').onclick=()=>api('/api/content/web-stop',{engine:content.englishEngine}).then(()=>$('englishStatus').textContent='Đang dừng…').catch(error=>toast(error.message,true));
 $('useEnglish').onclick=()=>{
   const prompts=englishLines().map(line=>line.trim()).filter(Boolean);if(!prompts.length)return toast('Chưa có prompt tiếng Anh.',true);
