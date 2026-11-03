@@ -619,3 +619,21 @@ class TakeNowTests(unittest.TestCase):
         from runner import chatgpt_web
         self.assertNotIn("|dừng/i", chatgpt_web.JS_STATE)
         self.assertIn('data-turn="assistant"', chatgpt_web.JS_STATE)
+
+
+class ChatGPT2026DomTests(unittest.TestCase):
+    """Cấu trúc trang ChatGPT thật (lấy từ file chẩn đoán người dùng gửi, 11/2026)."""
+
+    def test_page_script_targets_new_chatgpt_markup(self):
+        from runner import chatgpt_web
+        for marker in ('[data-content-search-unit-key$=":assistant"]', 'data-markdown-text-style="assistant-message"',
+                       "data-talvt-turn-state", 'form[data-chatgpt-composer] .ProseMirror',
+                       'data-composer-navigation-target="reasoning"'):
+            self.assertIn(marker, chatgpt_web.JS_STATE + chatgpt_web.JS_FIND_INPUT + chatgpt_web.JS_OPEN_MODEL_MENU)
+
+    def test_answer_text_from_real_chatgpt_reply_is_parsed(self):
+        text = ("1. Ultra-photorealistic BBC-style wildlife documentary footage on a steep limestone mountainside "
+                "in the Himalayas, 16:9 aspect ratio.\n2. Ultra-photorealistic BBC-style wildlife documentary footage "
+                "on the same rugged Himalayan limestone mountainside, 16:9 aspect ratio.\nEND OF LIST")
+        found = content.parse_english(text, 2)
+        self.assertEqual(content.missing_english(found, 2), [])
