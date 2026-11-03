@@ -212,7 +212,7 @@ class Handler(BaseHTTPRequestHandler):
                 engine.close_review(body["id"])
             elif path == "/api/jobs":
                 store.enqueue(body["prompts"], body["cost"], body["batch"],
-                              body.get("images"), body.get("mode", "text"))
+                              body.get("images"), body.get("mode", "text"), body.get("sources"))
                 engine.changed.set()
             elif path == "/api/jobs/update":
                 account = body.get("account_id") or None

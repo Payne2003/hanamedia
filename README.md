@@ -88,6 +88,7 @@ Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt 
 
 Bấm vào **tên hoặc nội dung** một prompt trong **Hàng đợi** để mở **Chi tiết Prompt / Prompt Studio** (địa chỉ `#job=<mã>`; nút trình duyệt Quay lại cũng dùng được).
 
+- Prompt đưa vào từ bước **④ Prompt tiếng Anh** (Gemini hoặc ChatGPT) là một đoạn văn tiếng Anh liền, không chia trường. Khi bấm **Đưa vào Studio**, tool ghép **prompt tiếng Anh số N với dòng cảnh tiếng Việt số N** ở ô Đầu vào của bước ④, nên trong Prompt Studio: ô **Prompt** là câu tiếng Anh (gửi lên Muse), còn **Bối cảnh / Góc quay / Hành vi nhân vật / Nội dung hành động** lấy từ dòng tiếng Việt cùng số cảnh.
 - Sửa **Prompt** (nội dung gửi lên Muse) và các ghi chú cảnh: **Bối cảnh**, **Hành vi nhân vật**, **Nội dung hành động nhân vật**, **Góc quay**. Prompt dạng `Bối cảnh N: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;` được tự tách vào các ô này.
 - **Ảnh tham chiếu**: kéo thả hoặc **Chọn tệp** (JPG, PNG, WEBP, tối đa 10 MB, tối đa 10 ảnh); bấm ✕ để bỏ ảnh. Ảnh tải lên cũng được lưu vào Thư viện.
 - **Loại**: Video (prompt → video) hoặc Ảnh → video (cần ít nhất 1 ảnh). **Tài khoản**: để "Chờ tài khoản" cho tool tự chia, hoặc chọn một tài khoản cụ thể.

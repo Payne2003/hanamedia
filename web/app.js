@@ -119,7 +119,7 @@ async function addJobs(run){
     if(pendingBatch?.signature!==signature)pendingBatch={signature,id:crypto.randomUUID()};
     try{localStorage.setItem('huy-runner-pending',JSON.stringify(pendingBatch));}catch{}
     const images=imagesByPrompt.map(assets=>assets.map(asset=>asset.token));
-    await api('/api/jobs',{prompts,cost,mode:generationMode,batch:pendingBatch.id,images});
+    await api('/api/jobs',{prompts,cost,mode:generationMode,batch:pendingBatch.id,images,sources:prompts.map(prompt=>promptSources[prompt]||'')});
     pendingBatch=null;
     try{localStorage.removeItem('huy-runner-pending');}catch{}
     $('prompts').value='';promptImages.clear();countPrompts();
@@ -226,7 +226,7 @@ $('importButton').onclick=()=>$('importFile').click();$('importFile').onchange=a
 const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior','Hành vi nhân vật'],['action','Nội dung hành động nhân vật']];
 const defaultBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
 let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',englishAspect:'16:9',english:'',englishMissing:[],englishEngine:'gemini',englishChatgpt:'',englishChatgptMissing:[]};
-try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,brief:saved.brief??content.brief,video:saved.video||'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:saved.englishEngine==='chatgpt'?'chatgpt':'gemini',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[]};}catch{}
+try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,brief:saved.brief??content.brief,video:saved.video||'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:saved.englishEngine==='chatgpt'?'chatgpt':'gemini',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
 const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
 const oneLine=value=>String(value||'').replace(/\s+/g,' ').trim().replace(/[\s.,;]+$/,'');
 const contentPrompts=()=>content.scenes.map((s,i)=>`Bối cảnh ${i+1}: ${oneLine(s.setting)}, góc quay: ${oneLine(s.camera)}, hành vi nhân vật: ${oneLine(s.behavior)}, Nội dung hành động nhân vật: ${oneLine(s.action)};`);
@@ -357,7 +357,7 @@ function renderEnglishEngine(){
 }
 function finishEnglish(engine,result){
   const [textKey,missingKey]=englishKey(engine);
-  content[textKey]=result.english.join('\n');content[missingKey]=result.missing;saveContent();
+  content[textKey]=result.english.join('\n');content[missingKey]=result.missing;content[textKey+'Sources']=result.lines||splitSceneLines(content.englishInput);saveContent();
   if(content.englishEngine===engine)renderEnglishEngine();
   const name=engineNames[engine];
   toast(result.missing.length?`${name} viết ${result.total-result.missing.length}/${result.total} prompt; còn thiếu cảnh ${result.missing.join(', ')}. Bấm chạy lại hoặc tự sửa.`:`${name}: đủ ${result.total} prompt tiếng Anh (${result.rounds} lượt trả lời).`,Boolean(result.missing.length));
@@ -394,11 +394,25 @@ $('runEnglish').onclick=async()=>{
 };
 $('takeEnglish').onclick=()=>api('/api/content/web-take',{engine:content.englishEngine}).then(()=>$('englishStatus').textContent='Đang đọc câu trả lời trên trang…').catch(error=>toast(error.message,true));
 $('stopEnglish').onclick=()=>api('/api/content/web-stop',{engine:content.englishEngine}).then(()=>$('englishStatus').textContent='Đang dừng…').catch(error=>toast(error.message,true));
+// Tách đầu vào giống máy chủ (content.split_scene_lines): mỗi dòng một cảnh, hoặc "[...; Bối cảnh 2: ...]".
+function splitSceneLines(text){
+  return String(text||'').replace(/\r/g,'').trim().replace(/^\s*(input\s*:)?\s*\[/i,'').replace(/\]\s*$/,'')
+    .replace(/;\s*(?=b[ốo]i\s*c[ảa]nh\s*\d)/gi,';\n').split('\n').map(line=>line.replace(/\s+/g,' ').trim()).filter(Boolean);
+}
+// Prompt tiếng Anh số N đi kèm dòng cảnh tiếng Việt số N, để Prompt Studio có đủ Bối cảnh / Góc quay / Hành vi / Hành động.
+let promptSources={};
+try{promptSources=JSON.parse(localStorage.getItem('hana-prompt-sources')||'{}')||{};}catch{}
+function rememberSources(pairs){promptSources={};for(const [prompt,source] of pairs)if(source)promptSources[prompt]=source;try{localStorage.setItem('hana-prompt-sources',JSON.stringify(promptSources));}catch{}}
 $('useEnglish').onclick=()=>{
-  const prompts=englishLines().map(line=>line.trim()).filter(Boolean);if(!prompts.length)return toast('Chưa có prompt tiếng Anh.',true);
+  const [textKey]=englishKey(content.englishEngine);
+  const sources=content[textKey+'Sources']||splitSceneLines(content.englishInput);
+  const pairs=englishLines().map((line,index)=>[line.trim(),sources[index]||'']).filter(([line])=>line);
+  const prompts=pairs.map(([line])=>line);if(!prompts.length)return toast('Chưa có prompt tiếng Anh.',true);
   if($('prompts').value.trim()&&!confirm('Thay nội dung đang có trong khung prompt bằng các prompt tiếng Anh?'))return;
+  rememberSources(pairs);
   mode='text';$('separator').value='line';$('prompts').value=prompts.join('\n');renderMode();showView('studio');$('prompts').focus();
-  toast(`Đã đưa ${prompts.length} prompt tiếng Anh (${engineNames[content.englishEngine]}) vào Studio.`);
+  const linked=pairs.filter(([,source])=>source).length;
+  toast(`Đã đưa ${prompts.length} prompt tiếng Anh (${engineNames[content.englishEngine]}) vào Studio; ${linked} prompt kèm đủ Bối cảnh, Góc quay, Hành vi, Hành động.`);
 };
 $('copyEnglish').onclick=()=>navigator.clipboard.writeText($('englishOutput').value).then(()=>toast('Đã chép prompt tiếng Anh.')).catch(()=>toast('Không chép được. Chọn và sao chép trong ô kết quả.',true));
 $('downloadEnglish').onclick=()=>{const blob=new Blob([$('englishOutput').value],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`prompt-tieng-anh-${content.englishEngine}.txt`;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};

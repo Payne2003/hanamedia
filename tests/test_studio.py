@@ -74,3 +74,39 @@ class PromptStudioTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnglishSourceFieldsTests(unittest.TestCase):
+    def test_english_prompts_keep_vietnamese_scene_fields(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(Path(folder) / "t.db")
+            sources = ["Bối cảnh 1: Sườn núi đá vôi, góc quay: Cận cảnh ngang tầm mắt, hành vi nhân vật: Dê mẹ bình thản, "
+                       "Nội dung hành động nhân vật: Dê mẹ nhai cỏ;", "Cảnh tự do không theo mẫu", ""]
+            store.enqueue(["Ultra-photorealistic goats grazing, 16:9 aspect ratio.", "A leopard on a ledge.", "A wide cliff."],
+                          1, uuid.uuid4().hex, sources=sources)
+            jobs = {j["prompt"]: store.job_detail(j["id"]) for j in store.snapshot()["jobs"]}
+            first = jobs["Ultra-photorealistic goats grazing, 16:9 aspect ratio."]["details"]
+            self.assertEqual(first, {"setting": "Sườn núi đá vôi", "camera": "Cận cảnh ngang tầm mắt",
+                                     "behavior": "Dê mẹ bình thản", "action": "Dê mẹ nhai cỏ"})
+            self.assertEqual(jobs["A leopard on a ledge."]["details"]["setting"], "Cảnh tự do không theo mẫu")
+            self.assertEqual(jobs["A wide cliff."]["details"], {"setting": "", "camera": "", "behavior": "", "action": ""})
+            with self.assertRaises(ValueError):
+                store.enqueue(["x"], 1, uuid.uuid4().hex, sources=["a", "b"])
+
+    def test_run_english_returns_split_source_lines(self):
+        import threading
+        from runner import content, gemini_web
+
+        class Session:
+            def new_chat(self):
+                pass
+            def wait_ready(self, status, stop, email=""):
+                pass
+            def choose_model(self, name):
+                return ""
+            def ask(self, text, status, stop, email="", label=""):
+                return "1. A long English prompt for scene one.\n2. A long English prompt for scene two.\n" + content.END_EN
+
+        lines = ["Bối cảnh 1: A", "Bối cảnh 2: B"]
+        result = gemini_web.run_english(Session(), lines, lambda _: None, threading.Event())
+        self.assertEqual(result["lines"], lines)
