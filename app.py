@@ -33,8 +33,8 @@ class AppServer(ThreadingHTTPServer):
         self.origin = f"http://127.0.0.1:{self.server_port}"
         self.secret = secrets.token_urlsafe(32)
         self.folder_lock = threading.Lock()
-        self.gemini_transport = content.default_transport
-        self.video_fetch = content.default_fetch
+        if store.setting("gemini_api_key"):  # Chế độ Gemini API đã bỏ: không giữ khóa API cũ trên máy.
+            store.save_setting("gemini_api_key", "")
         self.gemini_web = GeminiWebRunner(Path(store.path).parent / "profiles" / "gemini-web")
 
     def handle_error(self, request, client_address):
@@ -84,8 +84,7 @@ class Handler(BaseHTTPRequestHandler):
             data = self.server.store.snapshot()
             data["engine"] = self.server.engine.snapshot()
             data["key"] = self.server.secret
-            data["content"] = {"version": content.VERSION, "configured": bool(self.server.store.setting("gemini_api_key")),
-                               "model": self.server.store.setting("gemini_model") or content.DEFAULT_MODEL,
+            data["content"] = {"version": content.VERSION,
                                "web": dict(self.server.gemini_web.snapshot(),
                                            email=self.server.store.setting("gemini_web_email") or "",
                                            model=self.server.store.setting("gemini_web_model") or "")}
@@ -240,12 +239,6 @@ class Handler(BaseHTTPRequestHandler):
                         store.save_setting("output_folder", str(target))
                 finally:
                     self.server.folder_lock.release()
-            elif path == "/api/content/settings":
-                if body.get("api_key"):
-                    store.save_setting("gemini_api_key", content.api_key_value(body["api_key"]))
-                elif body.get("clear_key"):
-                    store.save_setting("gemini_api_key", "")
-                store.save_setting("gemini_model", content.model_name(body.get("model")))
             elif path == "/api/content/web-settings":
                 email = str(body.get("email") or "").strip().lower()
                 if email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
@@ -263,32 +256,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.gemini_web.open_login(store.setting("gemini_web_email") or "")
             elif path == "/api/content/web-stop":
                 self.server.gemini_web.cancel()
-            elif path == "/api/content/web-prompt":
-                return self.reply({"prompt": content.web_prompt(body.get("kind", "generate"), body.get("brief", ""),
-                                                                body.get("video_url", ""), body.get("language", "vi"),
-                                                                body.get("scenes"))})
-            elif path == "/api/content/parse":
-                result = content.parse_answer(body["text"])
-                result["prompts"] = content.format_prompts(result["scenes"])
-                return self.reply(result)
-            elif path == "/api/content/duration":
-                seconds = content.video_duration(body.get("video_url", ""), self.server.video_fetch)
-                return self.reply({"seconds": seconds, "segment": content.SEGMENT_SECONDS})
-            elif path in ("/api/content/generate", "/api/content/review"):
-                api_key = store.setting("gemini_api_key")
-                if not api_key:
-                    raise ValueError("Chưa có khóa API Gemini. Mở Cài đặt Gemini trong cửa sổ Viết content để nhập khóa.")
-                gemini = content.Gemini(api_key, store.setting("gemini_model") or content.DEFAULT_MODEL,
-                                        self.server.gemini_transport, timeout=420)
-                language = body.get("language", "vi")
-                if path == "/api/content/generate":
-                    result = gemini.generate(body["brief"], body.get("video_url", ""), language,
-                                             body.get("start"), body.get("end"))
-                else:
-                    result = gemini.review(body.get("brief", ""), body.get("video_url", ""), body["scenes"], language,
-                                           body.get("start"), body.get("end"))
-                result["prompts"] = content.format_prompts(result["scenes"])
-                return self.reply(result)
             elif path == "/api/open-folder":
                 folder = store.setting("output_folder")
                 if not folder or not Path(folder).is_dir():
