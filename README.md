@@ -43,6 +43,9 @@ Khung **④ Prompt tiếng Anh · Gemini Pro** ở cuối trang Viết content:
 2. Bấm **Viết prompt tiếng Anh bằng Gemini**. Gemini viết mỗi cảnh thành một prompt tiếng Anh, đánh số theo cảnh. Câu trả lời bị cắt thì tool nhắn viết tiếp.
 3. Theo sơ đồ: cảnh nào **thiếu** hoặc **vẫn còn tiếng Việt**, tool tự hỏi lại Gemini riêng những cảnh đó (tối đa 3 lượt). Nếu vẫn thiếu, khung **Còn thiếu** ghi rõ số cảnh và dòng đó để trống để bạn sửa tay hoặc chạy lại.
 4. **Đầu ra**: mỗi dòng 1 prompt tiếng Anh, đúng thứ tự cảnh, sửa được trực tiếp. Bấm **Đưa vào Studio**, **Chép** hoặc **Tải .txt**.
+5. **Chọn AI**: bấm **Gemini Pro** hoặc **ChatGPT** phía trên nút viết. Kết quả của mỗi bên được lưu riêng: chuyển qua lại để so sánh, chọn bên tốt hơn rồi **Đưa vào Studio**. Hai bên chạy được cùng lúc (mỗi bên một Chrome riêng).
+
+**ChatGPT**: tool điều khiển chatgpt.com giống Gemini, với hồ sơ Chrome riêng `data/profiles/chatgpt-web`. Lần đầu bấm **Đăng nhập ChatGPT (mở Chrome thường)**, đăng nhập tài khoản ChatGPT của bạn, thấy ô nhắn tin thì **đóng hẳn cửa sổ đó**. Ô **Model ChatGPT** (ví dụ `Thinking`, `Instant`) để trống thì dùng model đang chọn. Nếu ChatGPT hiện trang xác minh "tôi không phải người máy", bạn tự hoàn tất trong cửa sổ ChatGPT, tool chờ rồi chạy tiếp. Lỗi đọc kết quả được lưu vào `data/profiles/chatgpt-debug.txt`.
 
 Tool chỉ đọc câu trả lời khi Gemini đã viết xong (không còn nút Dừng, đã hiện nút Sao chép/Thích dưới câu trả lời) và bỏ qua phần "suy nghĩ" của Gemini; không gửi yêu cầu mới khi Gemini còn đang viết. Nếu câu trả lời đầu tiên không đọc ra cảnh/prompt nào, tool **dừng và báo lỗi, không gửi lại**, đồng thời lưu file chẩn đoán `data/profiles/gemini-debug.txt` (chứa nội dung cuộc trò chuyện vừa rồi, không chứa mật khẩu) để gửi cho người hỗ trợ.
 

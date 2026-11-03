@@ -12,7 +12,7 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-12"
+VERSION = "content-13"
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")

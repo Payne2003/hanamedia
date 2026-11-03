@@ -16,6 +16,7 @@ from urllib.parse import unquote, urlsplit
 
 from runner import content
 from runner.gemini_web import GeminiWebRunner
+from runner.chatgpt_web import chatgpt_runner
 from runner.engine import Engine
 from runner.store import Store
 from runner.instance import InstanceLock
@@ -36,6 +37,7 @@ class AppServer(ThreadingHTTPServer):
         if store.setting("gemini_api_key"):  # Chế độ Gemini API đã bỏ: không giữ khóa API cũ trên máy.
             store.save_setting("gemini_api_key", "")
         self.gemini_web = GeminiWebRunner(Path(store.path).parent / "profiles" / "gemini-web")
+        self.chatgpt_web = chatgpt_runner(Path(store.path).parent / "profiles" / "chatgpt-web")
 
     def handle_error(self, request, client_address):
         error = sys.exc_info()[1]
@@ -87,7 +89,9 @@ class Handler(BaseHTTPRequestHandler):
             data["content"] = {"version": content.VERSION,
                                "web": dict(self.server.gemini_web.snapshot(),
                                            email=self.server.store.setting("gemini_web_email") or "",
-                                           model=self.server.store.setting("gemini_web_model") or "")}
+                                           model=self.server.store.setting("gemini_web_model") or ""),
+                               "chatgpt": dict(self.server.chatgpt_web.snapshot(),
+                                               model=self.server.store.setting("chatgpt_web_model") or "")}
             return self.reply(data)
         if path == "/api/library":
             return self.reply({"images": self.server.store.library_images()})
@@ -256,17 +260,24 @@ class Handler(BaseHTTPRequestHandler):
                 job = self.server.gemini_web.start(kind, prompt, store.setting("gemini_web_email") or "",
                                                    store.setting("gemini_web_model") or "")
                 return self.reply({"ok": True, "id": job})
+            elif path == "/api/content/chatgpt-settings":
+                store.save_setting("chatgpt_web_model", str(body.get("model") or "").strip()[:40])
             elif path == "/api/content/english-run":
                 lines = content.split_scene_lines(body.get("text", ""))
-                job = self.server.gemini_web.start("english", "", store.setting("gemini_web_email") or "",
-                                                   store.setting("gemini_web_model") or "", lines,
+                chatgpt = body.get("engine") == "chatgpt"
+                runner = self.server.chatgpt_web if chatgpt else self.server.gemini_web
+                job = runner.start("english", "", "" if chatgpt else (store.setting("gemini_web_email") or ""),
+                                   store.setting("chatgpt_web_model" if chatgpt else "gemini_web_model") or "", lines,
                                                    (str(body.get("style") or ""),
                                                     body.get("aspect") if body.get("aspect") in content.ASPECTS else "16:9"))
-                return self.reply({"ok": True, "id": job, "total": len(lines)})
+                return self.reply({"ok": True, "id": job, "total": len(lines), "engine": "chatgpt" if chatgpt else "gemini"})
             elif path == "/api/content/web-login":
-                self.server.gemini_web.open_login(store.setting("gemini_web_email") or "")
+                if body.get("engine") == "chatgpt":
+                    self.server.chatgpt_web.open_login()
+                else:
+                    self.server.gemini_web.open_login(store.setting("gemini_web_email") or "")
             elif path == "/api/content/web-stop":
-                self.server.gemini_web.cancel()
+                (self.server.chatgpt_web if body.get("engine") == "chatgpt" else self.server.gemini_web).cancel()
             elif path == "/api/open-folder":
                 folder = store.setting("output_folder")
                 if not folder or not Path(folder).is_dir():
@@ -320,6 +331,7 @@ def main():
     finally:
         engine.close_browsers()
         server.gemini_web.close()
+        server.chatgpt_web.close()
         server.server_close()
         instance.close()
     return 0
