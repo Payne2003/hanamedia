@@ -79,6 +79,10 @@ Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt 
 9. Tool chờ tải hoàn tất, kiểm tra MP4, đổi tên theo mã cảnh rồi hiển thị **Xong**. Bấm **Xem** để kiểm tra video đã gắn vào cảnh.
 10. Sau khi thử thành công, chọn **Tự gửi prompt & tải video**, nhập nhiều prompt và tăng dần số tài khoản đồng thời. Có thể thử chạy ẩn sau đó.
 
+## Xóa tài khoản
+
+Trong **Tài khoản**, bấm **✕ Xóa** ở tài khoản cần bỏ (ví dụ đã hết hạn hoặc hết credit) rồi xác nhận. Tool đóng phiên Chrome của tài khoản đó, xóa phiên đăng nhập trong `data/profiles/<mã tài khoản>` và bỏ tài khoản khỏi danh sách. Prompt đang **Chờ** của tài khoản này được chia lại cho các tài khoản còn lại; video đã tải và lịch sử tác vụ giữ nguyên (cột tài khoản hiện **TK đã xóa**). Không xóa được tài khoản đang chạy tác vụ, đang đăng nhập hoặc đang mở phiên: đợi xong hoặc bấm **Đóng phiên** trước.
+
 ## Thư mục và cách gắn cảnh
 
 Ví dụ prompt đầu tiên của một lô:

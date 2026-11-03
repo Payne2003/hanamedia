@@ -125,6 +125,23 @@ class Store:
             db.execute("UPDATE accounts SET enabled=?,budget=? WHERE id=?", (int(bool(enabled)), number(budget), account_id))
         self.plan_waiting()
 
+    def delete_account(self, account_id):
+        """Xóa tài khoản khỏi danh sách. Prompt đang chờ được chia lại cho tài khoản khác; video đã tải giữ nguyên."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+            if not row:
+                raise ValueError("Không tìm thấy tài khoản.")
+            if row["state"] in ("busy", "authenticating", "reviewing") or db.execute(
+                    "SELECT 1 FROM jobs WHERE status='running' AND account_id=?", (account_id,)).fetchone():
+                raise ValueError("Tài khoản đang chạy, đăng nhập hoặc đang mở phiên. Đợi xong hoặc đóng phiên rồi xóa.")
+            db.execute("UPDATE jobs SET assigned_account_id=NULL WHERE status='waiting' AND assigned_account_id=?",
+                       (account_id,))
+            db.execute("DELETE FROM accounts WHERE id=?", (account_id,))
+            email = row["email"]
+        self.plan_waiting()
+        return email
+
     def reserve_login(self, account_id):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
