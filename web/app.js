@@ -225,8 +225,8 @@ $('importButton').onclick=()=>$('importFile').click();$('importFile').onchange=a
 // ---- Viết content: Prompt + link video gốc → Gemini Pro (tự động trên gemini.google.com) → cảnh → hàng loạt prompt ----
 const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior','Hành vi nhân vật'],['action','Nội dung hành động nhân vật']];
 const defaultBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
-let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',englishAspect:'16:9',english:'',englishMissing:[],englishEngine:'gemini',englishChatgpt:'',englishChatgptMissing:[]};
-try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,brief:saved.brief??content.brief,video:saved.video||'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:saved.englishEngine==='chatgpt'?'chatgpt':'gemini',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
+let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',englishAspect:'16:9',englishStructured:true,english:'',englishMissing:[],englishEngine:'gemini',englishChatgpt:'',englishChatgptMissing:[]};
+try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,brief:saved.brief??content.brief,video:saved.video||'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:saved.englishEngine==='chatgpt'?'chatgpt':'gemini',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
 const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
 const oneLine=value=>String(value||'').replace(/\s+/g,' ').trim().replace(/[\s.,;]+$/,'');
 const contentPrompts=()=>content.scenes.map((s,i)=>`Bối cảnh ${i+1}: ${oneLine(s.setting)}, góc quay: ${oneLine(s.camera)}, hành vi nhân vật: ${oneLine(s.behavior)}, Nội dung hành động nhân vật: ${oneLine(s.action)};`);
@@ -246,13 +246,13 @@ function renderScenes(){
   $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b><span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}</div></article>`).join('');
   renderContentOutput();
 }
-const CONTENT_VERSION='content-15';
+const CONTENT_VERSION='content-16';
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
   const isContent=view==='content';
   $('jobView').hidden=true;$('studioView').hidden=isContent;$('contentView').hidden=!isContent;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
-  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;renderEnglishEngine();}
+  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;renderEnglishEngine();}
   const hash=isContent?'#content':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);
 }
@@ -375,6 +375,7 @@ $('englishFromScenes').onclick=()=>{const prompts=contentPrompts();if(!prompts.l
 $('englishInput').oninput=()=>{content.englishInput=$('englishInput').value;saveContent();};
 $('englishStyle').oninput=()=>{content.englishStyle=$('englishStyle').value;saveContent();};
 $('englishAspect').onchange=()=>{content.englishAspect=$('englishAspect').value;saveContent();};
+$('englishStructured').onchange=()=>{content.englishStructured=$('englishStructured').checked;saveContent();};
 $('englishOutput').oninput=()=>{content[englishKey(content.englishEngine)[0]]=$('englishOutput').value;saveContent();renderEnglish();};
 $('chatgptModel').onchange=()=>api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()}).then(refresh).catch(error=>toast(error.message,true));
 $('loginChatgpt').onclick=async()=>{try{await api('/api/content/web-login',{engine:'chatgpt'});await refresh();toast('Đã mở Chrome. Đăng nhập ChatGPT, thấy ô nhắn tin thì đóng hẳn cửa sổ đó rồi bấm Viết prompt.');}catch(error){toast(error.message,true);}};
@@ -387,7 +388,7 @@ $('runEnglish').onclick=async()=>{
   try{
     if(engine==='gemini')await saveAutoSettings();
     else await api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()});
-    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value});
+    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked});
     if(engine==='gemini'){autoJob={id,kind:'english'};renderAuto();}else{chatJob={id};renderEnglishRun();}
     refresh();toast(`Đã gửi ${total} cảnh cho ${engineNames[engine]}.`);
   }catch(error){toast(error.message,true);}
@@ -412,7 +413,7 @@ $('useEnglish').onclick=()=>{
   rememberSources(pairs);
   mode='text';$('separator').value='line';$('prompts').value=prompts.join('\n');renderMode();showView('studio');$('prompts').focus();
   const linked=pairs.filter(([,source])=>source).length;
-  toast(`Đã đưa ${prompts.length} prompt tiếng Anh (${engineNames[content.englishEngine]}) vào Studio; ${linked} prompt kèm đủ Bối cảnh, Góc quay, Hành vi, Hành động.`);
+  toast(`Đã đưa ${prompts.length} prompt tiếng Anh (${engineNames[content.englishEngine]}) vào Studio; ${linked} prompt kèm đủ Bối cảnh, Góc quay, Hành vi, Hành động (lấy từ khung chuẩn trong prompt, hoặc từ dòng cảnh tiếng Việt).`);
 };
 $('copyEnglish').onclick=()=>navigator.clipboard.writeText($('englishOutput').value).then(()=>toast('Đã chép prompt tiếng Anh.')).catch(()=>toast('Không chép được. Chọn và sao chép trong ô kết quả.',true));
 $('downloadEnglish').onclick=()=>{const blob=new Blob([$('englishOutput').value],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`prompt-tieng-anh-${content.englishEngine}.txt`;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};

@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from .content import parse_structured
+
 
 def number(value, minimum=0):
     value = float(value)
@@ -161,6 +163,17 @@ class Store:
             return {field: match.group(field).strip() for field in self.DETAIL_FIELDS}
         return {"setting": source}
 
+    def prompt_details(self, prompt):
+        """Trường lấy thẳng từ prompt: khung chuẩn tiếng Anh (Setting/Camera/Character behavior/Action) hoặc
+        dạng "Bối cảnh N: ..., góc quay: ..., ..." tiếng Việt. {} nếu prompt không có trường nào."""
+        fields = parse_structured(prompt)
+        if sum(bool(fields.get(field)) for field in self.DETAIL_FIELDS) >= 2:
+            return {field: fields.get(field, "") for field in self.DETAIL_FIELDS}
+        match = self.SCENE_PROMPT.match(str(prompt or ""))
+        if match:
+            return {field: match.group(field).strip() for field in self.DETAIL_FIELDS}
+        return {}
+
     def enqueue(self, prompts, cost, batch, images=None, mode="text", sources=None):
         """sources: (không bắt buộc) dòng cảnh tiếng Việt gốc của từng prompt, để Prompt Studio hiện đủ các trường."""
         if not isinstance(prompts, list) or not 1 <= len(prompts) <= 200:
@@ -203,7 +216,9 @@ class Store:
             if db.execute("SELECT count(*) FROM jobs").fetchone()[0] + len(prompts) > 10000:
                 raise ValueError("Đã đạt giới hạn 10.000 tác vụ trong dữ liệu này.")
             now = time.time()
-            details = [self.scene_details(sources[n] if n < len(sources) else "") for n in range(len(prompts))]
+            # Ưu tiên trường có sẵn trong chính prompt (khung chuẩn); không có thì lấy từ dòng cảnh gốc.
+            details = [self.prompt_details(p) or self.scene_details(sources[n] if n < len(sources) else "")
+                       for n, p in enumerate(prompts)]
             db.executemany("INSERT INTO jobs(id,prompt,cost,created,updated,batch,ordinal,images,generation_mode,details) VALUES(?,?,?,?,?,?,?,?,?,?)",
                            [(uuid.uuid4().hex, p.strip(), cost, now, now, batch, n, json.dumps(images[n]), mode,
                              json.dumps(details[n], ensure_ascii=False))
@@ -520,10 +535,7 @@ class Store:
         except (TypeError, ValueError):
             details = {}
         if not any(details.get(field) for field in self.DETAIL_FIELDS):
-            # Prompt dạng "Bối cảnh N: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;"
-            match = self.SCENE_PROMPT.match(job["prompt"])
-            if match:
-                details = {field: match.group(field).strip() for field in self.DETAIL_FIELDS}
+            details = self.prompt_details(job["prompt"])
         job["details"] = {field: str(details.get(field) or "") for field in self.DETAIL_FIELDS}
         job["editable"] = job["status"] != "running"
         return job

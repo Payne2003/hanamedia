@@ -381,7 +381,7 @@ END OF LIST"""
 
         session = Session()
         lines = [f"Bối cảnh {n}: cảnh {n}" for n in range(1, 6)]
-        result = gemini_web.run_english(session, lines, lambda _: None, threading.Event(), model="Pro")
+        result = gemini_web.run_english(session, lines, lambda _: None, threading.Event(), model="Pro", structured=False)
         self.assertEqual(result["missing"], [])
         self.assertEqual(result["english"][1], "English prompt for scene 2, wide shot, a person walks slowly.")
         self.assertEqual(result["rounds"], 4)
@@ -403,7 +403,7 @@ END OF LIST"""
             def ask(self, text, status, stop, email="", label=""):
                 return "1. A long English prompt for the first scene only.\n" + content.END_EN
 
-        result = gemini_web.run_english(Session(), ["A", "B"], lambda _: None, threading.Event())
+        result = gemini_web.run_english(Session(), ["A", "B"], lambda _: None, threading.Event(), structured=False)
         # Hỏi lại 1 lần không sửa được cảnh nào -> dừng, không gửi lặp thêm.
         self.assertEqual((result["missing"], result["english"][1], result["rounds"]), ([2], "", 2))
 
@@ -637,3 +637,60 @@ class ChatGPT2026DomTests(unittest.TestCase):
                 "on the same rugged Himalayan limestone mountainside, 16:9 aspect ratio.\nEND OF LIST")
         found = content.parse_english(text, 2)
         self.assertEqual(content.missing_english(found, 2), [])
+
+
+
+class StructuredPromptTests(unittest.TestCase):
+    LINE = ("Setting: A steep limestone mountainside, bright daylight, a light brown mother goat; Camera: Static eye-level "
+            "close-up; Character behavior: Calm, focused on grazing; Action: She chews fresh grass between rocks; "
+            "Style: Photorealistic documentary; 16:9 aspect ratio.")
+
+    def test_fields_are_split_from_labelled_prompt(self):
+        fields = content.parse_structured(self.LINE)
+        self.assertEqual(fields["camera"], "Static eye-level close-up")
+        self.assertEqual(fields["behavior"], "Calm, focused on grazing")
+        self.assertEqual(fields["action"], "She chews fresh grass between rocks")
+        self.assertEqual(fields["style"], "Photorealistic documentary")
+        self.assertTrue(content.structured_complete(self.LINE))
+        self.assertFalse(content.structured_complete("Setting: A cliff; Camera: Wide; Action: A leopard runs."))
+        bold = "Setting: A cliff; Camera angle: Low angle; Behaviour: Alert; Action: Runs; 9:16 aspect ratio"
+        self.assertEqual(content.parse_structured(bold)["behavior"], "Alert")
+
+    def test_request_asks_for_labels_only_when_structured(self):
+        self.assertIn("Character behavior:", content.english_request(["A"]))
+        self.assertNotIn("Character behavior:", content.english_request(["A"], structured=False))
+        self.assertNotIn("aspect ratio", content.english_request(["A"], aspect="none"))
+
+    def test_scene_missing_a_field_is_requested_again(self):
+        from runner import gemini_web
+        good = lambda n: f"{n}. {self.LINE}"
+
+        class Session:
+            def __init__(self):
+                self.sent = []
+                self.answers = [good(1) + "\n2. Setting: A ledge; Camera: Wide shot; Action: The leopard walks slowly along it.\n"
+                                + content.END_EN, good(2) + "\n" + content.END_EN]
+            def new_chat(self):
+                pass
+            def wait_ready(self, status, stop, email=""):
+                pass
+            def choose_model(self, name):
+                return ""
+            def ask(self, text, status, stop, email="", label=""):
+                self.sent.append(text)
+                return self.answers.pop(0)
+
+        session = Session()
+        result = gemini_web.run_english(session, ["Bối cảnh 1: A", "Bối cảnh 2: B"], lambda _: None, threading.Event())
+        self.assertEqual(result["missing"], [])
+        self.assertTrue(content.structured_complete(result["english"][1]))
+        self.assertIn("2. Bối cảnh 2: B", session.sent[1])
+        self.assertNotIn("1. Bối cảnh 1: A", session.sent[1])
+
+    def test_queue_takes_fields_from_prompt_itself(self):
+        import uuid
+        store = Store(Path(tempfile.mkdtemp()) / "t.db")
+        store.enqueue([self.LINE], 1, uuid.uuid4().hex, sources=["Bối cảnh 1: Khác, góc quay: Khác, hành vi nhân vật: Khác, "
+                                                                 "Nội dung hành động nhân vật: Khác;"])
+        job = store.snapshot()["jobs"][0]
+        self.assertEqual(store.job_detail(job["id"])["details"]["camera"], "Static eye-level close-up")

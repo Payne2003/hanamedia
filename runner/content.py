@@ -12,7 +12,7 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-15"
+VERSION = "content-16"
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")
@@ -232,7 +232,38 @@ def is_english(line):
 ASPECTS = {"16:9": "16:9 widescreen (horizontal) frame", "9:16": "9:16 vertical frame", "1:1": "1:1 square frame"}
 
 
-def english_request(lines, numbers=None, style="", aspect="16:9"):
+# Khung prompt chuẩn: mỗi prompt tự chứa đủ trường có nhãn, để tool tách lại trường từ chính prompt.
+STRUCT_FIELDS = (("setting", "Setting"), ("camera", "Camera"), ("behavior", "Character behavior"), ("action", "Action"))
+STRUCT_LABEL = re.compile(r"(?:(?<=^)|(?<=[\s;|.,(\[]))(setting|camera(?:\s*angle)?|character\s*behaviou?r|behaviou?r|action|style)\s*[:：]",
+                          re.IGNORECASE)
+ASPECT_TAIL = re.compile(r"[\s;,.]*\d{1,2}\s*:\s*\d{1,2}\s*aspect\s*ratio\.?\s*$", re.IGNORECASE)
+
+
+def parse_structured(prompt):
+    """Tách "Setting: ...; Camera: ...; Character behavior: ...; Action: ...; Style: ..." thành các trường.
+
+    Thuật toán: tìm vị trí mọi nhãn đã biết, giá trị của một nhãn là đoạn chữ từ sau dấu ":" đến trước nhãn kế
+    tiếp; bỏ dấu ngăn cách (; | ,) và đuôi "16:9 aspect ratio". Trả về {} nếu không có nhãn nào.
+    """
+    text = str(prompt or "")
+    marks = list(STRUCT_LABEL.finditer(text))
+    fields = {}
+    for index, mark in enumerate(marks):
+        label = re.sub(r"\s+", " ", mark.group(1).lower())
+        key = ("camera" if label.startswith("camera") else "behavior" if "behavio" in label else label)
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
+        value = ASPECT_TAIL.sub("", text[mark.end():end]).strip(" \t;|,")
+        if value and key not in fields:
+            fields[key] = value[:FIELD_LIMIT * 2]
+    return fields
+
+
+def structured_complete(prompt):
+    fields = parse_structured(prompt)
+    return all(fields.get(key) for key, _ in STRUCT_FIELDS)
+
+
+def english_request(lines, numbers=None, style="", aspect="16:9", structured=True):
     """Yêu cầu gửi Gemini: viết prompt tiếng Anh cho các cảnh (numbers=None: tất cả)."""
     numbers = numbers or list(range(1, len(lines) + 1))
     partial = len(numbers) < len(lines)
@@ -246,7 +277,18 @@ def english_request(lines, numbers=None, style="", aspect="16:9"):
         "movement, character appearance and behavior, and the action that happens. Keep characters, outfits and "
         "locations consistent between scenes. Translate spoken lines into English inside quotes.\n"
         "Rules:\n"
-        "- Exactly one line per scene, starting with its number and a period, for example: 1. A quiet beach at dawn...\n"
+        + ("- Exactly one line per scene in this fixed labelled format, all four labels required, in this order:\n"
+           "  N. Setting: <location, time, lighting, props, character appearance>; Camera: <shot size, angle, movement>; "
+           "Character behavior: <behavior, emotion, posture>; Action: <what happens in the shot>; Style: <visual style, "
+           "sound>" + ("; <aspect ratio>" if aspect in ASPECTS else "") + "\n"
+           "  Example: 1. Setting: A quiet beach at dawn, soft golden light, a young woman in a white dress; Camera: Wide "
+           "shot, slow dolly-in at eye level; Character behavior: Calm and relaxed, smiling; Action: She walks barefoot "
+           "along the waterline as waves wash over her feet; Style: Photorealistic, natural ambient sound"
+           + (f"; {aspect} aspect ratio." if aspect in ASPECTS else ".") + "\n"
+           "- Never leave a label empty and never use the labels inside the text of another field.\n"
+           if structured else
+           "- Exactly one line per scene, starting with its number and a period, for example: 1. A quiet beach at dawn...\n")
+        + 
         "- Do not merge, split, skip or renumber scenes. No headings, no markdown, no comments.\n"
         f"- After the last line write exactly: {END_EN}")
     if aspect in ASPECTS:
@@ -259,8 +301,8 @@ def english_request(lines, numbers=None, style="", aspect="16:9"):
 
 
 def continue_english(after, total):
-    return (f"Continue with scene {after + 1} to scene {total}, same format (one line per scene, starting with its "
-            f"number). Do not repeat earlier scenes. After scene {total} write exactly: {END_EN}")
+    return (f"Continue with scene {after + 1} to scene {total}, exactly the same format (one line per scene, starting with "
+            f"its number, same labels). Do not repeat earlier scenes. After scene {total} write exactly: {END_EN}")
 
 
 EN_LINE = re.compile(r"^\W*(?:scene|prompt|c[ảa]nh|b[ốo]i\s*c[ảa]nh)?\s*(\d{1,3})\s*[.):：\-–—]\s*(.+?)\s*$", re.IGNORECASE)
@@ -297,6 +339,8 @@ def parse_english(text, total, numbers=None):
     return {number: prompt for number, prompt in zip(order, paragraphs)}
 
 
-def missing_english(found, total):
-    """Số cảnh còn thiếu hoặc chưa phải tiếng Anh."""
-    return [number for number in range(1, total + 1) if number not in found or not is_english(found[number])]
+def missing_english(found, total, structured=False):
+    """Số cảnh còn thiếu, chưa phải tiếng Anh, hoặc (khi dùng khung chuẩn) thiếu một trong 4 trường."""
+    return [number for number in range(1, total + 1)
+            if number not in found or not is_english(found[number])
+            or (structured and not structured_complete(found[number]))]

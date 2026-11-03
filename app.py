@@ -286,7 +286,8 @@ class Handler(BaseHTTPRequestHandler):
                 job = runner.start("english", "", "" if chatgpt else (store.setting("gemini_web_email") or ""),
                                    store.setting("chatgpt_web_model" if chatgpt else "gemini_web_model") or "", lines,
                                                    (str(body.get("style") or ""),
-                                                    body.get("aspect") if body.get("aspect") in content.ASPECTS else "16:9"))
+                                                    body.get("aspect") if body.get("aspect") in content.ASPECTS else "16:9",
+                                                    body.get("structured") is not False))
                 return self.reply({"ok": True, "id": job, "total": len(lines), "engine": "chatgpt" if chatgpt else "gemini"})
             elif path == "/api/content/web-login":
                 if body.get("engine") == "chatgpt":
