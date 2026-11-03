@@ -404,4 +404,65 @@ END OF LIST"""
                 return "1. A long English prompt for the first scene only.\n" + content.END_EN
 
         result = gemini_web.run_english(Session(), ["A", "B"], lambda _: None, threading.Event())
-        self.assertEqual((result["missing"], result["english"][1], result["rounds"]), ([2], "", 4))
+        # Hỏi lại 1 lần không sửa được cảnh nào -> dừng, không gửi lặp thêm.
+        self.assertEqual((result["missing"], result["english"][1], result["rounds"]), ([2], "", 2))
+
+    def test_unreadable_first_answer_stops_without_resending(self):
+        from runner import gemini_web
+
+        class Session:
+            sent = 0
+            def new_chat(self):
+                pass
+            def wait_ready(self, status, stop, email=""):
+                pass
+            def choose_model(self, name):
+                return ""
+            def ask(self, text, status, stop, email="", label=""):
+                Session.sent += 1
+                return "Đang suy nghĩ về video của bạn…"
+            def dump(self, reason, answer=""):
+                return "data/profiles/gemini-debug.txt"
+
+        with self.assertRaisesRegex(gemini_web.GeminiWebError, "gemini-debug.txt"):
+            gemini_web.run_english(Session(), ["A", "B"], lambda _: None, threading.Event())
+        self.assertEqual(Session.sent, 1)
+        with self.assertRaisesRegex(gemini_web.GeminiWebError, "không gửi lại"):
+            gemini_web.run_conversation(Session(), "Yêu cầu", lambda _: None, threading.Event())
+        self.assertEqual(Session.sent, 2)
+
+
+class GeminiAskWaitTests(unittest.TestCase):
+    """ask() chỉ trả về khi Gemini thật sự viết xong, không trả về phần đang suy nghĩ."""
+
+    def test_waits_through_thinking_until_finished(self):
+        from unittest.mock import patch
+        from runner import gemini_web
+
+        clock = {"now": 0.0}
+        states = iter(
+            [{"count": 0, "busy": False}] * 3                       # wait_ready, wait_idle, wait_ready trước khi gửi
+            + [{"count": 0, "busy": False}]                          # before
+            + [{"count": 1, "busy": True, "text": ""}] * 3          # đang suy nghĩ
+            + [{"count": 1, "busy": False, "done": False, "text": "Đang phân tích"}] * 4  # đứng yên 8s nhưng chưa xong
+            + [{"count": 1, "busy": True, "text": "1. Wide shot"}] * 2
+            + [{"count": 1, "busy": False, "done": True, "text": "1. Wide shot of a beach.\nEND OF LIST"}] * 5)
+
+        class Driver:
+            current_url = "https://gemini.google.com/app"
+            def execute_script(self, script, *args):
+                if script is gemini_web.JS_STATE:
+                    return next(states)
+                if script is gemini_web.JS_FIND_INPUT:
+                    return object()
+                if script is gemini_web.JS_SEND:
+                    return True
+
+        session = gemini_web.GeminiWebSession.__new__(gemini_web.GeminiWebSession)
+        session.driver = Driver()
+        session.fill = lambda field, text, before: {"ok": True}
+        fake_time = type("T", (), {"monotonic": staticmethod(lambda: clock["now"]),
+                                   "sleep": staticmethod(lambda s: clock.__setitem__("now", clock["now"] + s))})
+        with patch.object(gemini_web, "time", fake_time):
+            answer = session.ask("Yêu cầu", lambda _: None, threading.Event())
+        self.assertEqual(answer, "1. Wide shot of a beach.\nEND OF LIST")
