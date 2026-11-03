@@ -1,11 +1,25 @@
 import sys
-import tkinter as tk
-from tkinter import filedialog
+from pathlib import Path
 
-sys.stdout.reconfigure(encoding="utf-8")
-root = tk.Tk()
-root.withdraw()
-root.attributes("-topmost", True)
-folder = filedialog.askdirectory(title="Chọn thư mục lưu video Huy Studio", mustexist=True)
-root.destroy()
-print(folder, flush=True)
+
+def main(output=None):
+    import tkinter as tk
+    from tkinter import filedialog
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    folder = filedialog.askdirectory(title="Chọn thư mục lưu video HANA MEDIA", mustexist=True)
+    root.destroy()
+    if output:  # bản cài đặt chạy không có cửa sổ dòng lệnh: trả kết quả qua file
+        Path(output).write_text(folder or "", encoding="utf-8")
+    else:
+        print(folder, flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

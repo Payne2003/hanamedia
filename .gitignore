@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 *.mp4
 *.crdownload
+build/
+dist/
