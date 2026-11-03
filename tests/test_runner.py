@@ -18,7 +18,7 @@ from app import AppServer
 from runner.engine import Engine
 from runner.flow import chrome_profile_arguments, default_chrome_profile
 from runner.instance import InstanceLock
-from runner.muse import MuseBrowser, MuseFailure, compose_request, newest_otp, otp_codes, otp_messages, valid_mp4
+from runner.muse import MuseBrowser, MuseFailure, compose_request, mask_codes, newest_otp, otp_codes, otp_messages, recent_messages, valid_mp4
 from runner.store import Store, mailbox_for
 
 
@@ -512,6 +512,19 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(otp_messages("Tổng 123456 không phải mã"), set())
         no_time = "Use code 222222 to log in\nUse code 111111 to log in"
         self.assertEqual(newest_otp(otp_messages(no_time) - otp_messages("Use code 111111 to log in")), "222222")
+
+    def test_otp_spaced_timestamps_recent_rule_and_masking(self):
+        from datetime import datetime
+        text = ("MÃ OTP MỚI NHẤT 2026-11-03 16:44:37\nTừ: Meta — Use code 347832 to log in\n347832\n"
+                "Meta Mới nhất 2026-11-03  16:44:37\nUse code 347832 to log in\nMeta Hi George, Login code 347832")
+        messages = otp_messages(text)
+        self.assertEqual(messages, {("2026-11-03 16:44:37", "347832")})
+        clicked = datetime(2026, 11, 3, 16, 44, 30)
+        self.assertEqual(recent_messages(messages, clicked), messages)
+        self.assertEqual(recent_messages(messages, datetime(2026, 11, 3, 16, 50, 0)), set())  # thư trước khi bấm 5 phút
+        self.assertEqual(recent_messages(messages, datetime(2026, 11, 3, 16, 50, 0), before=10), messages)
+        self.assertEqual(recent_messages(messages, datetime(2026, 11, 3, 17, 30, 0), before=10), set())
+        self.assertNotIn("347832", mask_codes(text))
 
     def test_instances_are_exclusive(self):
         first = InstanceLock(self.root / "app.lock")
