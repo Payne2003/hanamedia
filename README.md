@@ -39,12 +39,12 @@ Bấm **✎ Viết content** trên thanh điều hướng để mở trang Viế
 
 Khung **④ Prompt tiếng Anh · Gemini Pro** ở cuối trang Viết content:
 
-1. **Đầu vào**: bấm **Lấy từ danh sách cảnh** (lấy hàng loạt prompt ở bước 3) hoặc tự dán danh sách `Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;` (mỗi dòng một cảnh, hoặc cả danh sách trong `[ ... ]` nối bằng dấu `;`). Chọn **Tỷ lệ khung hình** (mặc định **16:9** ngang; có 9:16 dọc, 1:1 vuông): Gemini viết khung hình theo tỷ lệ đó và kết thúc mỗi prompt bằng `16:9 aspect ratio`. Có thể thêm **Phong cách chung** cho mọi prompt.
+1. **Đầu vào**: bấm **Lấy từ danh sách cảnh** (lấy hàng loạt prompt ở bước 3) hoặc tự dán danh sách `Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;` (mỗi dòng một cảnh, hoặc cả danh sách trong `[ ... ]` nối bằng dấu `;`). Chọn **Thời lượng mỗi cảnh** (mặc định **15 giây**; có 10, 8, 5 giây): mỗi prompt là một shot liền mạch khoảng chừng đó giây và ghi rõ `15 seconds` ở cuối. Chọn **Tỷ lệ khung hình** (mặc định **16:9** ngang; có 9:16 dọc, 1:1 vuông): Gemini viết khung hình theo tỷ lệ đó và kết thúc mỗi prompt bằng `16:9 aspect ratio`. Có thể thêm **Phong cách chung** cho mọi prompt.
 2. Bấm **Viết prompt tiếng Anh bằng Gemini**. Gemini viết mỗi cảnh thành một prompt tiếng Anh, đánh số theo cảnh. Câu trả lời bị cắt thì tool nhắn viết tiếp.
 3. Theo sơ đồ: cảnh nào **thiếu** hoặc **vẫn còn tiếng Việt**, tool tự hỏi lại Gemini riêng những cảnh đó (tối đa 3 lượt). Nếu vẫn thiếu, khung **Còn thiếu** ghi rõ số cảnh và dòng đó để trống để bạn sửa tay hoặc chạy lại.
 4. **Đầu ra**: mỗi dòng 1 prompt tiếng Anh, đúng thứ tự cảnh, sửa được trực tiếp. Bấm **Đưa vào Studio**, **Chép** hoặc **Tải .txt**.
 5. **Prompt chuẩn đủ trường** (bật sẵn): Gemini/ChatGPT phải viết mỗi cảnh đúng một dòng theo khung
-   `N. Setting: …; Camera: …; Character behavior: …; Action: …; Style: …; 16:9 aspect ratio.`
+   `N. Setting: …; Camera: …; Character behavior: …; Action: …; Style: …; 15 seconds; 16:9 aspect ratio.`
    Thuật toán: (1) yêu cầu kèm khung và một dòng ví dụ; (2) tool tìm vị trí các nhãn Setting / Camera / Character behavior / Action / Style trong mỗi dòng và cắt đoạn chữ giữa hai nhãn liên tiếp làm giá trị trường (bỏ dấu `;` và đuôi tỷ lệ khung hình); (3) cảnh nào thiếu dòng, còn tiếng Việt **hoặc thiếu một trong 4 trường** bị coi là thiếu và được hỏi lại riêng (tối đa 3 lượt); (4) prompt gửi lên Muse là cả dòng có nhãn, Prompt Studio tách các trường thẳng từ prompt này. Tắt ô này nếu muốn prompt văn xuôi tự do (khi đó các trường lấy từ dòng cảnh tiếng Việt như mục trên).
 6. **Chọn AI**: bấm **Gemini Pro** hoặc **ChatGPT** phía trên nút viết. Kết quả của mỗi bên được lưu riêng: chuyển qua lại để so sánh, chọn bên tốt hơn rồi **Đưa vào Studio**. Hai bên chạy được cùng lúc (mỗi bên một Chrome riêng).
 

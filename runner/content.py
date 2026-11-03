@@ -12,7 +12,7 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-16"
+VERSION = "content-17"
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")
@@ -20,8 +20,11 @@ FIELD_NAMES = {"setting": "bối cảnh", "camera": "góc quay", "behavior": "h�
                "action": "nội dung hành động nhân vật"}
 LANGUAGES = {"vi": "tiếng Việt", "en": "tiếng Anh (English)"}
 
-SCENE_RULES = """Quy tắc cho từng cảnh:
-- Mỗi cảnh là một shot liền mạch, đủ ngắn để AI video tạo trong khoảng 8 giây.
+DEFAULT_SECONDS = 15  # Thời lượng mặc định của mỗi cảnh / mỗi video.
+SECONDS_CHOICES = (5, 8, 10, 15)
+
+SCENE_RULES = f"""Quy tắc cho từng cảnh:
+- Mỗi cảnh là một shot liền mạch, đủ để AI video tạo trong khoảng {DEFAULT_SECONDS} giây.
 - Chia đủ cảnh theo đúng thứ tự thời gian, không bỏ sót đoạn nào của video.
 - Mỗi cảnh phải tự đứng được: lặp lại ngoại hình nhân vật, trang phục, địa điểm để các cảnh nhất quán.
 - Trường "setting": bối cảnh (địa điểm, thời gian, ánh sáng, đạo cụ, nhân vật trông như thế nào).
@@ -236,7 +239,9 @@ ASPECTS = {"16:9": "16:9 widescreen (horizontal) frame", "9:16": "9:16 vertical 
 STRUCT_FIELDS = (("setting", "Setting"), ("camera", "Camera"), ("behavior", "Character behavior"), ("action", "Action"))
 STRUCT_LABEL = re.compile(r"(?:(?<=^)|(?<=[\s;|.,(\[]))(setting|camera(?:\s*angle)?|character\s*behaviou?r|behaviou?r|action|style)\s*[:：]",
                           re.IGNORECASE)
-ASPECT_TAIL = re.compile(r"[\s;,.]*\d{1,2}\s*:\s*\d{1,2}\s*aspect\s*ratio\.?\s*$", re.IGNORECASE)
+# Đuôi kỹ thuật cuối prompt: "15 seconds", "16:9 aspect ratio" (một hoặc cả hai, theo thứ tự bất kỳ).
+ASPECT_TAIL = re.compile(r"(?:[\s;,.]*(?:\d{1,3}\s*(?:seconds?|secs?|s|giây)|\d{1,2}\s*:\s*\d{1,2}\s*aspect\s*ratio))+\.?\s*$",
+                         re.IGNORECASE)
 
 
 def parse_structured(prompt):
@@ -263,7 +268,7 @@ def structured_complete(prompt):
     return all(fields.get(key) for key, _ in STRUCT_FIELDS)
 
 
-def english_request(lines, numbers=None, style="", aspect="16:9", structured=True):
+def english_request(lines, numbers=None, style="", aspect="16:9", structured=True, seconds=DEFAULT_SECONDS):
     """Yêu cầu gửi Gemini: viết prompt tiếng Anh cho các cảnh (numbers=None: tất cả)."""
     numbers = numbers or list(range(1, len(lines) + 1))
     partial = len(numbers) < len(lines)
@@ -280,17 +285,20 @@ def english_request(lines, numbers=None, style="", aspect="16:9", structured=Tru
         + ("- Exactly one line per scene in this fixed labelled format, all four labels required, in this order:\n"
            "  N. Setting: <location, time, lighting, props, character appearance>; Camera: <shot size, angle, movement>; "
            "Character behavior: <behavior, emotion, posture>; Action: <what happens in the shot>; Style: <visual style, "
-           "sound>" + ("; <aspect ratio>" if aspect in ASPECTS else "") + "\n"
+           "sound>" + (f"; {seconds} seconds" if seconds else "") + ("; <aspect ratio>" if aspect in ASPECTS else "") + "\n"
            "  Example: 1. Setting: A quiet beach at dawn, soft golden light, a young woman in a white dress; Camera: Wide "
            "shot, slow dolly-in at eye level; Character behavior: Calm and relaxed, smiling; Action: She walks barefoot "
            "along the waterline as waves wash over her feet; Style: Photorealistic, natural ambient sound"
-           + (f"; {aspect} aspect ratio." if aspect in ASPECTS else ".") + "\n"
+           + (f"; {seconds} seconds" if seconds else "") + (f"; {aspect} aspect ratio." if aspect in ASPECTS else ".") + "\n"
            "- Never leave a label empty and never use the labels inside the text of another field.\n"
            if structured else
            "- Exactly one line per scene, starting with its number and a period, for example: 1. A quiet beach at dawn...\n")
         + 
         "- Do not merge, split, skip or renumber scenes. No headings, no markdown, no comments.\n"
         f"- After the last line write exactly: {END_EN}")
+    if seconds:
+        rules += (f"\n- Every scene is ONE continuous shot lasting about {seconds} seconds: plan the action so it fits "
+                  f"{seconds} seconds, and write \"{seconds} seconds\" near the end of the prompt.")
     if aspect in ASPECTS:
         rules += (f"\n- Every prompt is composed for a {ASPECTS[aspect]}: describe the framing for that aspect ratio "
                   f"and end the prompt with \"{aspect} aspect ratio\".")
