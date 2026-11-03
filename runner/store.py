@@ -100,14 +100,42 @@ class Store:
         email, mailbox = mailbox_for(email, mailbox)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            if db.execute("SELECT count(*) FROM accounts").fetchone()[0] >= 10:
-                raise ValueError("Phiên bản này hỗ trợ tối đa 10 tài khoản.")
             try:
                 db.execute("INSERT INTO accounts(id,email,mailbox,budget) VALUES(?,?,?,?)",
                            (uuid.uuid4().hex, email, mailbox, number(budget)))
             except sqlite3.IntegrityError:
                 raise ValueError("Email này đã có trong danh sách.") from None
         self.plan_waiting()
+
+    def add_accounts(self, text, budget):
+        """Thêm hàng loạt: mỗi dòng (hoặc cách nhau bởi dấu phẩy/khoảng trắng) một email. Email @tuan89.site tự có link
+        hộp thư OTP. Bỏ qua email trùng; báo email sai định dạng."""
+        emails = [e for e in re.split(r"[\s,;]+", str(text or "")) if e]
+        if not emails:
+            raise ValueError("Nhập ít nhất một email.")
+        if len(emails) > 2000:
+            raise ValueError("Mỗi lần thêm tối đa 2.000 email.")
+        number(budget)
+        added, duplicate, invalid, seen = 0, 0, [], set()
+        for raw in emails:
+            try:
+                email, mailbox = mailbox_for(raw, "")
+            except ValueError:
+                invalid.append(raw[:80])
+                continue
+            if email in seen:
+                duplicate += 1
+                continue
+            seen.add(email)
+            with self.connect() as db:
+                try:
+                    db.execute("INSERT INTO accounts(id,email,mailbox,budget) VALUES(?,?,?,?)",
+                               (uuid.uuid4().hex, email, mailbox, number(budget)))
+                    added += 1
+                except sqlite3.IntegrityError:
+                    duplicate += 1
+        self.plan_waiting()
+        return {"added": added, "duplicate": duplicate, "invalid": invalid[:20], "invalid_count": len(invalid)}
 
     def account(self, account_id):
         with self.connect() as db:

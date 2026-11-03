@@ -17,9 +17,38 @@ class MuseFailure(Exception):
         self.state = state
 
 
+# Tiêu đề thư OTP của Meta (tiếng Anh, tiếng Việt, hoặc bản Google Dịch); không bắt số 6 chữ số tùy ý.
+OTP_SUBJECT = r"(?:Use code|Dùng mã|Sử dụng mã)\s+(\d{6})\s+(?:to log ?in|để đăng nhập)"
+OTP_STAMP = r"(\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}(?::\d{2})?)"
+
+
 def otp_codes(text):
-    # Match the observed Meta email SUBJECT, not arbitrary six-digit numbers.
-    return set(re.findall(r"Dùng mã\s+(\d{6})\s+để đăng nhập", text, re.I))
+    return set(re.findall(OTP_SUBJECT, text, re.I))
+
+
+def otp_messages(text):
+    """Các thư OTP trong hộp thư, mỗi thư là (thời gian, mã). Meta có thể gửi lại CÙNG một mã trong thư mới,
+    nên nhận biết thư mới theo thời gian chứ không theo mã. Hộp thư không hiện giờ thì đánh số thư từ cũ đến mới."""
+    stamped = set(re.findall(OTP_STAMP + r"\D{0,200}?" + OTP_SUBJECT, text, re.I))
+    if stamped:
+        return stamped
+    codes = re.findall(OTP_SUBJECT, text, re.I)  # thư mới nằm trên cùng
+    return {(f"#{index:04d}", code) for index, code in enumerate(reversed(codes))}
+
+
+def newest_otp(messages):
+    return max(messages)[1] if messages else None
+
+
+# Ô nhập mã OTP: 6 ô một chữ số (giao diện 2026) hoặc một ô 6 chữ số (bản cũ).
+JS_OTP_BOXES = r"""
+const visible = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !e.disabled &&
+  getComputedStyle(e).visibility !== 'hidden'; };
+const skip = ['checkbox', 'radio', 'hidden', 'email', 'password', 'submit', 'button', 'search'];
+return [...document.querySelectorAll('input')].filter(e => visible(e) && !skip.includes((e.type || '').toLowerCase()) &&
+  (e.maxLength === 1 || e.maxLength === 6 || /one-time-code/i.test(e.autocomplete || '') || /numeric/i.test(e.inputMode || '') ||
+   /mã|code|chữ số|digit|otp/i.test((e.getAttribute('aria-label') || '') + ' ' + (e.name || '') + ' ' + (e.id || ''))));
+"""
 
 
 def compose_request(prompt, job_id, use_images=False):
@@ -112,6 +141,41 @@ class MuseBrowser:
                 continue
         return None
 
+    def otp_boxes(self):
+        try:
+            return self.driver.execute_script(JS_OTP_BOXES) or []
+        except Exception:
+            return []
+
+    def otp_value(self):
+        return "".join((box.get_attribute("value") or "") for box in self.otp_boxes())
+
+    def enter_otp(self, code):
+        """Nhập mã vào 6 ô (mỗi ô một chữ số) hoặc một ô; Muse tự xác nhận khi đủ 6 số, nếu không thì bấm Tiếp."""
+        from selenium.webdriver.common.action_chains import ActionChains
+        from selenium.webdriver.common.keys import Keys
+        boxes = self.otp_boxes()
+        if len(boxes) >= len(code):
+            for box, digit in zip(boxes, code):
+                box.click()
+                box.send_keys(Keys.CONTROL, "a")
+                box.send_keys(digit)
+        elif boxes:
+            boxes[0].click()
+            boxes[0].send_keys(Keys.CONTROL, "a")
+            boxes[0].send_keys(code)
+        if self.otp_boxes() and self.otp_value() != code:  # ô tự nhảy sang ô kế: gõ cả mã từ ô đầu
+            boxes = self.otp_boxes()
+            boxes[0].click()
+            for _ in range(len(code)):
+                ActionChains(self.driver).send_keys(Keys.BACKSPACE).perform()
+            ActionChains(self.driver).send_keys(code).perform()
+        time.sleep(2)
+        if not self.composer():
+            next_button = self.named("button,[role='button']", {"Tiếp"})
+            if next_button and next_button.is_enabled():
+                next_button.click()
+
     def composer(self):
         return self.named("textarea,input,[role='textbox']", {"Nhắn tin"})
 
@@ -155,8 +219,8 @@ class MuseBrowser:
                 until = time.monotonic() + 30
                 while time.monotonic() < until:
                     body = self.driver.find_element("tag name", "body").text
-                    if account["email"] in body and "Đang kết nối hộp thư" not in body:
-                        baseline, baseline_ok = otp_codes(body), True
+                    if account["email"].lower() in body.lower() and "Đang kết nối hộp thư" not in body:
+                        baseline, baseline_ok = otp_messages(body), True
                         break
                     time.sleep(2)
             except Exception:
@@ -172,15 +236,16 @@ class MuseBrowser:
         if not button:
             raise MuseFailure("Không tìm thấy nút Tiếp tục của Muse.")
         button.click()
-        self.wait(lambda: self.composer() or self.named("input", {"Mã bảo mật gồm 6 chữ số"}), 60,
+        self.wait(lambda: self.composer() or self.otp_boxes(), 60,
                   "Muse chưa hiển thị ô OTP. Kiểm tra tài khoản hoặc yêu cầu xác minh.")
         if self.composer():
             return
-        self.phase("Chờ OTP mới" if baseline_ok else "Hộp thư chưa sẵn sàng; nhập OTP trực tiếp trên cửa sổ Muse")
+        self.phase("Chờ thư OTP mới" if baseline_ok else "Hộp thư chưa sẵn sàng; nhập OTP trực tiếp trên cửa sổ Muse")
         if not baseline_ok and self.headless:
             raise MuseFailure("Không đọc được hộp thư. Bấm Đăng nhập để mở Chrome và nhập OTP trực tiếp.")
-        submitted_code = False
-        until = time.monotonic() + 180
+        attempts, resent, submitted_at = 0, False, None
+        started = time.monotonic()
+        until = started + 180
         while time.monotonic() < until:
             self.driver.switch_to.window(main)
             if self.composer():
@@ -190,23 +255,25 @@ class MuseBrowser:
                     self.driver.switch_to.window(main)
                 return
             self.guard()
-            if baseline_ok and mailbox and not submitted_code:
+            waiting = submitted_at is None or time.monotonic() - submitted_at > 20  # mã vừa nhập: chờ Muse xác nhận
+            if baseline_ok and mailbox and waiting and attempts < 3:
                 self.driver.switch_to.window(mailbox)
                 body = self.driver.find_element("tag name", "body").text
-                fresh = otp_codes(body) - baseline if account["email"] in body else set()
+                fresh = otp_messages(body) - baseline if account["email"].lower() in body.lower() else set()
                 self.driver.switch_to.window(main)
-                if len(fresh) == 1:
-                    box = self.named("input", {"Mã bảo mật gồm 6 chữ số"})
-                    if box:
-                        box.clear()
-                        box.send_keys(next(iter(fresh)))
-                        submitted_code = True
-                        # Muse may submit automatically on the sixth digit.
-                        time.sleep(2)
-                        if not self.composer():
-                            next_button = self.named("button", {"Tiếp"})
-                            if next_button and next_button.is_enabled():
-                                next_button.click()
+                code = newest_otp(fresh)
+                if code and self.otp_boxes():
+                    baseline |= fresh  # mỗi thư chỉ dùng một lần, không dùng lại mã cũ
+                    attempts += 1
+                    self.phase("Đã nhận OTP mới; đang nhập mã" if attempts == 1 else "Thử mã OTP mới hơn")
+                    self.enter_otp(code)
+                    submitted_at = time.monotonic()
+                elif not resent and submitted_at is None and time.monotonic() - started > 60:
+                    resend = self.named("a,button,[role='button'],span", {"Gửi lại mã"})
+                    if resend:
+                        resend.click()  # chưa thấy thư sau 60 giây: bấm Gửi lại mã một lần
+                        self.phase("Chưa thấy thư; đã bấm Gửi lại mã")
+                    resent = True
             time.sleep(3)
         raise MuseFailure("Hết thời gian chờ đăng nhập. Không lưu OTP; bấm Đăng nhập để thử lại.")
 

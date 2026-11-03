@@ -9,6 +9,7 @@ import sqlite3
 import struct
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 import uuid
@@ -17,7 +18,7 @@ from app import AppServer
 from runner.engine import Engine
 from runner.flow import chrome_profile_arguments, default_chrome_profile
 from runner.instance import InstanceLock
-from runner.muse import MuseBrowser, MuseFailure, compose_request, otp_codes, valid_mp4
+from runner.muse import MuseBrowser, MuseFailure, compose_request, newest_otp, otp_codes, otp_messages, valid_mp4
 from runner.store import Store, mailbox_for
 
 
@@ -386,6 +387,46 @@ class StoreTests(unittest.TestCase):
             engine.shutdown()
             engine.close_browsers()
 
+    def test_login_all_logs_in_every_account_with_limited_chrome_and_closes_them(self):
+        ids = [self.account(str(i))["id"] for i in range(7)]
+        self.store.set_account(ids[0], "ready")
+        engine = Engine(self.store, self.root / "engine-data")
+        FakeBrowser = self.session_browser()
+        peak, open_now, guard = [0], [0], __import__("threading").Lock()
+        original_init, original_close = FakeBrowser.__init__, FakeBrowser.close
+
+        def init(self, *args):
+            original_init(self, *args)
+            with guard:
+                open_now[0] += 1
+                peak[0] = max(peak[0], open_now[0])
+            time.sleep(0.05)
+
+        def close(self):
+            original_close(self)
+            with guard:
+                open_now[0] -= 1
+        FakeBrowser.__init__, FakeBrowser.close = init, close
+        try:
+            with patch("runner.engine.MuseBrowser", FakeBrowser):
+                self.assertEqual(engine.login_all(2), 6)
+                with self.assertRaises(ValueError):
+                    engine.login_all(2)
+                deadline = time.time() + 10
+                while engine.login_all_running and time.time() < deadline:
+                    time.sleep(0.05)
+                states = {a["id"]: a["state"] for a in self.store.snapshot()["accounts"]}
+                self.assertTrue(all(state == "ready" for state in states.values()), states)
+                self.assertEqual(len(FakeBrowser.instances), 6)
+                self.assertLessEqual(peak[0], 2)
+                self.assertEqual(open_now[0], 0)
+                self.assertEqual(engine.browsers, {})
+                self.assertIn("6/6", engine.login_all_status)
+                with self.assertRaises(ValueError):
+                    engine.login_all(2)  # không còn tài khoản nào cần đăng nhập
+        finally:
+            engine.shutdown()
+
     def test_delete_is_atomic_when_a_selected_job_is_running(self):
         self.jobs(2)
         self.account()
@@ -440,13 +481,37 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(completed["progress"], 100)
         self.assertEqual(completed["status"], "done")
 
-    def test_account_limit_and_bad_budget(self):
-        for i in range(10):
+    def test_unlimited_accounts_bulk_add_and_bad_budget(self):
+        for i in range(12):
             self.account(str(i))
+        result = self.store.add_accounts("a1@tuan89.site\nA1@tuan89.site, b2@tuan89.site;khong-phai-email\nc3@gmail.com", 5)
+        self.assertEqual((result["added"], result["duplicate"], result["invalid_count"]), (3, 1, 1))
+        accounts = {a["email"]: a for a in self.store.snapshot()["accounts"]}
+        self.assertEqual(len(accounts), 15)
+        self.assertEqual(self.store.account(accounts["a1@tuan89.site"]["id"])["mailbox"], "https://tuan89.site/?email=a1%40tuan89.site")
+        self.assertEqual(self.store.account(accounts["c3@gmail.com"]["id"])["mailbox"], "")
         with self.assertRaises(ValueError):
-            self.account("eleven")
+            self.store.add_accounts("x@tuan89.site", float("nan"))
         with self.assertRaises(ValueError):
             self.jobs(cost=float("nan"))
+
+    def test_otp_new_mail_is_detected_even_when_meta_resends_the_same_code(self):
+        # Văn bản hộp thư Tuan89 như ảnh chụp thật (thư mới nằm trên, có khung "MÃ OTP MỚI NHẤT").
+        before = ("RECEIVING LIVE EMAILS ruby@tuan89.site\nMÃ OTP MỚI NHẤT 2026-11-03 16:26:30\nTừ: Meta — Use code 873023 to log in\n"
+                  "873023\nMeta\n2026-11-03 16:26:30\nUse code 873023 to log in\nMeta Hi Mark, Login code 873023 If you did not")
+        after = ("RECEIVING LIVE EMAILS ruby@tuan89.site\nMÃ OTP MỚI NHẤT 2026-11-03 16:29:03\nTừ: Meta — Use code 873023 to log in\n"
+                 "873023\nMeta Mới nhất\n2026-11-03 16:29:03\nUse code 873023 to log in\nMeta Hi Mark, Login code 873023\n"
+                 "Meta\n2026-11-03 16:26:30\nUse code 873023 to log in\nMeta Hi Mark, Login code 873023")
+        baseline = otp_messages(before)
+        self.assertEqual(baseline, {("2026-11-03 16:26:30", "873023")})
+        self.assertEqual(newest_otp(otp_messages(before) - baseline), None)
+        self.assertEqual(newest_otp(otp_messages(after) - baseline), "873023")
+        newer = "MÃ OTP MỚI NHẤT 2026-11-03 16:31:00\nUse code 111222 to log in\n" + after
+        self.assertEqual(newest_otp(otp_messages(newer) - baseline), "111222")
+        self.assertEqual(otp_codes("Dùng mã 654321 để đăng nhập"), {"654321"})
+        self.assertEqual(otp_messages("Tổng 123456 không phải mã"), set())
+        no_time = "Use code 222222 to log in\nUse code 111111 to log in"
+        self.assertEqual(newest_otp(otp_messages(no_time) - otp_messages("Use code 111111 to log in")), "222222")
 
     def test_instances_are_exclusive(self):
         first = InstanceLock(self.root / "app.lock")
