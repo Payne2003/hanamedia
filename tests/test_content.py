@@ -694,3 +694,20 @@ class StructuredPromptTests(unittest.TestCase):
                                                                  "Nội dung hành động nhân vật: Khác;"])
         job = store.snapshot()["jobs"][0]
         self.assertEqual(store.job_detail(job["id"])["details"]["camera"], "Static eye-level close-up")
+
+
+
+class SecondsTests(unittest.TestCase):
+    def test_default_duration_is_15_seconds(self):
+        self.assertEqual(content.DEFAULT_SECONDS, 15)
+        self.assertIn("15 giây", content.SCENE_RULES)
+        request = content.english_request(["Bối cảnh 1: A"])
+        self.assertIn("about 15 seconds", request)
+        self.assertIn("; 15 seconds; 16:9 aspect ratio.", request)
+        self.assertIn("about 8 seconds", content.english_request(["A"], seconds=8))
+
+    def test_duration_tail_is_not_part_of_a_field(self):
+        line = ("Setting: A cliff; Camera: Wide shot; Character behavior: Alert; Action: The leopard runs; "
+                "Style: Photorealistic; 15 seconds; 16:9 aspect ratio.")
+        self.assertEqual(content.parse_structured(line)["style"], "Photorealistic")
+        self.assertEqual(content.parse_structured("Setting: A; Camera: B; Character behavior: C; Action: D, 15 seconds.")["action"], "D")

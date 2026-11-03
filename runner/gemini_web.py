@@ -501,7 +501,8 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
 MAX_MISSING_ROUNDS = 3
 
 
-def run_english(session, lines, status, stop, email="", model="", style="", aspect="16:9", structured=True):
+def run_english(session, lines, status, stop, email="", model="", style="", aspect="16:9", structured=True,
+                seconds=content.DEFAULT_SECONDS):
     """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
     total = len(lines)
     name = getattr(session, "NAME", "Gemini")
@@ -511,7 +512,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         picked = session.choose_model(model)
         status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
     rounds = 1
-    answer = session.ask(content.english_request(lines, style=style, aspect=aspect, structured=structured), status, stop, email,
+    answer = session.ask(content.english_request(lines, style=style, aspect=aspect, structured=structured, seconds=seconds), status, stop, email,
                          label=f"{name} đang viết {total} prompt tiếng Anh")
     found = content.parse_english(answer, total)
     if not found:
@@ -538,7 +539,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         missing = content.missing_english(found, total, structured)
         if not missing:
             break
-        answer = session.ask(content.english_request(lines, missing, style, aspect, structured), status, stop, email,
+        answer = session.ask(content.english_request(lines, missing, style, aspect, structured, seconds), status, stop, email,
                              label=f"Thiếu {len(missing)} prompt hoặc thiếu trường · {name} đang viết lại (lần {attempt + 1})")
         rounds += 1
         fixed = 0
@@ -639,8 +640,10 @@ class GeminiWebRunner:
                     except Exception:
                         pass
                 if kind == "english":
-                    style, aspect, structured = (tuple(style) + ("16:9", True))[:3] if isinstance(style, tuple) else (style, "16:9", True)
-                    result = run_english(self.session, lines, status, self.stop, email, model, style, aspect, structured)
+                    defaults = ("", "16:9", True, content.DEFAULT_SECONDS)
+                    options = tuple(style) if isinstance(style, tuple) else (style,)
+                    style, aspect, structured, seconds = options + defaults[len(options):]
+                    result = run_english(self.session, lines, status, self.stop, email, model, style, aspect, structured, seconds)
                     done = result["total"] - len(result["missing"])
                     self.set(busy=False, result=result,
                              status=f"Xong: {done}/{result['total']} prompt tiếng Anh sau {result['rounds']} lượt"
