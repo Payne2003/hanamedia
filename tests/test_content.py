@@ -466,3 +466,32 @@ class GeminiAskWaitTests(unittest.TestCase):
         with patch.object(gemini_web, "time", fake_time):
             answer = session.ask("Yêu cầu", lambda _: None, threading.Event())
         self.assertEqual(answer, "1. Wide shot of a beach.\nEND OF LIST")
+
+
+class GeminiListFormatTests(unittest.TestCase):
+    """Gemini thật hiển thị danh sách bằng <ol><li>: chữ đọc được không có số thứ tự (lỗi người dùng gửi về)."""
+
+    REAL = """A vertical off-white limestone cliff face with natural fissures above a loose scree slope with sparse green grass tufts under crystal-clear natural daylight, framed horizontally in a medium close-up as the camera tilts gently upward along the rock wall, 16:9 aspect ratio.
+
+A rugged vertical limestone cliff strewn with scree under angled natural sunlight accentuating the coarse stone texture, captured in a horizontal close-up at character eye level, 16:9 aspect ratio.
+
+A narrow horizontal ledge suspended across a colossal vertical stone wall under bright daylight accentuating each vertical fissure, framed in an extreme wide horizontal shot, 16:9 aspect ratio.
+END OF LIST"""
+
+    def test_unnumbered_paragraphs_map_to_scenes_in_order(self):
+        found = content.parse_english(self.REAL, 3)
+        self.assertEqual(content.missing_english(found, 3), [])
+        self.assertTrue(found[3].startswith("A narrow horizontal ledge"))
+
+    def test_unnumbered_retry_maps_to_requested_scenes(self):
+        found = content.parse_english(self.REAL.split("\n\n")[1], 5, [4])
+        self.assertEqual(list(found), [4])
+
+    def test_lead_in_and_end_lines_are_not_prompts(self):
+        found = content.parse_english("Here are the prompts:\n\n" + self.REAL, 3)
+        self.assertTrue(found[1].startswith("A vertical off-white"))
+
+    def test_page_script_numbers_list_items(self):
+        from runner import gemini_web
+        self.assertIn("querySelectorAll('li, p", gemini_web.JS_STATE)
+        self.assertIn("getAttribute('start'", gemini_web.JS_STATE)

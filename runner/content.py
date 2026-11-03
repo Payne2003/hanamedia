@@ -12,7 +12,7 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-11"
+VERSION = "content-12"
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")
@@ -266,8 +266,12 @@ def continue_english(after, total):
 EN_LINE = re.compile(r"^\W*(?:scene|prompt|c[ảa]nh|b[ốo]i\s*c[ảa]nh)?\s*(\d{1,3})\s*[.):：\-–—]\s*(.+?)\s*$", re.IGNORECASE)
 
 
-def parse_english(text, total):
-    """Đọc câu trả lời: {số cảnh: prompt}. Bỏ markdown, dòng ngoài 1..total và dòng trống."""
+def parse_english(text, total, numbers=None):
+    """Đọc câu trả lời: {số cảnh: prompt}. Bỏ markdown, dòng ngoài 1..total và dòng trống.
+
+    Nếu câu trả lời không có số thứ tự (Gemini có thể hiển thị danh sách không kèm số), các đoạn văn được gán
+    lần lượt cho các cảnh đã hỏi (numbers; mặc định 1..total) theo đúng thứ tự.
+    """
     found = {}
     for raw in str(text or "").replace("\r", "").split("\n"):
         line = re.sub(r"[*_`#>]+", "", raw).strip()
@@ -281,7 +285,16 @@ def parse_english(text, total):
         # Giữ dòng đầu tiên; nhưng nếu dòng đã có còn là tiếng Việt (Gemini chép lại đề) thì thay bằng bản tiếng Anh.
         if number not in found or (not is_english(found[number]) and is_english(prompt)):
             found[number] = prompt[:FIELD_LIMIT * 2]
-    return found
+    if found:
+        return found
+    order = list(numbers or range(1, total + 1))
+    paragraphs = []
+    for raw in str(text or "").replace("\r", "").split("\n"):
+        line = re.sub(r"[*_`#>]+", "", raw).strip()
+        if len(line) < 40 or END_EN.lower() in line.lower() or line.endswith(":"):
+            continue  # bỏ dòng dẫn ("Here are the prompts:"), tiêu đề, dòng kết thúc
+        paragraphs.append(line[:FIELD_LIMIT * 2])
+    return {number: prompt for number, prompt in zip(order, paragraphs)}
 
 
 def missing_english(found, total):
