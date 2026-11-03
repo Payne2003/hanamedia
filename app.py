@@ -256,7 +256,8 @@ class Handler(BaseHTTPRequestHandler):
                 lines = content.split_scene_lines(body.get("text", ""))
                 job = self.server.gemini_web.start("english", "", store.setting("gemini_web_email") or "",
                                                    store.setting("gemini_web_model") or "", lines,
-                                                   str(body.get("style") or ""))
+                                                   (str(body.get("style") or ""),
+                                                    body.get("aspect") if body.get("aspect") in content.ASPECTS else "16:9"))
                 return self.reply({"ok": True, "id": job, "total": len(lines)})
             elif path == "/api/content/web-login":
                 self.server.gemini_web.open_login(store.setting("gemini_web_email") or "")

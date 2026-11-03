@@ -12,7 +12,7 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-9"
+VERSION = "content-10"
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")
@@ -229,7 +229,10 @@ def is_english(line):
     return len(VIET_CHARS.findall(line)) <= 2
 
 
-def english_request(lines, numbers=None, style=""):
+ASPECTS = {"16:9": "16:9 widescreen (horizontal) frame", "9:16": "9:16 vertical frame", "1:1": "1:1 square frame"}
+
+
+def english_request(lines, numbers=None, style="", aspect="16:9"):
     """Yêu cầu gửi Gemini: viết prompt tiếng Anh cho các cảnh (numbers=None: tất cả)."""
     numbers = numbers or list(range(1, len(lines) + 1))
     partial = len(numbers) < len(lines)
@@ -246,6 +249,9 @@ def english_request(lines, numbers=None, style=""):
         "- Exactly one line per scene, starting with its number and a period, for example: 1. A quiet beach at dawn...\n"
         "- Do not merge, split, skip or renumber scenes. No headings, no markdown, no comments.\n"
         f"- After the last line write exactly: {END_EN}")
+    if aspect in ASPECTS:
+        rules += (f"\n- Every prompt is composed for a {ASPECTS[aspect]}: describe the framing for that aspect ratio "
+                  f"and end the prompt with \"{aspect} aspect ratio\".")
     if style.strip():
         rules += f"\nExtra style for every prompt: {style.strip()[:2000]}"
     scenes = "\n".join(f"{number}. {lines[number - 1]}" for number in numbers)

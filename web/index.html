@@ -90,7 +90,7 @@
           <div>
             <div class="english-label"><label for="englishInput">Đầu vào · danh sách cảnh</label><button id="englishFromScenes" type="button" class="text-button">↓ Lấy từ danh sách cảnh</button></div>
             <textarea id="englishInput" rows="9" maxlength="600000" placeholder="Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;&#10;Bối cảnh 2: ..."></textarea>
-            <label>Phong cách chung <small>(không bắt buộc · ví dụ: cinematic, 9:16, ánh sáng tự nhiên)</small><input id="englishStyle" maxlength="2000" placeholder="Thêm vào mọi prompt"></label>
+            <div class="content-grid"><label>Phong cách chung <small>(không bắt buộc)</small><input id="englishStyle" maxlength="2000" placeholder="Ví dụ: cinematic, ánh sáng tự nhiên"></label><label>Tỷ lệ khung hình<select id="englishAspect"><option value="16:9">16:9 · ngang</option><option value="9:16">9:16 · dọc</option><option value="1:1">1:1 · vuông</option></select></label></div>
             <button id="runEnglish" type="button" class="primary full">✦ Viết prompt tiếng Anh bằng Gemini</button>
             <div id="englishProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="englishStatus"></span><button id="stopEnglish" type="button">Dừng</button></div></div>
           </div>
