@@ -44,6 +44,8 @@ Khung **④ Prompt tiếng Anh · Gemini Pro** ở cuối trang Viết content:
 3. Theo sơ đồ: cảnh nào **thiếu** hoặc **vẫn còn tiếng Việt**, tool tự hỏi lại Gemini riêng những cảnh đó (tối đa 3 lượt). Nếu vẫn thiếu, khung **Còn thiếu** ghi rõ số cảnh và dòng đó để trống để bạn sửa tay hoặc chạy lại.
 4. **Đầu ra**: mỗi dòng 1 prompt tiếng Anh, đúng thứ tự cảnh, sửa được trực tiếp. Bấm **Đưa vào Studio**, **Chép** hoặc **Tải .txt**.
 
+Tool chỉ đọc câu trả lời khi Gemini đã viết xong (không còn nút Dừng, đã hiện nút Sao chép/Thích dưới câu trả lời) và bỏ qua phần "suy nghĩ" của Gemini; không gửi yêu cầu mới khi Gemini còn đang viết. Nếu câu trả lời đầu tiên không đọc ra cảnh/prompt nào, tool **dừng và báo lỗi, không gửi lại**, đồng thời lưu file chẩn đoán `data/profiles/gemini-debug.txt` (chứa nội dung cuộc trò chuyện vừa rồi, không chứa mật khẩu) để gửi cho người hỗ trợ.
+
 Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt khi chuyển trang hoặc tải lại. Tool dò ô nhập, nút Gửi và câu trả lời theo giao diện Gemini hiện tại; nếu Google đổi giao diện mà tool báo không điền/không đọc được, cần cập nhật tool. Việc điều khiển trình duyệt tự động có thể trái điều khoản sử dụng của Google; dùng ở mức vừa phải trên tài khoản của chính bạn.
 
 ## Mức độ đã xác minh — đọc trước khi chạy

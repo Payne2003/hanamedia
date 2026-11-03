@@ -120,25 +120,32 @@ return false;
 
 # Trạng thái trang: số câu trả lời, Gemini còn đang viết không, text câu trả lời cuối, đăng nhập, email tài khoản.
 JS_STATE = r"""
+// Trạng thái trang Gemini. "text" chỉ lấy phần câu trả lời (message-content), KHÔNG lấy phần "suy nghĩ" (model-thoughts).
+const visible = e => { const box = e.getBoundingClientRect(); return box.width > 0 && box.height > 0; };
 const responses = [...document.querySelectorAll('model-response, [data-test-id="model-response"], .model-response')]
   .filter((element, index, all) => !all.some(other => other !== element && other.contains(element)));
 const last = responses[responses.length - 1];
-let text = '';
+let text = '', done = false;
 if (last) {
-  const body = last.querySelector('message-content, .model-response-text, .markdown') || last;
-  text = body.innerText || '';
+  const bodies = [...last.querySelectorAll('message-content, .model-response-text, .markdown')]
+    .filter(e => !e.closest('model-thoughts, .model-thoughts, [class*="thought"]'));
+  const body = bodies[bodies.length - 1];
+  text = body ? (body.innerText || '') : '';
+  // Gemini chỉ hiện nút Sao chép / Thích / Không thích dưới câu trả lời khi đã viết xong.
+  done = [...last.querySelectorAll('button, [role="button"]')].some(b => visible(b) &&
+    /sao chép|copy|thích|good response|bad response|chia sẻ|share|thử lại|redo|regenerate/i.test(
+      (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('mattooltip') || '') + ' ' + (b.getAttribute('data-test-id') || '')));
 }
-const busy = [...document.querySelectorAll('button')].some(b => {
-  const label = (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('mattooltip') || '');
-  const box = b.getBoundingClientRect();
-  return box.width > 0 && /stop|dừng/i.test(label);
-});
+const busy = [...document.querySelectorAll('button, [role="button"]')].some(b => {
+  const label = (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('mattooltip') || '') + ' ' + (b.className || '');
+  return visible(b) && /stop|dừng|đang tạo|generating/i.test(label);
+}) || Boolean(last && last.querySelector('[aria-busy="true"], .loading, .pending, mat-progress-bar, [class*="spinner"]'));
 const account = [...document.querySelectorAll('a[aria-label*="@"], button[aria-label*="@"]')]
   .map(e => e.getAttribute('aria-label')).join(' ');
 const email = (account.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [''])[0].toLowerCase();
 const signIn = location.hostname.startsWith('accounts.') ||
   [...document.querySelectorAll('a,button')].some(e => /^(đăng nhập|sign in)$/i.test((e.innerText || '').trim()));
-return {count: responses.length, busy, text, email, signIn, host: location.hostname,
+return {count: responses.length, busy, done, text, email, signIn, host: location.hostname,
   rejected: location.hostname.startsWith('accounts.') && /rejected|disallowed/i.test(location.pathname)};
 """
 
@@ -189,6 +196,8 @@ def login_url(email=""):
 
 class GeminiWebSession:
     """Một cửa sổ Chrome đăng nhập Gemini. Giữ mở giữa các lần chạy để không phải đăng nhập lại."""
+
+    debug_path = None
 
     def __init__(self, profile):
         from selenium import webdriver
@@ -326,7 +335,39 @@ class GeminiWebSession:
             raise GeminiWebError("Gemini đã gửi yêu cầu trước khi tool điền xong. Thử lại; nếu vẫn lỗi hãy dùng chế độ Tự dán.")
         return result
 
+    def wait_idle(self, status, stop, timeout=900):
+        """Không gửi yêu cầu mới khi Gemini còn đang viết câu trước."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if stop.is_set():
+                raise GeminiWebError("Đã dừng.")
+            if not self.state().get("busy"):
+                return
+            status("Gemini còn đang viết câu trả lời trước, chờ xong rồi mới gửi tiếp…")
+            time.sleep(2)
+        raise GeminiWebError("Gemini đang viết quá lâu, chưa gửi tiếp được. Xem cửa sổ Gemini.")
+
+    def dump(self, reason, answer=""):
+        """Lưu trang Gemini hiện tại để chẩn đoán (không chứa mật khẩu; có nội dung cuộc trò chuyện)."""
+        if not self.debug_path:
+            return ""
+        try:
+            path = Path(self.debug_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            page = self.state()
+            html = self.driver.execute_script(
+                "const r=[...document.querySelectorAll('model-response')].pop();"
+                "return (r ? r.outerHTML : document.body.outerHTML).slice(0, 300000);")
+            path.write_text(f"LÝ DO: {reason}\nURL: {self.driver.current_url}\nSTATE: "
+                            f"{ {k: v for k, v in page.items() if k != 'text'} }\n\n--- TEXT TOOL ĐỌC ĐƯỢC ---\n"
+                            f"{answer or page.get('text', '')}\n\n--- HTML CÂU TRẢ LỜI CUỐI ---\n{html}", encoding="utf-8")
+            return str(path)
+        except Exception:
+            return ""
+
     def ask(self, text, status, stop, email="", timeout=1200, label="Gemini đang viết"):
+        field = self.wait_ready(status, stop, email)
+        self.wait_idle(status, stop)
         field = self.wait_ready(status, stop, email)
         before = int(self.state().get("count") or 0)
         written = self.fill(field, text, before)
@@ -351,8 +392,11 @@ class GeminiWebSession:
             current = page.get("text") or ""
             if current != last_text:
                 last_text, stable_since = current, time.monotonic()
-            status(f"{label}… {len(current):,} ký tự".replace(",", "."))
-            if not page.get("busy") and current.strip() and time.monotonic() - stable_since >= 4:
+            steady = time.monotonic() - stable_since
+            status(f"{label}… {len(current):,} ký tự".replace(",", ".") + ("" if current.strip() else " (Gemini đang suy nghĩ)"))
+            # Xong khi: không còn nút Dừng, có chữ, đứng yên; và đã hiện nút Sao chép/Thích (hoặc đứng yên lâu hẳn).
+            if not page.get("busy") and current.strip() and (
+                    (page.get("done") and steady >= 4) or steady >= 25):
                 return current
         raise GeminiWebError("Gemini viết quá lâu (quá 20 phút). Xem cửa sổ Gemini rồi thử lại.")
 
@@ -377,7 +421,12 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
         status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
     answers = [session.ask(prompt + finish_instruction(), status, stop, email,
                            label="Gemini đang kiểm tra" if review else "Gemini đang xem video và viết")]
-    result = content.parse_answer(answers[0])
+    try:
+        result = content.parse_answer(answers[0])
+    except ValueError:
+        where = session.dump("Không đọc được cảnh nào trong câu trả lời đầu tiên", answers[0]) if hasattr(session, "dump") else ""
+        raise GeminiWebError("Tool không đọc được cảnh nào trong câu trả lời của Gemini nên đã dừng (không gửi lại). "
+                             + (f"Gửi file chẩn đoán {where} cho người hỗ trợ." if where else ""))
     for round_number in range(MAX_CONTINUE):
         if END_MARK.lower() in answers[-1].lower():
             break
@@ -415,6 +464,11 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
     answer = session.ask(content.english_request(lines, style=style, aspect=aspect), status, stop, email,
                          label=f"Gemini đang viết {total} prompt tiếng Anh")
     found = content.parse_english(answer, total)
+    if not found:
+        where = session.dump("Không đọc được prompt nào trong câu trả lời đầu tiên", answer) if hasattr(session, "dump") else ""
+        raise GeminiWebError("Tool không đọc được prompt nào trong câu trả lời của Gemini nên đã dừng (không gửi lại). "
+                             + (f"Gửi file chẩn đoán {where} cho người hỗ trợ. " if where else "")
+                             + "Xem cửa sổ Gemini: nếu Gemini đã trả lời đủ thì giao diện đọc kết quả cần cập nhật.")
     # Câu trả lời bị cắt: nhắn viết tiếp từ cảnh sau cùng đã có.
     for _ in range(MAX_CONTINUE):
         if content.END_EN.lower() in answer.lower() or not found or max(found) >= total:
@@ -437,9 +491,13 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         answer = session.ask(content.english_request(lines, missing, style, aspect), status, stop, email,
                              label=f"Thiếu {len(missing)} prompt · Gemini đang viết lại (lần {attempt + 1})")
         rounds += 1
+        fixed = 0
         for number, prompt in content.parse_english(answer, total).items():
             if number in missing and (number not in found or content.is_english(prompt)):
                 found[number] = prompt
+                fixed += content.is_english(prompt)
+        if not fixed:
+            break  # Hỏi lại mà không có cảnh nào được sửa: dừng, không gửi lặp.
     missing = content.missing_english(found, total)
     return {"english": [found.get(number, "") for number in range(1, total + 1)], "missing": missing,
             "total": total, "rounds": rounds}
@@ -515,6 +573,10 @@ class GeminiWebRunner:
                         self.session.close()
                     status("Đang mở Chrome cho Gemini…")
                     self.session = self.factory(self.profile)
+                    try:
+                        self.session.debug_path = self.profile.parent / "gemini-debug.txt"
+                    except Exception:
+                        pass
                 if kind == "english":
                     style, aspect = style if isinstance(style, tuple) else (style, "16:9")
                     result = run_english(self.session, lines, status, self.stop, email, model, style, aspect)
