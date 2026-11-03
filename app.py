@@ -20,9 +20,11 @@ from runner.chatgpt_web import chatgpt_runner
 from runner.engine import Engine
 from runner.store import Store
 from runner.instance import InstanceLock
+from runner.paths import data_root, frozen, resource_root
+from runner.version import APP_VERSION
 
-ROOT = Path(__file__).resolve().parent
-DATA = ROOT / "data"
+ROOT = resource_root()  # web/ (trong bản cài đặt: bên trong gói app)
+DATA = data_root()      # mã nguồn: data/ cạnh app.py; bản cài đặt: %LOCALAPPDATA%\HanaMedia\data
 
 
 class AppServer(ThreadingHTTPServer):
@@ -86,6 +88,7 @@ class Handler(BaseHTTPRequestHandler):
             data = self.server.store.snapshot()
             data["engine"] = self.server.engine.snapshot()
             data["key"] = self.server.secret
+            data["app_version"] = APP_VERSION
             data["content"] = {"version": content.VERSION,
                                "web": dict(self.server.gemini_web.snapshot(),
                                            email=self.server.store.setting("gemini_web_email") or "",
@@ -251,11 +254,18 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Cửa sổ chọn thư mục đang mở.")
                 try:
                     # A separate native process avoids Tk's main-thread requirement.
-                    result = subprocess.run([sys.executable, str(ROOT / "folder_picker.py")],
-                                            capture_output=True, timeout=180, encoding="utf-8")
+                    if frozen():
+                        answer = DATA / ".folder-choice.txt"
+                        answer.unlink(missing_ok=True)
+                        result = subprocess.run([sys.executable, "--pick-folder", str(answer)], timeout=180)
+                        folder = answer.read_text(encoding="utf-8").strip() if answer.is_file() else ""
+                        answer.unlink(missing_ok=True)
+                    else:
+                        result = subprocess.run([sys.executable, str(ROOT / "folder_picker.py")],
+                                                capture_output=True, timeout=180, encoding="utf-8")
+                        folder = (result.stdout or "").strip()
                     if result.returncode:
                         raise ValueError("Không mở được hộp chọn thư mục. Chạy tool trên Windows có giao diện màn hình.")
-                    folder = result.stdout.strip()
                     if folder:
                         target = Path(folder).resolve(strict=True)
                         if not target.is_dir():
@@ -322,25 +332,65 @@ class Handler(BaseHTTPRequestHandler):
             self.reply({"error": "Không thực hiện được. Kiểm tra quyền ghi và trạng thái bộ chạy."}, 500)
 
 
+def start_runner(port=8765):
+    """Mở dữ liệu, bộ chạy và máy chủ giao diện. Trả về (server, engine, instance) hoặc nêu RuntimeError có lời nhắn."""
+    DATA.mkdir(parents=True, exist_ok=True)
+    try:
+        instance = InstanceLock(DATA / "runner.lock")
+    except OSError:
+        raise RuntimeError("HANA MEDIA đã mở ở cửa sổ khác. Không mở hai bộ chạy với cùng thư mục dữ liệu.") from None
+    try:
+        store = Store(DATA / "studio.sqlite3")
+        engine = Engine(store, DATA)
+        try:
+            server = AppServer(port, store, engine)
+        except OSError:
+            if not port:
+                raise
+            server = AppServer(0, store, engine)  # cổng 8765 bận: dùng cổng trống bất kỳ
+    except Exception:
+        instance.close()
+        raise
+    return server, engine, instance
+
+
+def stop_runner(server, engine, instance, wait=None):
+    """Dừng nhận tác vụ mới, đợi tác vụ đang chạy (tối đa `wait` giây; None = đợi hết), đóng mọi Chrome."""
+    import time
+    threads = engine.shutdown()
+    deadline = None if wait is None else time.monotonic() + wait
+    try:
+        for thread in threads:
+            thread.join(None if deadline is None else max(0.0, deadline - time.monotonic()))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        engine.close_browsers()
+        server.gemini_web.close()
+        server.chatgpt_web.close()
+        server.server_close()
+        instance.close()
+
+
 def main():
+    if "--pick-folder" in sys.argv:  # bản cài đặt: HanaMedia.exe --pick-folder mở hộp chọn thư mục
+        import folder_picker
+        index = sys.argv.index("--pick-folder")
+        return folder_picker.main(sys.argv[index + 1] if len(sys.argv) > index + 1 else None)
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
-    DATA.mkdir(exist_ok=True)
     try:
-        instance = InstanceLock(DATA / "runner.lock")
-    except OSError:
-        print("Tool đã chạy ở cửa sổ khác. Không mở hai bộ chạy với cùng thư mục data.")
+        server, engine, instance = start_runner(args.port)
+    except RuntimeError as error:
+        print(error)
         return 1
-    store = Store(DATA / "studio.sqlite3")
-    engine = Engine(store, DATA)
-    try:
-        server = AppServer(args.port, store, engine)
     except OSError:
-        print("Cổng đang được dùng. Có thể tool đã mở. Kiểm tra http://127.0.0.1:8765")
+        print("Không mở được bộ chạy. Có thể tool đã mở; kiểm tra http://127.0.0.1:8765")
         return 1
-    print("HANA MEDIA: " + server.origin)
+    print(f"HANA MEDIA {APP_VERSION}: " + server.origin)
+    print("Dữ liệu: " + str(DATA))
     print("Giữ cửa sổ này mở khi đang tạo video. Ctrl+C: dừng nhận thêm và đợi tác vụ đang chạy.")
     if not args.no_open:
         webbrowser.open(server.origin)
@@ -348,18 +398,8 @@ def main():
         server.serve_forever()
     except KeyboardInterrupt:
         print("Đang đợi tác vụ hiện tại kết thúc. Ctrl+C lần nữa: thoát ngay; phải kiểm tra các tác vụ đã gửi.")
-        threads = engine.shutdown()
-        try:
-            for thread in threads:
-                thread.join()
-        except KeyboardInterrupt:
-            pass
     finally:
-        engine.close_browsers()
-        server.gemini_web.close()
-        server.chatgpt_web.close()
-        server.server_close()
-        instance.close()
+        stop_runner(server, engine, instance)
     return 0
 
 

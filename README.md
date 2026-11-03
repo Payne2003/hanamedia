@@ -74,6 +74,30 @@ Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt 
 4. Chạy **CHAY_WINDOWS.cmd**. Giao diện mở tại `http://127.0.0.1:8765`.
 5. Giữ cửa sổ bộ chạy mở. Đóng trang giao diện không dừng tác vụ, nhưng tắt bộ chạy hoặc cho máy ngủ sẽ làm gián đoạn.
 
+## App Windows (HanaMedia.exe)
+
+Ngoài cách chạy bằng mã nguồn (`CHAY_WINDOWS.cmd`), tool có bản **app Windows**: cửa sổ riêng "HANA MEDIA", có biểu tượng ở Desktop/Start Menu, không cần cài Python, không có cửa sổ đen. Bên trong vẫn là đúng mã của repo này.
+
+**Lấy bộ cài**
+- Mỗi lần `main` được cập nhật, GitHub tự build bộ cài: vào repo trên GitHub → tab **Actions** → lần chạy **Windows app** mới nhất → mục **Artifacts** → tải **HanaMedia-Setup** (file zip chứa `HanaMedia-Setup-x.y.z.exe`).
+- Hoặc tự build trên máy: chạy `CAI_DAT_WINDOWS.cmd` một lần, rồi `DONG_GOI_WINDOWS.cmd`. Kết quả ở `dist\HanaMedia\HanaMedia.exe`; nếu máy có [Inno Setup 6](https://jrsoftware.org/isdl.php) thì có thêm `dist\HanaMedia-Setup-x.y.z.exe`.
+
+**Cài và dữ liệu**
+- Bộ cài cài vào `%LOCALAPPDATA%\Programs\HanaMedia`, không cần quyền quản trị. Lần đầu Windows có thể báo SmartScreen ("ứng dụng không rõ nguồn gốc") vì app chưa ký số: bấm **Thông tin thêm → Vẫn chạy**.
+- Dữ liệu của app nằm riêng ở `%LOCALAPPDATA%\HanaMedia\data`: tài khoản, hàng đợi, ảnh, và các **hồ sơ Chrome đã đăng nhập** (Muse, Gemini, ChatGPT).
+- **Lần đầu mở app**, app tự tìm dữ liệu của bản mã nguồn (ví dụ `D:\Huy-Muse-Runner\data`) và **chép** sang, nên các tài khoản và Chrome đã đăng nhập vẫn giữ nguyên, không phải đăng nhập lại. Đóng `CHAY_WINDOWS.cmd` trước khi mở app lần đầu (app không chép dữ liệu đang mở). Thư mục cũ không bị sửa hay xóa. Nếu dữ liệu cũ nằm chỗ khác: đóng app, chạy `set HANAMEDIA_IMPORT=E:\đường-dẫn\data` rồi mở `%LOCALAPPDATA%\Programs\HanaMedia\HanaMedia.exe` từ cùng cửa sổ đó.
+- Chrome profile `Profile 2` dùng cho Flow là Chrome thường của bạn, không nằm trong dữ liệu app nên không bị ảnh hưởng.
+
+**Cập nhật và sửa tính năng sau khi đã đóng gói**
+1. Sửa code trong repo như trước (hoặc nhờ Claude sửa), merge vào `main`.
+2. GitHub tự build bộ cài mới (tab **Actions**, khoảng 5–10 phút). Muốn đánh số phiên bản: tăng `APP_VERSION` trong `runner/version.py`, rồi tạo tag `v1.0.1` để bộ cài được đăng ở mục **Releases**.
+3. Đóng app, chạy bộ cài mới. Bộ cài chỉ thay phần chương trình; **dữ liệu và các Chrome đã đăng nhập giữ nguyên**. Gỡ cài đặt cũng không xóa dữ liệu.
+- Muốn thử nhanh một bản sửa mà không cần đóng gói: chạy bằng mã nguồn `CHAY_WINDOWS.cmd`. Để bản mã nguồn dùng chung dữ liệu với app, đóng app rồi chạy `set HANAMEDIA_DATA=%LOCALAPPDATA%\HanaMedia\data` trước `CHAY_WINDOWS.cmd` trong cùng cửa sổ lệnh. Không mở app và bản mã nguồn cùng lúc trên cùng dữ liệu (tool sẽ báo "đã mở ở cửa sổ khác").
+
+**Khi đóng cửa sổ app**: tool hỏi xác nhận, rồi dừng nhận tác vụ mới và đóng mọi Chrome của tool. Tác vụ đã gửi lên Muse mà chưa tải về sẽ được đánh dấu cần kiểm tra ở lần mở sau (như khi tắt bộ chạy cũ).
+
+**Máy thiếu WebView2** (hiếm trên Windows 10/11): app tự mở giao diện trong trình duyệt và hiện hộp thông báo; bấm OK ở hộp đó là tắt tool. Cài [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) để có cửa sổ app.
+
 ## Thử một video trước
 
 1. Bấm **Chọn thư mục lưu**, chọn thư mục bạn muốn, ví dụ `D:\Video-Muse`.

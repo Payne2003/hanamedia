@@ -1,0 +1,4 @@
+# Thêm cho bản app Windows (cửa sổ app + đóng gói). Bản chạy bằng mã nguồn chỉ cần requirements.txt.
+-r requirements.txt
+pywebview>=5,<7
+pyinstaller>=6.10,<7

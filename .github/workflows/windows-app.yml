@@ -1,0 +1,53 @@
+# Build HANA MEDIA cho Windows mỗi lần cập nhật main (tải ở tab Actions → Artifacts)
+# và khi đẩy tag v* (ví dụ v1.0.1) thì đăng bộ cài lên mục Releases.
+name: Windows app
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cài thư viện
+        run: python -m pip install -r requirements-app.txt
+      - name: Kiểm thử
+        run: python -m unittest discover -s tests
+      - name: Đóng gói app
+        run: python -m PyInstaller --noconfirm --clean packaging/HanaMedia.spec
+      - name: Kiểm tra app khởi động
+        shell: pwsh
+        run: |
+          $env:HANAMEDIA_DATA = "$env:RUNNER_TEMP\hana-data"
+          $p = Start-Process dist\HanaMedia\HanaMedia.exe -ArgumentList "--server-only" -PassThru
+          $ok = $false
+          foreach ($i in 1..30) {
+            Start-Sleep 1
+            try { $r = Invoke-WebRequest http://127.0.0.1:8765/api/state -UseBasicParsing; if ($r.StatusCode -eq 200) { $ok = $true; break } } catch {}
+          }
+          Stop-Process -Id $p.Id -Force
+          if (-not $ok) { throw "HanaMedia.exe không khởi động được" }
+      - name: Tạo bộ cài
+        shell: pwsh
+        run: |
+          $version = python -c "from runner.version import APP_VERSION; print(APP_VERSION)"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\HanaMedia.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HanaMedia-Setup
+          path: dist/HanaMedia-Setup-*.exe
+      - name: Đăng lên Releases
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/HanaMedia-Setup-*.exe
