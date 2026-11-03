@@ -495,3 +495,87 @@ END OF LIST"""
         from runner import gemini_web
         self.assertIn("querySelectorAll('li, p", gemini_web.JS_STATE)
         self.assertIn("getAttribute('start'", gemini_web.JS_STATE)
+
+
+class ChatGPTEngineTests(unittest.TestCase):
+    def test_chatgpt_session_uses_own_page_scripts_and_name(self):
+        from runner import chatgpt_web, gemini_web
+        self.assertEqual(chatgpt_web.ChatGPTWebSession.NAME, "ChatGPT")
+        self.assertEqual(chatgpt_web.ChatGPTWebSession.URL, "https://chatgpt.com/")
+        self.assertIsNot(chatgpt_web.ChatGPTWebSession.JS_STATE, gemini_web.GeminiWebSession.JS_STATE)
+        self.assertIn('data-message-author-role="assistant"', chatgpt_web.JS_STATE)
+
+    def test_runner_opens_chatgpt_login_in_its_own_profile(self):
+        from unittest.mock import patch
+        from runner import chatgpt_web, gemini_web
+        launched = []
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(gemini_web, "chrome_executable", return_value="chrome.exe"):
+            runner = chatgpt_web.chatgpt_runner(Path(folder) / "chatgpt-web")
+            runner.open_login("", lambda args: launched.append(args) or type("P", (), {"poll": lambda self: 0})())
+            self.assertIn(f"--user-data-dir={Path(folder) / 'chatgpt-web'}", launched[0])
+            self.assertEqual(launched[0][-1], "https://chatgpt.com/auth/login")
+            self.assertIn("ChatGPT", runner.snapshot()["status"])
+            runner.close()
+
+    def test_logged_out_page_asks_to_sign_in(self):
+        from runner import chatgpt_web, gemini_web
+
+        class Driver:
+            def execute_script(self, script, *args):
+                if script is chatgpt_web.JS_STATE:
+                    return {"loggedOut": True}
+                return object()
+
+        session = chatgpt_web.ChatGPTWebSession.__new__(chatgpt_web.ChatGPTWebSession)
+        session.driver = Driver()
+        with self.assertRaisesRegex(gemini_web.GeminiWebError, "Đăng nhập ChatGPT"):
+            session.wait_ready(lambda _: None, threading.Event(), timeout=5)
+
+    def test_english_run_endpoint_routes_to_chatgpt(self):
+        from runner import chatgpt_web, gemini_web
+        store = Store(Path(tempfile.mkdtemp()) / "t.db")
+        engine = type("Idle", (), {"snapshot": lambda self: {}, "changed": threading.Event()})()
+        server = AppServer(0, store, engine)
+        line = "1. A wide shot of a snowy cliff at dawn, 16:9 aspect ratio.\n" + content.END_EN
+
+        class Session:
+            NAME = "ChatGPT"
+            def __init__(self, profile):
+                pass
+            def alive(self):
+                return True
+            def close(self):
+                pass
+            def new_chat(self):
+                pass
+            def wait_ready(self, status, stop, email=""):
+                pass
+            def choose_model(self, name):
+                return name
+            def ask(self, text, status, stop, email="", label=""):
+                return line
+
+        server.chatgpt_web.close()
+        server.chatgpt_web = chatgpt_web.chatgpt_runner(Path(tempfile.mkdtemp()) / "chatgpt-web", Session)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+            connection.request("POST", "/api/content/english-run", body=json.dumps(
+                {"engine": "chatgpt", "text": "Bối cảnh 1: Vách đá"}),
+                headers={"Content-Type": "application/json", "Origin": server.origin, "X-Runner-Key": server.secret})
+            reply = json.loads(connection.getresponse().read())
+            self.assertEqual(reply["engine"], "chatgpt")
+            for _ in range(50):
+                if not server.chatgpt_web.snapshot()["busy"]:
+                    break
+                threading.Event().wait(0.05)
+            result = server.chatgpt_web.snapshot()["result"]
+            self.assertEqual(result["english"], ["A wide shot of a snowy cliff at dawn, 16:9 aspect ratio."])
+            self.assertEqual(server.gemini_web.snapshot()["id"], "")  # Gemini không bị dùng
+        finally:
+            server.shutdown()
+            server.server_close()
+            server.gemini_web.close()
+            server.chatgpt_web.close()

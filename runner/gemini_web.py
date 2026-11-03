@@ -216,7 +216,15 @@ def login_url(email=""):
 
 
 class GeminiWebSession:
-    """Một cửa sổ Chrome đăng nhập Gemini. Giữ mở giữa các lần chạy để không phải đăng nhập lại."""
+    """Một cửa sổ Chrome đăng nhập Gemini. Giữ mở giữa các lần chạy để không phải đăng nhập lại.
+
+    Lớp con (ChatGPTWebSession) chỉ cần đổi tên, địa chỉ và các đoạn JS thao tác trang.
+    """
+    NAME = "Gemini"
+    JS_STATE, JS_FIND_INPUT, JS_SEND = JS_STATE, JS_FIND_INPUT, JS_SEND
+    JS_OPEN_MODEL_MENU, JS_PICK_MODEL = JS_OPEN_MODEL_MENU, JS_PICK_MODEL
+    URL = GEMINI_URL
+    LOGIN_HINT = "Bấm “Đăng nhập Google” để mở Chrome thường, đăng nhập rồi đóng cửa sổ đó, sau đó bấm Chạy lại."
 
     debug_path = None
 
@@ -236,7 +244,7 @@ class GeminiWebSession:
             self.driver = webdriver.Chrome(options=options, service=Service(log_output=os.devnull))
             self.driver.set_page_load_timeout(90)
         except Exception as error:
-            raise GeminiWebError("Không mở được Chrome cho Gemini. Đóng cửa sổ Gemini cũ của tool (nếu có) rồi thử lại. "
+            raise GeminiWebError(f"Không mở được Chrome cho {self.NAME}. Đóng cửa sổ {self.NAME} cũ của tool (nếu có) rồi thử lại. "
                                  f"Chi tiết: {error}") from error
 
     def alive(self):
@@ -253,10 +261,10 @@ class GeminiWebSession:
             pass
 
     def state(self):
-        return self.driver.execute_script(JS_STATE) or {}
+        return self.driver.execute_script(self.JS_STATE) or {}
 
     def new_chat(self):
-        self.driver.get(GEMINI_URL)
+        self.driver.get(self.URL)
 
     def wait_ready(self, status, stop, email="", timeout=900):
         """Chờ ô nhập xuất hiện; nếu chưa đăng nhập thì chờ người dùng đăng nhập trong cửa sổ."""
@@ -266,30 +274,33 @@ class GeminiWebSession:
                 raise GeminiWebError("Đã dừng.")
             try:
                 page = self.state()
-                field = self.driver.execute_script(JS_FIND_INPUT)
+                field = self.driver.execute_script(self.JS_FIND_INPUT)
             except Exception:
                 page, field = {}, None
-            if page.get("signIn") or page.get("rejected"):
+            if page.get("signIn") or page.get("rejected") or page.get("loggedOut"):
                 # Google không cho nhập mật khẩu trong Chrome đang bị điều khiển tự động.
-                raise GeminiWebError("Chưa đăng nhập Gemini trong hồ sơ của tool. Bấm “Đăng nhập Google” để mở Chrome "
-                                     "thường, đăng nhập rồi đóng cửa sổ đó, sau đó bấm Chạy lại.")
+                raise GeminiWebError(f"Chưa đăng nhập {self.NAME} trong hồ sơ của tool. {self.LOGIN_HINT}")
             if field:
                 if email and page.get("email") and page["email"] != email.lower():
-                    raise GeminiWebError(f"Cửa sổ Gemini đang đăng nhập {page['email']}, không phải {email}. "
+                    raise GeminiWebError(f"Cửa sổ {self.NAME} đang đăng nhập {page['email']}, không phải {email}. "
                                          "Đổi tài khoản trong cửa sổ đó rồi bấm lại.")
                 return field
-            status("Đang chờ Gemini tải xong…")
+            if page.get("challenge"):
+                status(f"{self.NAME} yêu cầu xác minh (\"Tôi không phải người máy\"). Bạn tự hoàn tất trong cửa sổ "
+                       f"{self.NAME}; tool chờ rồi chạy tiếp.")
+            else:
+                status(f"Đang chờ {self.NAME} tải xong…")
             time.sleep(2)
-        raise GeminiWebError("Hết thời gian chờ đăng nhập Gemini.")
+        raise GeminiWebError(f"Hết thời gian chờ {self.NAME} sẵn sàng.")
 
     def choose_model(self, name):
         if not name:
             return ""
         try:
-            if self.driver.execute_script(JS_OPEN_MODEL_MENU) is None:
+            if self.driver.execute_script(self.JS_OPEN_MODEL_MENU) is None:
                 return ""
             time.sleep(1)
-            return self.driver.execute_script(JS_PICK_MODEL, name) or ""
+            return self.driver.execute_script(self.JS_PICK_MODEL, name) or ""
         except Exception:
             return ""
 
@@ -327,7 +338,7 @@ class GeminiWebSession:
         except Exception:
             result = {}
         if self.sent_early(before):
-            raise GeminiWebError("Gemini đã gửi yêu cầu trước khi tool điền xong. Thử lại; nếu vẫn lỗi hãy dùng chế độ Tự dán.")
+            raise GeminiWebError(f"{self.NAME} đã gửi yêu cầu trước khi tool điền xong. Thử lại.")
         if result.get("ok"):
             return result
         # 2) Gõ như bàn phím: chèn từng dòng, xuống dòng bằng Shift+Enter (Enter = Gửi trong Gemini).
@@ -346,14 +357,14 @@ class GeminiWebSession:
         except Exception:
             result = {}
         if self.sent_early(before):
-            raise GeminiWebError("Gemini đã gửi yêu cầu trước khi tool điền xong. Thử lại; nếu vẫn lỗi hãy dùng chế độ Tự dán.")
+            raise GeminiWebError(f"{self.NAME} đã gửi yêu cầu trước khi tool điền xong. Thử lại.")
         if result.get("ok"):
             return result
         # 3) Chèn bằng JS (dán giả lập / dựng đoạn văn / gộp một dòng).
         result = self.driver.execute_script(JS_INSERT, field, text) or {}
         time.sleep(1)
         if self.sent_early(before):
-            raise GeminiWebError("Gemini đã gửi yêu cầu trước khi tool điền xong. Thử lại; nếu vẫn lỗi hãy dùng chế độ Tự dán.")
+            raise GeminiWebError(f"{self.NAME} đã gửi yêu cầu trước khi tool điền xong. Thử lại.")
         return result
 
     def wait_idle(self, status, stop, timeout=900):
@@ -364,9 +375,9 @@ class GeminiWebSession:
                 raise GeminiWebError("Đã dừng.")
             if not self.state().get("busy"):
                 return
-            status("Gemini còn đang viết câu trả lời trước, chờ xong rồi mới gửi tiếp…")
+            status(f"{self.NAME} còn đang viết câu trả lời trước, chờ xong rồi mới gửi tiếp…")
             time.sleep(2)
-        raise GeminiWebError("Gemini đang viết quá lâu, chưa gửi tiếp được. Xem cửa sổ Gemini.")
+        raise GeminiWebError(f"{self.NAME} đang viết quá lâu, chưa gửi tiếp được. Xem cửa sổ {self.NAME}.")
 
     def dump(self, reason, answer=""):
         """Lưu trang Gemini hiện tại để chẩn đoán (không chứa mật khẩu; có nội dung cuộc trò chuyện)."""
@@ -377,7 +388,7 @@ class GeminiWebSession:
             path.parent.mkdir(parents=True, exist_ok=True)
             page = self.state()
             html = self.driver.execute_script(
-                "const r=[...document.querySelectorAll('model-response')].pop();"
+                "const r=[...document.querySelectorAll('model-response, [data-message-author-role=\"assistant\"]')].pop();"
                 "return (r ? r.outerHTML : document.body.outerHTML).slice(0, 300000);")
             path.write_text(f"LÝ DO: {reason}\nURL: {self.driver.current_url}\nSTATE: "
                             f"{ {k: v for k, v in page.items() if k != 'text'} }\n\n--- TEXT TOOL ĐỌC ĐƯỢC ---\n"
@@ -393,9 +404,9 @@ class GeminiWebSession:
         before = int(self.state().get("count") or 0)
         written = self.fill(field, text, before)
         if not written.get("ok"):
-            raise GeminiWebError(f"Không điền đủ yêu cầu vào ô Hỏi Gemini (mới vào {written.get('length', 0)} ký tự). "
-                                 "Giao diện Gemini có thể đã thay đổi; dùng tạm chế độ Tự dán.")
-        if not self.driver.execute_script(JS_SEND):
+            raise GeminiWebError(f"Không điền đủ yêu cầu vào ô nhập của {self.NAME} (mới vào {written.get('length', 0)} ký tự). "
+                                 f"Giao diện {self.NAME} có thể đã thay đổi.")
+        if not self.driver.execute_script(self.JS_SEND):
             from selenium.webdriver.common.keys import Keys
             field.send_keys(Keys.ENTER)
         deadline, started = time.monotonic() + timeout, time.monotonic()
@@ -407,19 +418,19 @@ class GeminiWebSession:
             page = self.state()
             if int(page.get("count") or 0) <= before:
                 if time.monotonic() - started > 120:
-                    raise GeminiWebError("Gemini chưa nhận yêu cầu sau 2 phút. Kiểm tra cửa sổ Gemini (có thể cần bấm Gửi).")
-                status(f"{label}… chờ Gemini nhận yêu cầu")
+                    raise GeminiWebError(f"{self.NAME} chưa nhận yêu cầu sau 2 phút. Kiểm tra cửa sổ {self.NAME} (có thể cần bấm Gửi).")
+                status(f"{label}… chờ {self.NAME} nhận yêu cầu")
                 continue
             current = page.get("text") or ""
             if current != last_text:
                 last_text, stable_since = current, time.monotonic()
             steady = time.monotonic() - stable_since
-            status(f"{label}… {len(current):,} ký tự".replace(",", ".") + ("" if current.strip() else " (Gemini đang suy nghĩ)"))
+            status(f"{label}… {len(current):,} ký tự".replace(",", ".") + ("" if current.strip() else f" ({self.NAME} đang suy nghĩ)"))
             # Xong khi: không còn nút Dừng, có chữ, đứng yên; và đã hiện nút Sao chép/Thích (hoặc đứng yên lâu hẳn).
             if not page.get("busy") and current.strip() and (
                     (page.get("done") and steady >= 4) or steady >= 25):
                 return current
-        raise GeminiWebError("Gemini viết quá lâu (quá 20 phút). Xem cửa sổ Gemini rồi thử lại.")
+        raise GeminiWebError(f"{self.NAME} viết quá lâu (quá 20 phút). Xem cửa sổ {self.NAME} rồi thử lại.")
 
 
 def finish_instruction():
@@ -476,6 +487,7 @@ MAX_MISSING_ROUNDS = 3
 def run_english(session, lines, status, stop, email="", model="", style="", aspect="16:9"):
     """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
     total = len(lines)
+    name = getattr(session, "NAME", "Gemini")
     session.new_chat()
     session.wait_ready(status, stop, email)
     if model:
@@ -483,20 +495,20 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
     rounds = 1
     answer = session.ask(content.english_request(lines, style=style, aspect=aspect), status, stop, email,
-                         label=f"Gemini đang viết {total} prompt tiếng Anh")
+                         label=f"{name} đang viết {total} prompt tiếng Anh")
     found = content.parse_english(answer, total)
     if not found:
         where = session.dump("Không đọc được prompt nào trong câu trả lời đầu tiên", answer) if hasattr(session, "dump") else ""
-        raise GeminiWebError("Tool không đọc được prompt nào trong câu trả lời của Gemini nên đã dừng (không gửi lại). "
+        raise GeminiWebError(f"Tool không đọc được prompt nào trong câu trả lời của {name} nên đã dừng (không gửi lại). "
                              + (f"Gửi file chẩn đoán {where} cho người hỗ trợ. " if where else "")
-                             + "Xem cửa sổ Gemini: nếu Gemini đã trả lời đủ thì giao diện đọc kết quả cần cập nhật.")
+                             + f"Xem cửa sổ {name}: nếu {name} đã trả lời đủ thì giao diện đọc kết quả cần cập nhật.")
     # Câu trả lời bị cắt: nhắn viết tiếp từ cảnh sau cùng đã có.
     for _ in range(MAX_CONTINUE):
         if content.END_EN.lower() in answer.lower() or not found or max(found) >= total:
             break
         after = max(found)
         answer = session.ask(content.continue_english(after, total), status, stop, email,
-                             label=f"Đã có {len(found)}/{total} prompt · Gemini đang viết tiếp")
+                             label=f"Đã có {len(found)}/{total} prompt · {name} đang viết tiếp")
         rounds += 1
         more = content.parse_english(answer, total, range(after + 1, total + 1))
         if not any(number > after for number in more):
@@ -510,7 +522,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         if not missing:
             break
         answer = session.ask(content.english_request(lines, missing, style, aspect), status, stop, email,
-                             label=f"Thiếu {len(missing)} prompt · Gemini đang viết lại (lần {attempt + 1})")
+                             label=f"Thiếu {len(missing)} prompt · {name} đang viết lại (lần {attempt + 1})")
         rounds += 1
         fixed = 0
         for number, prompt in content.parse_english(answer, total, missing).items():
@@ -527,13 +539,15 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
 class GeminiWebRunner:
     """Chạy Gemini web trong một luồng riêng; giao diện đọc trạng thái qua snapshot()."""
 
-    def __init__(self, profile, session_factory=GeminiWebSession):
+    def __init__(self, profile, session_factory=GeminiWebSession, name="Gemini", login_address=None,
+                 login_done="thấy trang Gemini"):
         self.profile, self.factory = Path(profile), session_factory
+        self.name, self.login_address, self.login_done = name, login_address or login_url, login_done
         self.lock, self.stop = threading.Lock(), threading.Event()
         self.requests = queue.Queue()
         self.session = None
         self.login_process = None
-        self.job = {"id": "", "busy": False, "status": "Chưa mở Gemini", "result": None, "error": ""}
+        self.job = {"id": "", "busy": False, "status": f"Chưa mở {name}", "result": None, "error": ""}
         self.thread = threading.Thread(target=self.worker, daemon=True)
         self.thread.start()
 
@@ -549,9 +563,9 @@ class GeminiWebRunner:
         """kind: "generate"/"review" (prompt = yêu cầu viết cảnh) hoặc "english" (lines = danh sách cảnh)."""
         with self.lock:
             if self.job["busy"]:
-                raise ValueError("Gemini web đang chạy một yêu cầu khác. Đợi xong hoặc bấm Dừng.")
+                raise ValueError(f"{self.name} đang chạy một yêu cầu khác. Đợi xong hoặc bấm Dừng.")
             job_id = uuid.uuid4().hex
-            self.job = {"id": job_id, "kind": kind, "busy": True, "status": "Đang mở Gemini…", "result": None, "error": ""}
+            self.job = {"id": job_id, "kind": kind, "busy": True, "status": f"Đang mở {self.name}…", "result": None, "error": ""}
         self.stop.clear()
         self.requests.put((job_id, kind, prompt, email.strip(), model.strip(), lines, style))
         return job_id
@@ -566,17 +580,17 @@ class GeminiWebRunner:
         """Mở Chrome THƯỜNG (không bị điều khiển) với hồ sơ của tool để người dùng tự đăng nhập Google."""
         with self.lock:
             if self.job["busy"]:
-                raise ValueError("Đang chạy Gemini. Bấm Dừng trước khi đăng nhập lại.")
+                raise ValueError(f"Đang chạy {self.name}. Bấm Dừng trước khi đăng nhập lại.")
         if self.login_window_open():
             raise ValueError("Cửa sổ đăng nhập đang mở. Đăng nhập xong thì đóng hẳn cửa sổ đó.")
         if self.session:  # Hai Chrome không dùng chung một hồ sơ được.
             self.session.close()
             self.session = None
         self.profile.mkdir(parents=True, exist_ok=True)
-        url = login_url(email)
+        url = self.login_address(email)
         self.login_process = launcher([chrome_executable(), f"--user-data-dir={self.profile}",
                                        "--profile-directory=Default", "--no-first-run", "--new-window", url])
-        self.set(status="Đã mở Chrome để đăng nhập. Đăng nhập Google, thấy trang Gemini thì đóng hẳn cửa sổ đó, rồi bấm Chạy.",
+        self.set(status=f"Đã mở Chrome để đăng nhập {self.name}. Đăng nhập xong, {self.login_done} thì đóng hẳn cửa sổ đó, rồi bấm Chạy.",
                  error="")
 
     def worker(self):
@@ -592,10 +606,10 @@ class GeminiWebRunner:
                 if not self.session or not self.session.alive():
                     if self.session:
                         self.session.close()
-                    status("Đang mở Chrome cho Gemini…")
+                    status(f"Đang mở Chrome cho {self.name}…")
                     self.session = self.factory(self.profile)
                     try:
-                        self.session.debug_path = self.profile.parent / "gemini-debug.txt"
+                        self.session.debug_path = self.profile.parent / f"{self.name.lower()}-debug.txt"
                     except Exception:
                         pass
                 if kind == "english":
@@ -609,7 +623,7 @@ class GeminiWebRunner:
                 result = run_conversation(self.session, prompt, status, self.stop, email, model, kind == "review")
                 result["prompts"] = content.format_prompts(result["scenes"])
                 self.set(busy=False, result=result,
-                         status=f"Xong: {len(result['scenes'])} cảnh sau {result['rounds']} lượt trả lời của Gemini")
+                         status=f"Xong: {len(result['scenes'])} cảnh sau {result['rounds']} lượt trả lời của {self.name}")
             except (GeminiWebError, ValueError) as error:
                 self.set(busy=False, error=str(error), status=str(error))
             except Exception as error:  # Selenium/Chrome lỗi bất ngờ: đóng phiên để lần sau mở lại.
