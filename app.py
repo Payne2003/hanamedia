@@ -93,6 +93,12 @@ class Handler(BaseHTTPRequestHandler):
                                "chatgpt": dict(self.server.chatgpt_web.snapshot(),
                                                model=self.server.store.setting("chatgpt_web_model") or "")}
             return self.reply(data)
+        job_match = re.fullmatch(r"/api/job/([a-f0-9]{32})", path)
+        if job_match:
+            try:
+                return self.reply(self.server.store.job_detail(job_match.group(1)))
+            except ValueError as error:
+                return self.reply({"error": str(error)}, 404)
         if path == "/api/library":
             return self.reply({"images": self.server.store.library_images()})
         library_image = re.fullmatch(r"/api/library/image/([a-f0-9]{32})", path)
@@ -207,6 +213,17 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/jobs":
                 store.enqueue(body["prompts"], body["cost"], body["batch"],
                               body.get("images"), body.get("mode", "text"))
+                engine.changed.set()
+            elif path == "/api/jobs/update":
+                account = body.get("account_id") or None
+                if account is not None and not re.fullmatch(r"[a-f0-9]{32}", str(account)):
+                    raise ValueError("Tài khoản không hợp lệ.")
+                job = store.update_job(body["id"], body["prompt"], body.get("details"), body.get("images"),
+                                       body.get("mode", "text"), account)
+                engine.changed.set()
+                return self.reply({"ok": True, "job": job})
+            elif path == "/api/jobs/rerun":
+                store.rerun(body["id"], bool(body.get("confirmed")))
                 engine.changed.set()
             elif path == "/api/jobs/delete":
                 store.delete_jobs(body["ids"])

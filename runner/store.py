@@ -64,6 +64,8 @@ class Store:
                 "generation_mode": "TEXT NOT NULL DEFAULT 'text'",
                 "assigned_account_id": "TEXT",
                 "progress": "INTEGER NOT NULL DEFAULT 0",
+                # Ghi chú cảnh cho Prompt Studio: bối cảnh, góc quay, hành vi nhân vật, nội dung hành động (JSON).
+                "details": "TEXT NOT NULL DEFAULT '{}'",
             }
             for name, declaration in migrations.items():
                 if name not in columns:
@@ -481,6 +483,83 @@ class Store:
                        ("error" if error else "done", "Cần kiểm tra" if error else "Đã tải MP4",
                         job["progress"] if error else 100, output, error, time.time(), job_id))
             db.execute("UPDATE accounts SET state=?,detail=? WHERE id=?", (account_state, error, job["account_id"]))
+
+    DETAIL_FIELDS = ("setting", "camera", "behavior", "action")
+    SCENE_PROMPT = re.compile(
+        r"^\s*b[ốo]i\s*c[ảa]nh\s*\d*\s*:\s*(?P<setting>.*?),\s*g[óo]c\s*quay\s*:\s*(?P<camera>.*?),\s*"
+        r"h[àa]nh\s*vi\s*nh[âa]n\s*v[ậa]t\s*:\s*(?P<behavior>.*?),\s*n[ộo]i\s*dung\s*h[àa]nh\s*[đd][ộo]ng"
+        r"(?:\s*nh[âa]n\s*v[ậa]t)?\s*:\s*(?P<action>.*?)\s*;?\s*$", re.IGNORECASE | re.DOTALL)
+
+    def job_detail(self, job_id):
+        """Toàn bộ thông tin một tác vụ cho Prompt Studio."""
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise ValueError("Không tìm thấy prompt này trong hàng đợi.")
+        job = dict(row)
+        job["images"] = [token for token in json.loads(job["images"] or "[]") if self.image_file(token)]
+        job["name"] = f"Prompt {job['ordinal'] + 1}"
+        try:
+            details = json.loads(job.pop("details") or "{}")
+        except (TypeError, ValueError):
+            details = {}
+        if not any(details.get(field) for field in self.DETAIL_FIELDS):
+            # Prompt dạng "Bối cảnh N: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;"
+            match = self.SCENE_PROMPT.match(job["prompt"])
+            if match:
+                details = {field: match.group(field).strip() for field in self.DETAIL_FIELDS}
+        job["details"] = {field: str(details.get(field) or "") for field in self.DETAIL_FIELDS}
+        job["editable"] = job["status"] != "running"
+        return job
+
+    def update_job(self, job_id, prompt, details=None, images=None, mode="text", account_id=None):
+        """Lưu chỉnh sửa từ Prompt Studio. Không sửa được tác vụ đang chạy."""
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20000:
+            raise ValueError("Prompt trống hoặc dài quá 20.000 ký tự.")
+        if mode not in ("text", "image"):
+            raise ValueError("Loại tác vụ không hợp lệ.")
+        details = details if isinstance(details, dict) else {}
+        details = {field: str(details.get(field) or "").strip()[:5000] for field in self.DETAIL_FIELDS}
+        images = images if images is not None else []
+        if (not isinstance(images, list) or len(images) > 10 or
+                any(not isinstance(t, str) or not re.fullmatch(r"[a-f0-9]{32}", t) or not self.image_file(t) for t in images)):
+            raise ValueError("Ảnh tham chiếu không hợp lệ hoặc quá 10 ảnh.")
+        if mode == "image" and not images:
+            raise ValueError("Loại Ảnh → video cần ít nhất một ảnh tham chiếu.")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not row:
+                raise ValueError("Không tìm thấy prompt này trong hàng đợi.")
+            if row["status"] == "running":
+                raise ValueError("Prompt đang chạy, không sửa được. Đợi chạy xong rồi sửa và bấm Chạy lại.")
+            if account_id:
+                account = db.execute("SELECT enabled FROM accounts WHERE id=?", (account_id,)).fetchone()
+                if not account:
+                    raise ValueError("Tài khoản đã chọn không còn trong danh sách.")
+            db.execute("UPDATE jobs SET prompt=?,details=?,images=?,generation_mode=?,assigned_account_id=?,updated=? WHERE id=?",
+                       (prompt.strip(), json.dumps(details, ensure_ascii=False), json.dumps(images), mode,
+                        account_id or None, time.time(), job_id))
+        self.plan_waiting()
+        self.cleanup_images()
+        return self.job_detail(job_id)
+
+    def rerun(self, job_id, confirmed=False):
+        """Đưa một prompt đã Xong hoặc Lỗi về Chờ để chạy lại. File video cũ vẫn giữ trong thư mục lưu."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status,submitted FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not row:
+                raise ValueError("Không tìm thấy prompt này trong hàng đợi.")
+            if row["status"] == "running":
+                raise ValueError("Prompt đang chạy.")
+            if row["status"] == "waiting":
+                raise ValueError("Prompt đang chờ chạy rồi.")
+            if row["status"] == "error" and row["submitted"] and not confirmed:
+                raise ValueError("Prompt này có thể đã được gửi lên Muse. Kiểm tra Muse trước; xác nhận để vẫn chạy lại.")
+            db.execute("""UPDATE jobs SET status='waiting',phase='Đợi tài khoản',progress=0,error='',account_id=NULL,
+                          submitted=0,output=NULL,source_url='',updated=? WHERE id=?""", (time.time(), job_id))
+        self.plan_waiting()
 
     def retry(self, job_id):
         with self.connect() as db:

@@ -46,8 +46,10 @@ function renderJobs(){
     const thumbnail=job.status==='done'&&job.output
       ?`<button class="video-thumb" type="button" data-play="${job.id}" aria-label="Xem video ${esc(job.name)}"><video data-thumb-job="${job.id}" data-video-src="/api/media/${job.id}" muted playsinline preload="none"></video><span class="thumb-play">▶</span><span class="thumb-placeholder">▶</span></button>`
       :job.image_count?`<img src="/api/image/${job.id}/0" alt="Ảnh tham chiếu" loading="lazy">`:'<span class="thumb-placeholder">▣</span>';
-    return `<tr class="${job.status==='running'?'is-running':''}"><td class="select-col"><input class="job-select" data-select-job="${job.id}" type="checkbox" aria-label="Chọn ${esc(job.name)}" ${selectedJobs.has(job.id)?'checked':''} ${job.status==='running'?'disabled':''}></td><td>${esc(job.name.replace('Prompt ','')||'—')}</td><td class="thumb-col"><div class="job-thumb">${thumbnail}</div></td><td class="prompt-cell"><strong>${esc(job.name)}</strong>${job.status==='done'&&job.output?`<span class="job-filename">${esc(job.output.split(/[\\\\/]/).pop())}</span>`:''}<div class="prompt-text" title="${esc(job.prompt)}">${esc(job.prompt)}</div></td><td><span class="type-label">${job.generation_mode==='image'?'▧ Ảnh → video':'▣ Video'}</span></td><td><span class="account-chip">${esc(accounts.get(assigned)||(assigned&&job.status!=='waiting'?'TK đã xóa':'Chờ tài khoản'))}</span></td><td><span class="badge ${esc(job.status)}">${esc(statusNames[job.status])}</span><div class="job-progress ${esc(job.status)}" role="progressbar" aria-label="Tiến độ ${esc(job.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span style="width:${progress}%"></span></div><div class="progress-caption"><b>${estimated?'~':''}${progress}%</b><span class="detail ${job.error?'error':''}" title="${esc(job.error||job.phase)}">${esc(progressLabel)}</span></div></td><td><div class="row-actions"><button data-copy="${job.id}" title="Chép prompt" aria-label="Chép prompt">⧉</button>${job.status==='error'&&!job.submitted?`<button data-retry="${job.id}" title="Thử lại" aria-label="Thử lại">↻</button>`:''}${job.status==='done'?`<button data-play="${job.id}" title="Xem video" aria-label="Xem video">◉</button><a href="/api/video/${job.id}" title="Tải video" aria-label="Tải video">⇩</a>`:''}${job.account_id&&job.status==='error'?`<button data-review="${job.account_id}" title="Mở phiên Muse" aria-label="Mở phiên Muse">↗</button>`:''}</div></td></tr>`;
+    return `<tr class="${job.status==='running'?'is-running':''}"><td class="select-col"><input class="job-select" data-select-job="${job.id}" type="checkbox" aria-label="Chọn ${esc(job.name)}" ${selectedJobs.has(job.id)?'checked':''} ${job.status==='running'?'disabled':''}></td><td>${esc(job.name.replace('Prompt ','')||'—')}</td><td class="thumb-col"><div class="job-thumb">${thumbnail}</div></td><td class="prompt-cell"><strong>${esc(job.name)}</strong>${job.status==='done'&&job.output?`<span class="job-filename">${esc(job.output.split(/[\\\\/]/).pop())}</span>`:''}<div class="prompt-text" title="${esc(job.prompt)}">${esc(job.prompt)}</div></td><td><span class="type-label">${job.generation_mode==='image'?'▧ Ảnh → video':'▣ Video'}</span></td><td><span class="account-chip">${esc(accounts.get(assigned)||(assigned&&job.status!=='waiting'?'TK đã xóa':'Chờ tài khoản'))}</span></td><td><span class="badge ${esc(job.status)}">${esc(statusNames[job.status])}</span><div class="job-progress ${esc(job.status)}" role="progressbar" aria-label="Tiến độ ${esc(job.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span data-progress="${progress}"></span></div><div class="progress-caption"><b>${estimated?'~':''}${progress}%</b><span class="detail ${job.error?'error':''}" title="${esc(job.error||job.phase)}">${esc(progressLabel)}</span></div></td><td><div class="row-actions"><button data-copy="${job.id}" title="Chép prompt" aria-label="Chép prompt">⧉</button>${job.status==='error'&&!job.submitted?`<button data-retry="${job.id}" title="Thử lại" aria-label="Thử lại">↻</button>`:''}${job.status==='done'?`<button data-play="${job.id}" title="Xem video" aria-label="Xem video">◉</button><a href="/api/video/${job.id}" title="Tải video" aria-label="Tải video">⇩</a>`:''}${job.account_id&&job.status==='error'?`<button data-review="${job.account_id}" title="Mở phiên Muse" aria-label="Mở phiên Muse">↗</button>`:''}</div></td></tr>`;
   }).join('');
+  // Chính sách bảo mật (CSP) chặn style="..." trong HTML: đặt độ rộng thanh tiến độ bằng JS.
+  $('rows').querySelectorAll('[data-progress]').forEach(bar=>bar.style.width=`${bar.dataset.progress}%`);
   attachVideoThumbnails();
   $('shown').textContent=`Hiển thị ${jobs.length}/${all} tác vụ${all>2000?' · 2.000 tác vụ gần nhất':''}`;
   $('queueHint').textContent=state.engine.enabled
@@ -248,7 +250,7 @@ const CONTENT_VERSION='content-15';
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
   const isContent=view==='content';
-  $('studioView').hidden=isContent;$('contentView').hidden=!isContent;
+  $('jobView').hidden=true;$('studioView').hidden=isContent;$('contentView').hidden=!isContent;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
   if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;renderEnglishEngine();}
   const hash=isContent?'#content':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
@@ -400,8 +402,80 @@ $('useEnglish').onclick=()=>{
 };
 $('copyEnglish').onclick=()=>navigator.clipboard.writeText($('englishOutput').value).then(()=>toast('Đã chép prompt tiếng Anh.')).catch(()=>toast('Không chép được. Chọn và sao chép trong ô kết quả.',true));
 $('downloadEnglish').onclick=()=>{const blob=new Blob([$('englishOutput').value],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`prompt-tieng-anh-${content.englishEngine}.txt`;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};
+
+// ---- Prompt Studio: bấm vào một prompt trong hàng đợi để xem và sửa chi tiết ----
+let studioJob=null,studioEditing=false,studioImages=[],studioMode='text';
+const statusLabel={waiting:'Chờ',running:'Đang chạy',done:'Xong',error:'Lỗi'};
+function jobViewShown(){return !$('jobView').hidden;}
+function setJobView(show){$('jobView').hidden=!show;if(show){$('studioView').hidden=true;$('contentView').hidden=true;document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav==='studio'));window.scrollTo(0,0);}}
+async function openJob(id){
+  try{
+    const response=await fetch('/api/job/'+id);const data=await response.json();if(!response.ok)throw Error(data.error||'Không mở được prompt.');
+    studioJob=data;studioEditing=data.status==='waiting'||data.status==='error';studioImages=[...data.images];studioMode=data.generation_mode==='image'?'image':'text';
+    fillJob();setJobView(true);const hash='#job='+id;if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
+  }catch(error){toast(error.message,true);}
+}
+function closeJob(){studioJob=null;$('jobView').hidden=true;showView('studio');}
+function fillJob(){
+  const job=studioJob;if(!job)return;
+  $('jobName').textContent=`${job.name} · ${statusLabel[job.status]||job.status}`;
+  $('jobPrompt').value=job.prompt;$('jobSetting').value=job.details.setting;$('jobBehavior').value=job.details.behavior;$('jobAction').value=job.details.action;$('jobCamera').value=job.details.camera;
+  const accounts=state?.accounts||[];
+  $('jobAccount').innerHTML=`<option value="">Chờ tài khoản (tool tự chia)</option>`+accounts.map((a,i)=>`<option value="${a.id}">Tài khoản ${i+1} · ${esc(a.email)}${a.enabled?'':' (đang tắt)'}</option>`).join('');
+  $('jobAccount').value=job.assigned_account_id&&accounts.some(a=>a.id===job.assigned_account_id)?job.assigned_account_id:'';
+  const canRerun=job.status==='done'||job.status==='error';
+  $('jobStatus').innerHTML=`<option value="${job.status}">${statusLabel[job.status]}${job.status==='error'&&job.error?' – '+esc(job.error.slice(0,80)):''}</option>`+(canRerun?'<option value="rerun">Chờ (chạy lại prompt này)</option>':'');
+  $('jobStatus').disabled=!canRerun;
+  $('jobInfo').textContent=job.status==='running'?'Prompt đang chạy: chỉ xem, chưa sửa được.':job.status==='done'?'Đã có video. Sửa rồi bấm Chạy lại để tạo video mới; video cũ vẫn giữ trong thư mục lưu.':job.status==='error'?(job.submitted?'Lỗi sau khi đã gửi lên Muse: kiểm tra Muse trước khi chạy lại.':'Lỗi trước khi gửi: sửa rồi bấm Chạy lại.'):'Đang chờ chạy: sửa xong bấm Lưu.';
+  $('jobNotice').hidden=true;renderJobImages();renderJobEditing();
+}
+function renderJobImages(){
+  $('jobImages').innerHTML=studioImages.map((token,i)=>`<figure><img src="/api/library/image/${token}" alt="Ảnh tham chiếu ${i+1}"><button type="button" data-remove-job-image="${i}" ${studioEditing?'':'hidden'} aria-label="Bỏ ảnh ${i+1}">✕</button></figure>`).join('')||'<p class="detail">Chưa có ảnh tham chiếu.</p>';
+}
+function renderJobEditing(){
+  const running=studioJob?.status==='running';
+  document.querySelectorAll('#jobView [data-job-field]').forEach(e=>{if(e.tagName==='TEXTAREA'||e.tagName==='INPUT')e.readOnly=!studioEditing;else e.disabled=!studioEditing;});
+  document.querySelectorAll('[data-job-type]').forEach(b=>b.classList.toggle('active',b.dataset.jobType===studioMode));
+  $('jobDrop').classList.toggle('disabled',!studioEditing);
+  $('jobEdit').hidden=studioEditing||running;$('jobSave').disabled=!studioEditing;$('jobCancel').disabled=!studioEditing;
+  $('jobRerun').disabled=running||studioJob?.status==='waiting';
+  renderJobImages();
+}
+function jobPayload(){return {id:studioJob.id,prompt:$('jobPrompt').value,details:{setting:$('jobSetting').value,behavior:$('jobBehavior').value,action:$('jobAction').value,camera:$('jobCamera').value},images:studioImages,mode:studioMode,account_id:$('jobAccount').value||null};}
+function jobChanged(){if(!studioJob||!studioEditing)return false;const p=jobPayload(),j=studioJob;return p.prompt.trim()!==j.prompt||JSON.stringify(Object.values(p.details).map(v=>v.trim()))!==JSON.stringify([j.details.setting,j.details.behavior,j.details.action,j.details.camera])||JSON.stringify(p.images)!==JSON.stringify(j.images)||p.mode!==(j.generation_mode==='image'?'image':'text')||(p.account_id||'')!==(j.assigned_account_id&&state?.accounts?.some(a=>a.id===j.assigned_account_id)?j.assigned_account_id:'');}
+async function saveJob(){
+  if(!$('jobPrompt').value.trim()){$('jobNotice').innerHTML='<b>Prompt không được để trống.</b>';$('jobNotice').hidden=false;$('jobPrompt').focus();return false;}
+  try{const {job}=await api('/api/jobs/update',jobPayload());studioJob=job;await refresh();return true;}
+  catch(error){$('jobNotice').innerHTML=`<b>${esc(error.message)}</b>`;$('jobNotice').hidden=false;return false;}
+}
+$('rows').addEventListener('click',e=>{if(e.target.closest('button,a,input,video,.video-thumb'))return;const cell=e.target.closest('.prompt-cell');if(!cell)return;const row=cell.closest('tr');const box=row&&row.querySelector('[data-select-job]');if(box)openJob(box.dataset.selectJob);});
+$('jobBack').onclick=()=>{if(jobChanged()&&!confirm('Bỏ các thay đổi chưa lưu?'))return;closeJob();};
+$('jobEdit').onclick=()=>{studioEditing=true;renderJobEditing();$('jobPrompt').focus();};
+$('jobCancel').onclick=()=>{if(jobChanged()&&!confirm('Bỏ các thay đổi chưa lưu?'))return;openJob(studioJob.id);};
+$('jobSave').onclick=async()=>{if(await saveJob()){toast(`Đã lưu ${studioJob.name}.`);closeJob();}};
+$('jobRerun').onclick=async()=>{
+  if(!studioJob)return;
+  if(studioEditing&&jobChanged()&&!(await saveJob()))return;
+  const sent=studioJob.status==='error'&&studioJob.submitted;
+  if(!confirm(sent?'Prompt này có thể đã được gửi lên Muse (có thể đã tốn credit). Kiểm tra Muse trước. Vẫn chạy lại?':`Đưa ${studioJob.name} về Chờ để chạy lại?`))return;
+  try{await api('/api/jobs/rerun',{id:studioJob.id,confirmed:Boolean(sent)});await refresh();toast(`${studioJob.name} đã về hàng Chờ. Bấm Chạy để tạo lại.`);closeJob();}catch(error){toast(error.message,true);}
+};
+$('jobStatus').onchange=()=>{if($('jobStatus').value==='rerun'){$('jobStatus').value=studioJob.status;$('jobRerun').click();}};
+document.querySelectorAll('[data-job-type]').forEach(b=>b.onclick=()=>{studioMode=b.dataset.jobType;renderJobEditing();});
+$('jobChoose').onclick=()=>$('jobFiles').click();
+async function addJobFiles(files){
+  if(!studioEditing)return;
+  for(const file of [...files]){if(studioImages.length>=10){toast('Tối đa 10 ảnh mỗi prompt.',true);break;}try{const image=await uploadImage(file);studioImages.push(image.token);}catch(error){toast(error.message,true);}}
+  renderJobImages();
+}
+$('jobFiles').onchange=()=>{addJobFiles($('jobFiles').files);$('jobFiles').value='';};
+$('jobDrop').addEventListener('dragover',e=>{e.preventDefault();$('jobDrop').classList.add('over');});
+$('jobDrop').addEventListener('dragleave',()=>$('jobDrop').classList.remove('over'));
+$('jobDrop').addEventListener('drop',e=>{e.preventDefault();$('jobDrop').classList.remove('over');addJobFiles(e.dataTransfer.files);});
+$('jobImages').onclick=e=>{const b=e.target.closest('[data-remove-job-image]');if(!b)return;studioImages.splice(Number(b.dataset.removeJobImage),1);renderJobImages();};
+window.addEventListener('hashchange',()=>{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(m)openJob(m[1]);else if(jobViewShown())closeJob();});
 try{$('prompts').value=localStorage.getItem('huy-runner-draft')||'';const pending=JSON.parse(localStorage.getItem('huy-runner-pending')||'null');if(pending&&typeof pending.id==='string'&&typeof pending.signature==='string')pendingBatch=pending;}catch{}
-renderMode();await refresh();if(state?.content?.web?.busy)autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(state?.content?.chatgpt?.busy)chatJob={id:state.content.chatgpt.id};if(location.hash==='#content')showView('content');setInterval(refresh,2000);
+renderMode();await refresh();if(state?.content?.web?.busy)autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(state?.content?.chatgpt?.busy)chatJob={id:state.content.chatgpt.id};if(location.hash==='#content')showView('content');{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(m)openJob(m[1]);}setInterval(refresh,2000);
 
 document.addEventListener('click',e=>{const b=e.target.closest('[data-review],[data-close-review]');if(!b)return;action(async()=>{await api(b.dataset.review?'/api/review':'/api/review-close',{id:b.dataset.review||b.dataset.closeReview});b.blur();toast(b.dataset.review?'Đang mở đúng phiên tài khoản. Đóng phiên trong mục Tài khoản khi kiểm tra xong.':'Đang đóng phiên kiểm tra.');});});
 
