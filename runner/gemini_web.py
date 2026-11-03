@@ -127,16 +127,24 @@ const responses = [...document.querySelectorAll('model-response, [data-test-id="
 const last = responses[responses.length - 1];
 let text = '', done = false;
 if (last) {
-  const bodies = [...last.querySelectorAll('message-content, .model-response-text, .markdown')]
-    .filter(e => !e.closest('model-thoughts, .model-thoughts, [class*="thought"]'));
-  const body = bodies[bodies.length - 1];
+  // Chỉ bỏ khung "suy nghĩ" thật (model-thoughts / thinking-overlay). KHÔNG lọc theo chữ "thought" trong class:
+  // câu trả lời thật nằm trong khung có class "has-thoughts" khi Gemini có suy nghĩ.
+  const all = [...last.querySelectorAll('message-content, .model-response-text, .markdown')];
+  const bodies = all.filter(e => !e.closest('model-thoughts, .model-thoughts, thinking-overlay, [data-test-id*="thought"]'));
+  const body = bodies[bodies.length - 1] || all[all.length - 1];
   text = body ? (body.innerText || '') : '';
   // Gemini hiển thị danh sách đánh số bằng <ol><li>: số thứ tự chỉ là hình vẽ, không có trong innerText.
   // Dựng lại chữ theo từng khối và gắn số cho từng <li> (tính cả thuộc tính start của <ol>).
-  if (body && body.querySelector('li')) {
+  // Đoạn <p> của Gemini chứa dấu xuống dòng thật bên trong các <span> (mỗi "Bối cảnh N" một dòng) mà innerText có thể
+  // gộp thành một dòng: lấy textContent để giữ nguyên các dòng.
+  if (body && body.querySelector('li, p')) {
     const lines = [];
     for (const block of body.querySelectorAll('li, p, h1, h2, h3, h4, h5, h6, pre')) {
       if (block.tagName !== 'LI' && block.closest('li')) continue;
+      if (block.tagName !== 'LI') {
+        for (const part of (block.textContent || '').split('\n')) if (part.trim()) lines.push(part.replace(/\s+/g, ' ').trim());
+        continue;
+      }
       const line = (block.innerText || '').replace(/\s*\n\s*/g, ' ').trim();
       if (block.tagName === 'LI') {
         const list = block.parentElement;
