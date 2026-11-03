@@ -151,7 +151,18 @@ class Store:
             if cursor.rowcount != 1:
                 raise ValueError("Tài khoản đang bận hoặc không tồn tại.")
 
-    def enqueue(self, prompts, cost, batch, images=None, mode="text"):
+    def scene_details(self, source):
+        """Tách "Bối cảnh N: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;" thành các trường."""
+        source = re.sub(r"\s+", " ", str(source or "")).strip()[:5000]
+        if not source:
+            return {}
+        match = self.SCENE_PROMPT.match(source)
+        if match:
+            return {field: match.group(field).strip() for field in self.DETAIL_FIELDS}
+        return {"setting": source}
+
+    def enqueue(self, prompts, cost, batch, images=None, mode="text", sources=None):
+        """sources: (không bắt buộc) dòng cảnh tiếng Việt gốc của từng prompt, để Prompt Studio hiện đủ các trường."""
         if not isinstance(prompts, list) or not 1 <= len(prompts) <= 200:
             raise ValueError("Mỗi lần thêm từ 1 đến 200 prompt.")
         if not isinstance(batch, str) or not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", batch):
@@ -171,6 +182,9 @@ class Store:
                 raise ValueError("Ảnh đầu vào không còn tồn tại hoặc không hợp lệ.")
         if mode == "image" and any(not group for group in images):
             raise ValueError("Chế độ ảnh → video yêu cầu ít nhất một ảnh cho mỗi prompt.")
+        sources = sources if isinstance(sources, list) else []
+        if len(sources) > len(prompts) or any(not isinstance(item, (str, type(None))) for item in sources):
+            raise ValueError("Danh sách cảnh gốc không khớp prompt.")
         cost = number(cost, 0.01)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -189,8 +203,10 @@ class Store:
             if db.execute("SELECT count(*) FROM jobs").fetchone()[0] + len(prompts) > 10000:
                 raise ValueError("Đã đạt giới hạn 10.000 tác vụ trong dữ liệu này.")
             now = time.time()
-            db.executemany("INSERT INTO jobs(id,prompt,cost,created,updated,batch,ordinal,images,generation_mode) VALUES(?,?,?,?,?,?,?,?,?)",
-                           [(uuid.uuid4().hex, p.strip(), cost, now, now, batch, n, json.dumps(images[n]), mode)
+            details = [self.scene_details(sources[n] if n < len(sources) else "") for n in range(len(prompts))]
+            db.executemany("INSERT INTO jobs(id,prompt,cost,created,updated,batch,ordinal,images,generation_mode,details) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                           [(uuid.uuid4().hex, p.strip(), cost, now, now, batch, n, json.dumps(images[n]), mode,
+                             json.dumps(details[n], ensure_ascii=False))
                             for n, p in enumerate(prompts)])
         self.plan_waiting()
 

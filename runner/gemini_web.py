@@ -549,7 +549,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         if not fixed:
             break  # Hỏi lại mà không có cảnh nào được sửa: dừng, không gửi lặp.
     missing = content.missing_english(found, total)
-    return {"english": [found.get(number, "") for number in range(1, total + 1)], "missing": missing,
+    return {"english": [found.get(number, "") for number in range(1, total + 1)], "missing": missing, "lines": lines,
             "total": total, "rounds": rounds}
 
 
