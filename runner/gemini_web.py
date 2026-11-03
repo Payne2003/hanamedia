@@ -286,8 +286,8 @@ class GeminiWebSession:
                                          "Đổi tài khoản trong cửa sổ đó rồi bấm lại.")
                 return field
             if page.get("challenge"):
-                status(f"{self.NAME} yêu cầu xác minh (\"Tôi không phải người máy\"). Bạn tự hoàn tất trong cửa sổ "
-                       f"{self.NAME}; tool chờ rồi chạy tiếp.")
+                status(f"{self.NAME} đang hiện trang xác minh. Bấm ô “Xác minh bạn là con người” trong cửa sổ "
+                       f"{self.NAME}; tool chờ rồi tự chạy tiếp.")
             else:
                 status(f"Đang chờ {self.NAME} tải xong…")
             time.sleep(2)

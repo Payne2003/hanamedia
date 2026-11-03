@@ -84,8 +84,10 @@ const busy = [...document.querySelectorAll('button')].some(b => {
   return visible(b) && /stop-button|stop streaming|stop generating|dừng/i.test(label);
 }) || Boolean(last && last.querySelector('.result-streaming, [class*="streaming-animation"]'));
 const host = location.hostname;
-const challenge = /just a moment|verify you are human|xác minh bạn là con người/i.test(document.title + ' ' +
-  ((document.body && document.body.innerText) || '').slice(0, 600)) || Boolean(document.querySelector('iframe[src*="challenges.cloudflare"]'));
+// Trang xác minh Cloudflare: tiêu đề "Just a moment…" / "Chờ một chút…"; ô xác minh nằm trong iframe riêng.
+const challenge = /just a moment|chờ một chút|verify you are human|xác minh bạn là con người/i.test(document.title + ' ' +
+  ((document.body && document.body.innerText) || '').slice(0, 600)) ||
+  Boolean(document.querySelector('iframe[src*="challenges.cloudflare"], #challenge-form, [name="cf-turnstile-response"]'));
 const signIn = /^auth\.|^auth0\./.test(host) || /\/auth\/login|\/log-in/.test(location.pathname);
 const loggedOut = Boolean(document.querySelector('[data-testid="login-button"]'));
 return {count: responses.length, busy, done, text, email: '', signIn, loggedOut, challenge, host, rejected: false};
