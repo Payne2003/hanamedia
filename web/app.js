@@ -223,8 +223,8 @@ $('importButton').onclick=()=>$('importFile').click();$('importFile').onchange=a
 // ---- Viết content: Prompt + link video gốc → Gemini Pro (tự động trên gemini.google.com) → cảnh → hàng loạt prompt ----
 const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior','Hành vi nhân vật'],['action','Nội dung hành động nhân vật']];
 const defaultBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
-let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[]};
-try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,brief:saved.brief??content.brief,video:saved.video||'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[]};}catch{}
+let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',english:'',englishMissing:[]};
+try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,brief:saved.brief??content.brief,video:saved.video||'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[]};}catch{}
 const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
 const oneLine=value=>String(value||'').replace(/\s+/g,' ').trim().replace(/[\s.,;]+$/,'');
 const contentPrompts=()=>content.scenes.map((s,i)=>`Bối cảnh ${i+1}: ${oneLine(s.setting)}, góc quay: ${oneLine(s.camera)}, hành vi nhân vật: ${oneLine(s.behavior)}, Nội dung hành động nhân vật: ${oneLine(s.action)};`);
@@ -244,13 +244,13 @@ function renderScenes(){
   $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b><span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}</div></article>`).join('');
   renderContentOutput();
 }
-const CONTENT_VERSION='content-8';
+const CONTENT_VERSION='content-9';
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
   const isContent=view==='content';
   $('studioView').hidden=isContent;$('contentView').hidden=!isContent;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
-  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();}
+  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishOutput').value=content.english;renderEnglish();}
   const hash=isContent?'#content':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);
 }
@@ -279,11 +279,14 @@ async function runAuto(kind){
   }catch(error){toast(error.message,true);}
 }
 function renderAuto(){
-  const web=state?.content?.web,running=Boolean(autoJob);
-  $('autoProgress').hidden=!running;$('runAuto').disabled=running;$('loginAuto').disabled=running;$('reviewContent').disabled=running;
-  $('runAuto').textContent=running&&autoJob.kind!=='review'?'Gemini đang chạy…':'✦ Chạy tự động trên Gemini';
+  const web=state?.content?.web,running=Boolean(autoJob),english=running&&autoJob.kind==='english';
+  const text=running?(web&&web.id===autoJob.id?(web.status||''):'Đang mở Gemini…'):'';
+  $('autoProgress').hidden=!running||english;$('englishProgress').hidden=!english;
+  for(const id of ['runAuto','loginAuto','reviewContent','runEnglish'])$(id).disabled=running;
+  $('runAuto').textContent=running&&autoJob.kind==='generate'?'Gemini đang chạy…':'✦ Chạy tự động trên Gemini';
   $('reviewContent').textContent=running&&autoJob.kind==='review'?'Gemini đang kiểm tra…':'↻ Kiểm tra thiếu cảnh / lỗi';
-  if(running)$('autoStatus').textContent=web&&web.id===autoJob.id?(web.status||''):'Đang mở Gemini…';
+  $('runEnglish').textContent=english?'Gemini đang viết prompt tiếng Anh…':'✦ Viết prompt tiếng Anh bằng Gemini';
+  if(running)$(english?'englishStatus':'autoStatus').textContent=text;
 }
 function pollAuto(){
   const web=state?.content?.web;applyAutoSettings();renderRunnerVersion();
@@ -292,6 +295,10 @@ function pollAuto(){
   const job=autoJob;autoJob=null;renderAuto();
   if(web.error)return toast(web.error,true);
   const result=web.result;if(!result)return;
+  if(job.kind==='english'){
+    content.english=result.english.join('\n');content.englishMissing=result.missing;$('englishOutput').value=content.english;saveContent();renderEnglish();
+    return toast(result.missing.length?`Gemini viết ${result.total-result.missing.length}/${result.total} prompt; còn thiếu cảnh ${result.missing.join(', ')} (đã hỏi lại ${result.rounds-1} lượt). Bấm chạy lại hoặc tự sửa.`:`Đã có đủ ${result.total} prompt tiếng Anh (${result.rounds} lượt trả lời).`,Boolean(result.missing.length));
+  }
   if(job.kind==='review'){content.scenes=result.scenes;content.issues=result.issues;}
   else{content.scenes=result.scenes;content.script=result.original_script;content.issues=result.issues||[];}
   saveContent();renderScenes();
@@ -319,6 +326,39 @@ $('copyContent').onclick=()=>navigator.clipboard.writeText($('contentPrompts').v
 $('downloadContent').onclick=()=>{const blob=new Blob([[content.script?'KỊCH BẢN VIDEO GỐC\n'+content.script+'\n\nPROMPT\n':'',$('contentPrompts').value].join('')],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='content-prompt.txt';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};
 
 
+
+// ---- Prompt tiếng Anh ----
+const englishLines=()=>$('englishOutput').value.split('\n');
+function renderEnglish(){
+  const lines=englishLines(),filled=lines.filter(line=>line.trim()).length,missing=content.englishMissing||[];
+  $('englishCount').textContent=content.english?`${filled} prompt`:'';
+  $('englishMissing').hidden=!missing.length;
+  $('englishMissing').innerHTML=missing.length?`<b>Còn thiếu hoặc chưa phải tiếng Anh</b><ul><li>Cảnh ${missing.join(', ')} — dòng tương ứng đang để trống hoặc còn tiếng Việt. Bấm viết lại hoặc tự sửa.</li></ul>`:'';
+}
+$('englishFromScenes').onclick=()=>{const prompts=contentPrompts();if(!prompts.length)return toast('Chưa có danh sách cảnh ở phía trên.',true);$('englishInput').value=prompts.join('\n');content.englishInput=$('englishInput').value;saveContent();};
+$('englishInput').oninput=()=>{content.englishInput=$('englishInput').value;saveContent();};
+$('englishStyle').oninput=()=>{content.englishStyle=$('englishStyle').value;saveContent();};
+$('englishOutput').oninput=()=>{content.english=$('englishOutput').value;saveContent();renderEnglish();};
+$('runEnglish').onclick=async()=>{
+  if(autoJob)return;
+  if(!$('englishInput').value.trim()&&contentPrompts().length)$('englishFromScenes').click();
+  if(!$('englishInput').value.trim())return toast('Dán danh sách “Bối cảnh 1: …” hoặc bấm Lấy từ danh sách cảnh.',true);
+  if(content.english.trim()&&!confirm('Viết lại sẽ thay kết quả tiếng Anh hiện tại. Tiếp tục?'))return;
+  try{
+    await saveAutoSettings();
+    const {id,total}=await api('/api/content/english-run',{text:$('englishInput').value,style:$('englishStyle').value});
+    autoJob={id,kind:'english'};renderAuto();refresh();toast(`Đã gửi ${total} cảnh cho Gemini.`);
+  }catch(error){toast(error.message,true);}
+};
+$('stopEnglish').onclick=()=>api('/api/content/web-stop',{}).then(()=>$('englishStatus').textContent='Đang dừng…').catch(error=>toast(error.message,true));
+$('useEnglish').onclick=()=>{
+  const prompts=englishLines().map(line=>line.trim()).filter(Boolean);if(!prompts.length)return toast('Chưa có prompt tiếng Anh.',true);
+  if($('prompts').value.trim()&&!confirm('Thay nội dung đang có trong khung prompt bằng các prompt tiếng Anh?'))return;
+  mode='text';$('separator').value='line';$('prompts').value=prompts.join('\n');renderMode();showView('studio');$('prompts').focus();
+  toast(`Đã đưa ${prompts.length} prompt tiếng Anh vào Studio.`);
+};
+$('copyEnglish').onclick=()=>navigator.clipboard.writeText($('englishOutput').value).then(()=>toast('Đã chép prompt tiếng Anh.')).catch(()=>toast('Không chép được. Chọn và sao chép trong ô kết quả.',true));
+$('downloadEnglish').onclick=()=>{const blob=new Blob([$('englishOutput').value],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='prompt-tieng-anh.txt';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};
 try{$('prompts').value=localStorage.getItem('huy-runner-draft')||'';const pending=JSON.parse(localStorage.getItem('huy-runner-pending')||'null');if(pending&&typeof pending.id==='string'&&typeof pending.signature==='string')pendingBatch=pending;}catch{}
 renderMode();await refresh();if(state?.content?.web?.busy)autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(location.hash==='#content')showView('content');setInterval(refresh,2000);
 

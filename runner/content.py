@@ -12,7 +12,7 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-8"
+VERSION = "content-9"
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")
@@ -201,3 +201,83 @@ def parse_answer(text):
                          "hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;")
     return {"original_script": "\n".join(script).strip()[:40000], "scenes": scenes[:MAX_SCENES],
             "issues": [i for i in issues if i][:50]}
+
+
+# ---- Prompt tiếng Anh: danh sách "Bối cảnh N: ..." -> mỗi cảnh một prompt tiếng Anh (theo sơ đồ thứ hai) ----
+END_EN = "END OF LIST"
+MAX_EN_LINES = 300
+VIET_CHARS = re.compile(r"[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]", re.IGNORECASE)
+
+
+def split_scene_lines(text):
+    """Tách đầu vào thành từng cảnh: mỗi dòng một cảnh, hoặc nhiều "Bối cảnh N:" nối bằng dấu ;"""
+    text = str(text or "").replace("\r", "").strip()
+    text = re.sub(r"^\s*(input\s*:)?\s*\[", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\]\s*$", "", text)
+    text = re.sub(r";\s*(?=b[ốo]i\s*c[ảa]nh\s*\d)", ";\n", text, flags=re.IGNORECASE)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.split("\n")]
+    lines = [line for line in lines if line]
+    if not lines:
+        raise ValueError("Chưa có cảnh nào. Dán danh sách “Bối cảnh 1: …” hoặc lấy từ danh sách cảnh.")
+    if len(lines) > MAX_EN_LINES:
+        raise ValueError(f"Tối đa {MAX_EN_LINES} cảnh mỗi lần.")
+    return [line[:FIELD_LIMIT * 2] for line in lines]
+
+
+def is_english(line):
+    """Prompt coi là tiếng Anh khi gần như không còn chữ có dấu tiếng Việt."""
+    return len(VIET_CHARS.findall(line)) <= 2
+
+
+def english_request(lines, numbers=None, style=""):
+    """Yêu cầu gửi Gemini: viết prompt tiếng Anh cho các cảnh (numbers=None: tất cả)."""
+    numbers = numbers or list(range(1, len(lines) + 1))
+    partial = len(numbers) < len(lines)
+    head = ("Some scene prompts are missing or not in English. Write prompts ONLY for the scenes listed below, "
+            "keeping their original numbers." if partial else
+            f"Below are {len(lines)} scenes of a video, written in Vietnamese.")
+    rules = (
+        "You are a prompt engineer for AI text-to-video models.\n"
+        f"{head}\n"
+        "Convert EACH scene into ONE detailed English text-to-video prompt: setting and lighting, camera angle and "
+        "movement, character appearance and behavior, and the action that happens. Keep characters, outfits and "
+        "locations consistent between scenes. Translate spoken lines into English inside quotes.\n"
+        "Rules:\n"
+        "- Exactly one line per scene, starting with its number and a period, for example: 1. A quiet beach at dawn...\n"
+        "- Do not merge, split, skip or renumber scenes. No headings, no markdown, no comments.\n"
+        f"- After the last line write exactly: {END_EN}")
+    if style.strip():
+        rules += f"\nExtra style for every prompt: {style.strip()[:2000]}"
+    scenes = "\n".join(f"{number}. {lines[number - 1]}" for number in numbers)
+    return f"{rules}\n\nScenes:\n{scenes}"
+
+
+def continue_english(after, total):
+    return (f"Continue with scene {after + 1} to scene {total}, same format (one line per scene, starting with its "
+            f"number). Do not repeat earlier scenes. After scene {total} write exactly: {END_EN}")
+
+
+EN_LINE = re.compile(r"^\W*(?:scene|prompt|c[ảa]nh|b[ốo]i\s*c[ảa]nh)?\s*(\d{1,3})\s*[.):：\-–—]\s*(.+?)\s*$", re.IGNORECASE)
+
+
+def parse_english(text, total):
+    """Đọc câu trả lời: {số cảnh: prompt}. Bỏ markdown, dòng ngoài 1..total và dòng trống."""
+    found = {}
+    for raw in str(text or "").replace("\r", "").split("\n"):
+        line = re.sub(r"[*_`#>]+", "", raw).strip()
+        match = EN_LINE.match(line)
+        if not match:
+            continue
+        number, prompt = int(match.group(1)), match.group(2).strip()
+        prompt = re.sub(r"^(?:scene|prompt)\s*\d+\s*[:.\-–]\s*", "", prompt, flags=re.IGNORECASE).strip()
+        if not (1 <= number <= total and len(prompt) >= 15):
+            continue
+        # Giữ dòng đầu tiên; nhưng nếu dòng đã có còn là tiếng Việt (Gemini chép lại đề) thì thay bằng bản tiếng Anh.
+        if number not in found or (not is_english(found[number]) and is_english(prompt)):
+            found[number] = prompt[:FIELD_LIMIT * 2]
+    return found
+
+
+def missing_english(found, total):
+    """Số cảnh còn thiếu hoặc chưa phải tiếng Anh."""
+    return [number for number in range(1, total + 1) if number not in found or not is_english(found[number])]

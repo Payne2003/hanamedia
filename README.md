@@ -35,6 +35,15 @@ Bấm **✎ Viết content** trên thanh điều hướng để mở trang Viế
    `Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;`
    Bấm **Đưa vào Studio** (tool chuyển về trang Studio, prompt đã nằm trong khung tạo video) rồi **Tạo & chạy** như bình thường, hoặc **Chép** / **Tải .txt**.
 
+### Prompt tiếng Anh (bước 4)
+
+Khung **④ Prompt tiếng Anh · Gemini Pro** ở cuối trang Viết content:
+
+1. **Đầu vào**: bấm **Lấy từ danh sách cảnh** (lấy hàng loạt prompt ở bước 3) hoặc tự dán danh sách `Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;` (mỗi dòng một cảnh, hoặc cả danh sách trong `[ ... ]` nối bằng dấu `;`). Có thể thêm **Phong cách chung** cho mọi prompt.
+2. Bấm **Viết prompt tiếng Anh bằng Gemini**. Gemini viết mỗi cảnh thành một prompt tiếng Anh, đánh số theo cảnh. Câu trả lời bị cắt thì tool nhắn viết tiếp.
+3. Theo sơ đồ: cảnh nào **thiếu** hoặc **vẫn còn tiếng Việt**, tool tự hỏi lại Gemini riêng những cảnh đó (tối đa 3 lượt). Nếu vẫn thiếu, khung **Còn thiếu** ghi rõ số cảnh và dòng đó để trống để bạn sửa tay hoặc chạy lại.
+4. **Đầu ra**: mỗi dòng 1 prompt tiếng Anh, đúng thứ tự cảnh, sửa được trực tiếp. Bấm **Đưa vào Studio**, **Chép** hoặc **Tải .txt**.
+
 Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt khi chuyển trang hoặc tải lại. Tool dò ô nhập, nút Gửi và câu trả lời theo giao diện Gemini hiện tại; nếu Google đổi giao diện mà tool báo không điền/không đọc được, cần cập nhật tool. Việc điều khiển trình duyệt tự động có thể trái điều khoản sử dụng của Google; dùng ở mức vừa phải trên tài khoản của chính bạn.
 
 ## Mức độ đã xác minh — đọc trước khi chạy
