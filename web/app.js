@@ -119,7 +119,7 @@ async function addJobs(run){
     if(pendingBatch?.signature!==signature)pendingBatch={signature,id:crypto.randomUUID()};
     try{localStorage.setItem('huy-runner-pending',JSON.stringify(pendingBatch));}catch{}
     const images=imagesByPrompt.map(assets=>assets.map(asset=>asset.token));
-    await api('/api/jobs',{prompts,cost,mode:generationMode,batch:pendingBatch.id,images,sources:prompts.map(prompt=>promptSources[prompt]||'')});
+    await api('/api/jobs',{prompts,cost,mode:generationMode,batch:pendingBatch.id,images,sources:prompts.map(prompt=>promptSources[prompt]||''),scene_ids:prompts.map(prompt=>promptScenes[prompt]||null)});
     pendingBatch=null;
     try{localStorage.removeItem('huy-runner-pending');}catch{}
     $('prompts').value='';promptImages.clear();countPrompts();
@@ -407,13 +407,14 @@ function splitSceneLines(text){
     .replace(/;\s*(?=b[ốo]i\s*c[ảa]nh\s*\d)/gi,';\n').split('\n').map(line=>line.replace(/\s+/g,' ').trim()).filter(Boolean);
 }
 // Prompt tiếng Anh số N đi kèm dòng cảnh tiếng Việt số N, để Prompt Studio có đủ Bối cảnh / Góc quay / Hành vi / Hành động.
-let promptSources={};
-try{promptSources=JSON.parse(localStorage.getItem('hana-prompt-sources')||'{}')||{};}catch{}
-function rememberSources(pairs){promptSources={};for(const [prompt,source] of pairs)if(source)promptSources[prompt]=source;try{localStorage.setItem('hana-prompt-sources',JSON.stringify(promptSources));}catch{}}
+let promptSources={},promptScenes={};
+try{promptSources=JSON.parse(localStorage.getItem('hana-prompt-sources')||'{}')||{};promptScenes=JSON.parse(localStorage.getItem('hana-prompt-scenes')||'{}')||{};}catch{}
+function rememberSources(pairs){promptSources={};promptScenes={};for(const [prompt,source,scene] of pairs){if(source)promptSources[prompt]=source;if(scene)promptScenes[prompt]=scene;}try{localStorage.setItem('hana-prompt-sources',JSON.stringify(promptSources));localStorage.setItem('hana-prompt-scenes',JSON.stringify(promptScenes));}catch{}}
 $('useEnglish').onclick=()=>{
   const [textKey]=englishKey(content.englishEngine);
   const sources=content[textKey+'Sources']||splitSceneLines(content.englishInput);
-  const pairs=englishLines().map((line,index)=>[line.trim(),sources[index]||'']).filter(([line])=>line);
+  const lines=englishLines(),sceneIds=project&&project.scenes.length===lines.filter(l=>l.trim()).length?project.scenes.map(x=>x.id):[];
+  let n=0;const pairs=lines.map((line,index)=>[line.trim(),sources[index]||'',line.trim()?sceneIds[n++]||'':'']).filter(([line])=>line);
   const prompts=pairs.map(([line])=>line);if(!prompts.length)return toast('Chưa có prompt tiếng Anh.',true);
   if($('prompts').value.trim()&&!confirm('Thay nội dung đang có trong khung prompt bằng các prompt tiếng Anh?'))return;
   rememberSources(pairs);
@@ -431,7 +432,7 @@ function jobViewShown(){return !$('jobView').hidden;}
 function setJobView(show){$('jobView').hidden=!show;if(show){$('studioView').hidden=true;$('contentView').hidden=true;document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav==='studio'));window.scrollTo(0,0);}}
 async function openJob(id){
   try{
-    const response=await fetch('/api/job/'+id);const data=await response.json();if(!response.ok)throw Error(data.error||'Không mở được prompt.');
+    const response=await fetch('/api/job/'+id+(charPrefs.projectId?'?project='+charPrefs.projectId:''));const data=await response.json();if(!response.ok)throw Error(data.error||'Không mở được prompt.');
     studioJob=data;studioEditing=data.status==='waiting'||data.status==='error';studioImages=[...data.images];studioMode=data.generation_mode==='image'?'image':'text';
     fillJob();setJobView(true);const hash='#job='+id;if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   }catch(error){toast(error.message,true);}
@@ -448,8 +449,41 @@ function fillJob(){
   $('jobStatus').innerHTML=`<option value="${job.status}">${statusLabel[job.status]}${job.status==='error'&&job.error?' – '+esc(job.error.slice(0,80)):''}</option>`+(canRerun?'<option value="rerun">Chờ (chạy lại prompt này)</option>':'');
   $('jobStatus').disabled=!canRerun;
   $('jobInfo').textContent=job.status==='running'?'Prompt đang chạy: chỉ xem, chưa sửa được.':job.status==='done'?'Đã có video. Sửa rồi bấm Chạy lại để tạo video mới; video cũ vẫn giữ trong thư mục lưu.':job.status==='error'?(job.submitted?'Lỗi sau khi đã gửi lên Muse: kiểm tra Muse trước khi chạy lại.':'Lỗi trước khi gửi: sửa rồi bấm Chạy lại.'):'Đang chờ chạy: sửa xong bấm Lưu.';
-  $('jobNotice').hidden=true;renderJobImages();renderJobEditing();
+  $('jobNotice').hidden=true;renderJobImages();renderJobEditing();renderJobCharacters();
 }
+const jobCharStates={attached:'✓ Đã gắn ảnh nhân vật vào prompt',not_attached:'Chưa gắn ảnh nhân vật vào prompt',missing_master:'Thiếu ảnh Master đã duyệt',none:'Prompt chưa có nhân vật'};
+function renderJobCharacters(){
+  const info=studioJob?.characters;if(!info){$('jobCharacters').innerHTML='';return;}
+  const running=studioJob.status==='running',selected=new Set(info.selected.map(c=>c.id));
+  const where=info.source==='prompt'?'chọn riêng cho prompt này':info.source==='scene'?`theo Cảnh ${info.scene_number} của dự án`:'chưa liên kết cảnh nào';
+  const options=info.options.length?info.options:info.selected;
+  const chips=options.map(c=>`<label class="chip"><input type="checkbox" value="${c.id}" ${selected.has(c.id)?'checked':''} ${running?'disabled':''}> ${esc(c.code)}</label>`).join('');
+  const refs=info.selected.map(c=>`<figure class="job-ref${c.master_token?'':' missing'}">${c.master_token?`<img src="/api/library/image/${c.master_token}" alt="Ảnh Master ${esc(c.name)}">`:`<span>${esc(initials(c.name))}</span>`}<figcaption><b>${esc(c.code)}</b><small>${c.master_token?'Ảnh Master đã duyệt':'Chưa có ảnh Master'}</small></figcaption></figure>`).join('');
+  const manual=studioJob.images.length&&info.images_origin==='manual'&&info.state!=='attached';
+  $('jobCharacters').innerHTML=`<div class="job-char-head"><label>Nhân vật <small>(${esc(where)}${info.project?' · '+esc(info.project.name):''})</small></label></div>
+${options.length?`<div class="chips">${chips}</div>`:'<p class="detail">Chưa có nhân vật để chọn. Mở dự án ở Content Studio → bước Nhân vật, rồi mở lại prompt này.</p>'}
+<label>Ảnh nhân vật tham chiếu</label>
+<div class="job-refs">${refs||'<p class="detail">Chọn nhân vật để xem ảnh Master tương ứng.</p>'}</div>
+<p class="job-char-state ${info.state}">${esc(jobCharStates[info.state])}${info.state==='attached'?` · ${info.attached} ảnh · chế độ Ảnh → video`:''}${manual?' · ảnh hiện tại do bạn tự gắn':''}</p>
+<div class="cd-actions"><button type="button" id="jobCharSave" ${running||!options.length?'disabled':''}>Lưu nhân vật</button><button type="button" id="jobCharAttach" class="primary" ${running||info.state==='none'||info.state==='missing_master'?'disabled':''}>🔗 Gắn ảnh nhân vật vào prompt</button></div>
+<p class="detail">Muse nhận tối đa ${info.limit} ảnh tham chiếu mỗi prompt. Chỉ gắn ảnh của nhân vật có trong prompt; không tạo ảnh mới cho từng cảnh.</p>`;
+}
+$('jobCharacters').addEventListener('click',async e=>{
+  if(!studioJob)return;
+  if(e.target.id==='jobCharSave'){
+    const ids=[...$('jobCharacters').querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);
+    try{const {job}=await api('/api/jobs/characters',{id:studioJob.id,character_ids:ids});studioJob.characters=job.characters;renderJobCharacters();toast(`Đã lưu ${ids.length} nhân vật cho ${studioJob.name}.`);}catch(error){toast(error.message,true);}
+  }
+  if(e.target.id==='jobCharAttach'){
+    if(jobChanged()&&!(await saveJob()))return;
+    try{
+      let result=await api('/api/jobs/attach-characters',{id:studioJob.id});
+      if(result.confirm){if(!confirm(result.confirm))return;result=await api('/api/jobs/attach-characters',{id:studioJob.id,confirm:true});}
+      const job=result.job;studioJob=job;studioImages=[...job.images];studioMode=job.generation_mode==='image'?'image':'text';fillJob();refresh();
+      toast(`Đã gắn ${job.images.length} ảnh nhân vật vào ${job.name}.`);
+    }catch(error){toast(error.message,true);}
+  }
+});
 function renderJobImages(){
   $('jobImages').innerHTML=studioImages.map((token,i)=>`<figure><img src="/api/library/image/${token}" alt="Ảnh tham chiếu ${i+1}"><button type="button" data-remove-job-image="${i}" ${studioEditing?'':'hidden'} aria-label="Bỏ ảnh ${i+1}">✕</button></figure>`).join('')||'<p class="detail">Chưa có ảnh tham chiếu.</p>';
 }
@@ -505,15 +539,17 @@ function renderCharacterDetail(counts){
   const c=project?.characters.find(x=>x.id===selectedCharacter);
   if(!c){$('characterDetail').innerHTML='<div class="empty"><span>☺</span><h3>Chưa chọn nhân vật</h3><p>Danh sách nhân vật hiện ở bên trái sau khi AI phân tích kịch bản.</p></div>';return;}
   const token=masterImage(c),lock=c.locked?'disabled':'';
-  const thumbs=(c.assets||[]).map(a=>`<span class="cd-thumb${a.id===c.approved_asset_id?' active':''}"><img src="/api/library/image/${a.image_token}" alt=""></span>`).join('');
+  const thumbs=(c.assets||[]).map(a=>`<button type="button" class="cd-thumb${a.id===c.approved_asset_id?' active':''}" data-approve-asset="${a.id}" ${c.locked?'disabled':''} title="${a.id===c.approved_asset_id?'Ảnh Master đang dùng':'Bấm để chọn làm ảnh Master'}"><img src="/api/library/image/${a.image_token}" alt=""></button>`).join('');
   $('characterDetail').innerHTML=`<article class="cd-layout" data-character="${c.id}">
-<div class="cd-media"><div class="cd-image">${token?`<img src="/api/library/image/${token}" alt="Ảnh Master ${esc(c.name)}">`:`<div class="cd-placeholder"><b>${esc(initials(c.name))}</b><span>Chưa có ảnh Master</span><small>Tạo bằng Google Flow (Nano Banana) ở giai đoạn tiếp theo</small></div>`}</div>
-<div class="cd-thumbs">${thumbs||'<small class="detail">Ảnh tạo ra sẽ hiện ở đây để chọn ảnh Master.</small>'}</div></div>
+<div class="cd-media"><div class="cd-image">${token?`<img src="/api/library/image/${token}" alt="Ảnh Master ${esc(c.name)}">`:`<div class="cd-placeholder"><b>${esc(initials(c.name))}</b><span>Chưa có ảnh Master</span><small>Bấm “Mở Flow & điền prompt” để tạo ảnh bằng Nano Banana, hoặc “Thay ảnh” để chọn ảnh có sẵn</small></div>`}</div>
+<div class="cd-thumbs">${thumbs||'<small class="detail">Ảnh của nhân vật hiện ở đây; bấm một ảnh để chọn làm ảnh Master.</small>'}</div></div>
 <div class="cd-info"><div class="cd-top"><code>${esc(c.code)}</code>${statusChip(c)}<span class="badge count">${counts[c.id]||0} cảnh</span></div>
 <input class="cd-name" data-char-name maxlength="200" value="${esc(c.name)}" aria-label="Tên nhân vật" ${lock}>
 <label class="cd-box">Mô tả nhân vật <small>(giữ cố định ở mọi cảnh)</small><textarea data-char-desc rows="4" maxlength="5000" ${lock}>${esc(c.description)}</textarea></label>
 <label class="cd-box">Prompt tạo ảnh (Nano Banana)<textarea data-char-prompt rows="4" maxlength="5000" ${lock}>${esc(c.image_prompt)}</textarea></label>
-<div class="cd-actions"><button type="button" disabled title="Có ở giai đoạn tạo ảnh bằng Google Flow">↻ Tạo lại</button><button type="button" disabled title="Có ở giai đoạn tạo ảnh bằng Google Flow">⇄ Thay ảnh</button><button type="button" class="primary" data-char-lock="${c.id}" data-locked="${c.locked?1:0}" ${c.approved_asset_id?'':'disabled title="Cần có ảnh Master đã duyệt"'}>${c.locked?'🔓 Mở khóa':'🔒 Duyệt / Khóa'}</button></div>
+<div class="cd-actions"><button type="button" data-char-flow="${c.id}" ${lock} title="Mở Google Flow, điền prompt tạo ảnh của nhân vật này">✦ ${token?'Tạo lại':'Mở Flow & điền prompt'}</button><button type="button" data-char-pick="${c.id}" ${lock}>⇄ Thay ảnh</button><button type="button" class="primary" data-char-lock="${c.id}" data-locked="${c.locked?1:0}" ${c.approved_asset_id?'':'disabled title="Cần có ảnh Master đã duyệt"'}>${c.locked?'🔓 Mở khóa':'🔒 Duyệt / Khóa'}</button></div>
+<div id="characterPicker" class="character-picker" hidden></div>
+<p class="detail">Tạo ảnh bằng Flow: tool mở Flow và điền prompt; bạn chọn <b>Hình ảnh</b>, mô hình Nano Banana, bấm tạo rồi tải ảnh xuống. Sau đó bấm <b>Thay ảnh → Lấy ảnh mới tải từ Flow</b> và chọn ảnh làm Master.</p>
 <div class="cd-actions"><button type="button" data-char-save="${c.id}" ${lock}>Lưu thay đổi</button><button type="button" class="danger-outline" data-char-delete="${c.id}" ${lock}>✕ Xóa nhân vật</button></div></div></article>`;
 }
 let charPrefs={projectId:'',engine:'gemini'};
@@ -613,7 +649,32 @@ $('addCharacter').onclick=()=>action(async()=>{
   }finally{$('addCharacter').disabled=false;}
 });
 $('characterList').onclick=e=>{const row=e.target.closest('[data-select-character]');if(!row)return;selectedCharacter=row.dataset.selectCharacter;renderCharacters();};
+async function renderCharacterPicker(id){
+  const box=$('characterPicker');if(!box)return;
+  try{await refreshLibrary();}catch{}
+  box.hidden=false;
+  box.innerHTML=`<div class="picker-head"><b>Chọn ảnh Master</b><span class="bulk-spacer"></span><button type="button" data-picker-flow>⇩ Lấy ảnh mới tải từ Flow</button><label class="picker-upload">⇪ Tải ảnh lên<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" data-picker-upload hidden></label><button type="button" data-picker-close>✕</button></div>
+<div class="picker-grid">${libraryImages.length?libraryImages.map(img=>`<button type="button" data-picker-token="${img.token}" title="${esc(img.name)}"><img src="/api/library/image/${img.token}" alt="${esc(img.name)}"></button>`).join(''):'<p class="detail">Thư viện ảnh đang trống. Tải ảnh lên hoặc lấy ảnh vừa tải từ Flow.</p>'}</div>`;
+  box.dataset.character=id;
+}
+async function useCharacterImage(id,token,origin){
+  await api('/api/characters/asset',{character_id:id,token,origin,approve:true});
+  await loadProject(project.id);toast('Đã đặt ảnh Master cho nhân vật. Kiểm tra rồi bấm Duyệt / Khóa.');
+}
+$('characterDetail').addEventListener('change',e=>{
+  const input=e.target.closest('[data-picker-upload]');if(!input||!input.files[0])return;
+  const id=$('characterPicker').dataset.character;
+  action(async()=>{const {token}=await uploadImage(input.files[0]);await useCharacterImage(id,token,'upload');});
+});
 $('characterDetail').onclick=e=>{
+  const flow=e.target.closest('[data-char-flow]'),pick=e.target.closest('[data-char-pick]'),approveAsset=e.target.closest('[data-approve-asset]');
+  if(flow){const card=flow.closest('[data-character]'),prompt=card.querySelector('[data-char-prompt]').value.trim();if(!prompt)return toast('Nhân vật chưa có prompt tạo ảnh.',true);action(async()=>{await api('/api/flow/create-image',{prompt});flow.blur();toast('Đã mở Google Flow và điền prompt. Chọn Hình ảnh · Nano Banana, tạo rồi tải ảnh xuống; sau đó bấm Thay ảnh → Lấy ảnh mới tải từ Flow.');});return;}
+  if(pick){renderCharacterPicker(pick.dataset.charPick);return;}
+  if(e.target.closest('[data-picker-close]')){$('characterPicker').hidden=true;return;}
+  if(e.target.closest('[data-picker-flow]')){action(async()=>{const r=await api('/api/library/import-flow',{});await renderCharacterPicker($('characterPicker').dataset.character);toast(r.imported?`Đã lấy ${r.imported} ảnh mới từ Flow. Bấm ảnh để chọn làm Master.`:'Chưa thấy ảnh mới trong thư mục tải của Flow.',!r.imported);});return;}
+  const token=e.target.closest('[data-picker-token]');
+  if(token){const id=$('characterPicker').dataset.character;action(()=>useCharacterImage(id,token.dataset.pickerToken,'library'));return;}
+  if(approveAsset){action(async()=>{await api('/api/characters/approve',{asset_id:approveAsset.dataset.approveAsset});await loadProject(project.id);toast('Đã chọn ảnh Master.');});return;}
   const save=e.target.closest('[data-char-save]'),remove=e.target.closest('[data-char-delete]'),lock=e.target.closest('[data-char-lock]');
   if(save){const card=save.closest('[data-character]');action(async()=>{await api('/api/characters/update',{id:save.dataset.charSave,name:card.querySelector('[data-char-name]').value,description:card.querySelector('[data-char-desc]').value,image_prompt:card.querySelector('[data-char-prompt]').value});save.blur();await loadProject(project.id);toast('Đã lưu nhân vật.');});}
   if(lock){const locked=lock.dataset.locked!=='1';action(async()=>{await api('/api/characters/lock',{id:lock.dataset.charLock,locked});lock.blur();await loadProject(project.id);toast(locked?'Đã duyệt và khóa nhân vật.':'Đã mở khóa nhân vật.');});}

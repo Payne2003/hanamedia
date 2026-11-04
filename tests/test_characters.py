@@ -170,7 +170,10 @@ class CharacterRegistryTests(unittest.TestCase):
                          (scenes[0], scenes[1], None))
         self.assertEqual([j["id"] for j in self.reg.project(project)["scenes"][0]["jobs"]], [jobs["Prompt 1"]["id"]])
         with self.assertRaises(ValueError):
-            self.store.enqueue(["X"], 1, "batch-scene-000000002", scene_ids=[uuid.uuid4().hex])
+            self.store.enqueue(["X"], 1, "batch-scene-000000002", scene_ids=["không-hợp-lệ"])
+        self.store.enqueue(["X"], 1, "batch-scene-000000003", scene_ids=[uuid.uuid4().hex])  # cảnh đã mất: vẫn thêm, bỏ liên kết
+        lost = next(j for j in self.store.snapshot()["jobs"] if j["prompt"] == "X")
+        self.assertIsNone(self.store.job_detail(lost["id"])["scene_id"])
         with self.store.connect() as db:
             db.execute("UPDATE jobs SET images_origin='auto' WHERE id=?", (jobs["Prompt 1"]["id"],))
         self.store.update_job(jobs["Prompt 1"]["id"], "Prompt 1 sửa")  # không đổi ảnh: giữ 'auto'
@@ -179,8 +182,80 @@ class CharacterRegistryTests(unittest.TestCase):
         self.assertEqual(self.store.job_detail(jobs["Prompt 1"]["id"])["images_origin"], "manual")
         self.reg.delete_project(project)
         self.assertIsNone(self.store.job_detail(jobs["Prompt 1"]["id"])["scene_id"])  # job giữ nguyên, bỏ liên kết cảnh
-        self.assertEqual(len(self.store.snapshot()["jobs"]), 3)
+        self.assertEqual(len(self.store.snapshot()["jobs"]), 4)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JobCharacterTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.store = Store(self.root / "studio.sqlite3")
+        self.reg = self.store.characters
+        self.project = self.reg.create_project("Dê núi")
+        self.scenes = self.reg.add_scenes(self.project, [{"setting": "A"}, {"setting": "B"}])
+        self.goat = self.reg.add_character(self.project, "Dê đực")["id"]
+        self.leopard = self.reg.add_character(self.project, "Báo tuyết")["id"]
+        self.reg.set_scene_characters(self.scenes[0], [self.goat, self.leopard])
+        self.store.enqueue(["Prompt 1", "Prompt 2"], 1, "batch-jobchars-0000001", scene_ids=[self.scenes[0], None])
+        jobs = {j["prompt"]: j["id"] for j in self.store.snapshot()["jobs"]}
+        self.job, self.free = jobs["Prompt 1"], jobs["Prompt 2"]
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def approve(self, character):
+        token = self.store.add_image(PNG + uuid.uuid4().bytes)["token"]
+        self.reg.approve_asset(self.reg.add_asset(character, token))
+        return token
+
+    def test_scene_characters_flow_into_prompt_and_attach_needs_masters(self):
+        info = self.reg.job_characters(self.job)
+        self.assertEqual((info["source"], info["scene_number"], info["state"]), ("scene", 1, "missing_master"))
+        self.assertEqual([c["code"] for c in info["selected"]], ["DE_DUC", "BAO_TUYET"])
+        self.assertEqual(len(info["options"]), 2)
+        with self.assertRaisesRegex(ValueError, "DE_DUC, BAO_TUYET"):
+            self.reg.attach_job_characters(self.job)
+        goat, leopard = self.approve(self.goat), self.approve(self.leopard)
+        with self.assertRaisesRegex(ValueError, "chuyển prompt sang chế độ Ảnh → video"):
+            self.reg.attach_job_characters(self.job)  # chế độ video thường: phải xác nhận, không tự đổi
+        self.assertEqual(self.reg.attach_job_characters(self.job, confirm=True), [goat, leopard])
+        detail = self.store.job_detail(self.job)
+        self.assertEqual((detail["images"], detail["generation_mode"], detail["images_origin"]), ([goat, leopard], "image", "auto"))
+        self.assertEqual(self.reg.job_characters(self.job)["state"], "attached")
+        self.assertEqual(self.reg.attach_job_characters(self.job), [goat, leopard])  # gắn lại: không cần hỏi
+
+    def test_prompt_override_and_manual_images_need_confirm(self):
+        self.approve(self.goat)
+        info = self.reg.job_characters(self.free, project_id=self.project)
+        self.assertEqual((info["source"], info["selected"], len(info["options"])), ("none", [], 2))
+        with self.assertRaisesRegex(ValueError, "chưa có nhân vật"):
+            self.reg.attach_job_characters(self.free)
+        self.reg.set_job_characters(self.free, [self.goat])
+        self.assertEqual(self.reg.job_characters(self.free)["source"], "prompt")
+        mine = self.store.add_image(PNG + b"mine")["token"]
+        self.store.update_job(self.free, "Prompt 2", images=[mine], mode="image")
+        with self.assertRaisesRegex(ValueError, "thay 1 ảnh bạn tự gắn"):
+            self.reg.attach_job_characters(self.free)
+        self.assertEqual(self.store.job_detail(self.free)["images"], [mine])  # chưa xác nhận: giữ nguyên
+        self.reg.attach_job_characters(self.free, confirm=True)
+        self.assertNotIn(mine, self.store.job_detail(self.free)["images"])
+        self.reg.set_job_characters(self.free, [])  # bỏ chọn riêng: quay lại theo cảnh (ở đây không có cảnh)
+        self.assertEqual(self.reg.job_characters(self.free)["source"], "none")
+
+    def test_running_prompt_is_never_changed_and_limit_is_checked(self):
+        with self.store.connect() as db:
+            db.execute("UPDATE jobs SET status='running' WHERE id=?", (self.job,))
+        self.approve(self.goat), self.approve(self.leopard)
+        for blocked in (lambda: self.reg.set_job_characters(self.job, [self.goat]),
+                        lambda: self.reg.attach_job_characters(self.job, confirm=True)):
+            with self.assertRaisesRegex(ValueError, "đang chạy"):
+                blocked()
+        many = [self.reg.add_character(self.project, f"Sói {n}")["id"] for n in range(11)]
+        for character in many:
+            self.approve(character)
+        self.reg.set_job_characters(self.free, many)
+        with self.assertRaisesRegex(ValueError, "tối đa 10"):
+            self.reg.attach_job_characters(self.free, confirm=True)

@@ -52,7 +52,10 @@ CREATE INDEX IF NOT EXISTS image_tasks_status ON image_tasks(status, created);
 JOB_COLUMNS = {
     "scene_id": "TEXT",
     "images_origin": "TEXT NOT NULL DEFAULT 'manual'",
+    # Nhân vật chọn riêng cho prompt (JSON). Trống = dùng nhân vật của cảnh gốc (scene_id).
+    "character_ids": "TEXT NOT NULL DEFAULT '[]'",
 }
+MAX_REFERENCE_IMAGES = 10  # giới hạn ảnh đầu vào mỗi prompt của chế độ Ảnh → video trên Muse
 
 def migrate(db):
     """Cột thêm sau khi bảng đã tạo (dữ liệu của bản trước giữ nguyên)."""
@@ -521,3 +524,123 @@ def _scene_inputs(registry, project_id):
 CharacterRegistry.apply_extraction = _apply_extraction
 CharacterRegistry.delete_character = _delete_character
 CharacterRegistry.scene_inputs = _scene_inputs
+
+
+# ================= Nhân vật & ảnh tham chiếu của từng prompt (Prompt Studio) =================
+class NeedsConfirm(ValueError):
+    """Thao tác cần người dùng xác nhận (ví dụ thay ảnh tự gắn, đổi chế độ video)."""
+
+
+def _character_rows(db, ids):
+    if not ids:
+        return {}
+    rows = db.execute(f"""SELECT c.*, a.image_token AS master_token FROM characters c
+                          LEFT JOIN character_assets a ON a.id=c.approved_asset_id
+                          WHERE c.id IN ({','.join('?' * len(ids))})""", list(ids)).fetchall()
+    return {row["id"]: dict(row) for row in rows}
+
+
+def _public(registry, row):
+    token = row.get("master_token")
+    if token and not registry.store.image_file(token):
+        token = None
+    return {"id": row["id"], "code": row["code"], "name": row["name"], "status": row["status"],
+            "locked": bool(row["locked"]), "project_id": row["project_id"], "master_token": token}
+
+
+def _job_characters(registry, job_id, project_id=None):
+    """Nhân vật của prompt: chọn riêng cho prompt, nếu không thì lấy theo cảnh gốc. Kèm danh sách nhân vật có thể chọn
+    (của dự án chứa cảnh/nhân vật, hoặc dự án đang mở ở Content Studio) và trạng thái gắn ảnh Master."""
+    check_id(job_id, "Prompt")
+    with registry.store.connect() as db:
+        job = db.execute("SELECT scene_id, character_ids, images, images_origin, generation_mode FROM jobs WHERE id=?",
+                         (job_id,)).fetchone()
+        if not job:
+            raise ValueError("Không tìm thấy prompt này trong hàng đợi.")
+        own = [c for c in json.loads(job["character_ids"] or "[]") if isinstance(c, str) and ID.fullmatch(c)]
+        scene = db.execute("SELECT id, project_id, ordinal FROM scenes WHERE id=?", (job["scene_id"],)).fetchone() if job["scene_id"] else None
+        scene_ids = [row["character_id"] for row in db.execute(
+            "SELECT character_id FROM scene_characters WHERE scene_id=? ORDER BY rowid", (scene["id"],))] if scene else []
+        ids, source = (own, "prompt") if own else (scene_ids, "scene") if scene else ([], "none")
+        rows = _character_rows(db, ids)
+        project = (scene["project_id"] if scene else None) or next((rows[c]["project_id"] for c in ids if c in rows), None)
+        if not project and project_id and ID.fullmatch(str(project_id)):
+            project = project_id
+        project_row = db.execute("SELECT id, name FROM projects WHERE id=?", (project,)).fetchone() if project else None
+        options = [dict(row) for row in db.execute(
+            """SELECT c.*, a.image_token AS master_token FROM characters c LEFT JOIN character_assets a ON a.id=c.approved_asset_id
+               WHERE c.project_id=? ORDER BY c.created, c.rowid""", (project_row["id"],))] if project_row else []
+    selected = [_public(registry, rows[c]) for c in ids if c in rows]
+    images = json.loads(job["images"] or "[]")
+    masters = [c["master_token"] for c in selected if c["master_token"]]
+    attached = [token for token in masters if token in images]
+    if not selected:
+        state = "none"
+    elif len(attached) == len(selected) and len(images) == len(attached):
+        state = "attached"
+    elif any(not c["master_token"] for c in selected):
+        state = "missing_master"
+    else:
+        state = "not_attached"
+    return {"source": source, "scene_number": scene["ordinal"] + 1 if scene else None,
+            "project": dict(project_row) if project_row else None,
+            "selected": selected, "options": [_public(registry, row) for row in options],
+            "attached": len(attached), "state": state, "images_origin": job["images_origin"],
+            "mode": job["generation_mode"], "limit": MAX_REFERENCE_IMAGES}
+
+
+def _set_job_characters(registry, job_id, character_ids):
+    """Chọn nhân vật riêng cho prompt (danh sách rỗng = quay lại dùng nhân vật của cảnh gốc)."""
+    check_id(job_id, "Prompt")
+    if not isinstance(character_ids, list) or len(character_ids) > 50:
+        raise ValueError("Danh sách nhân vật không hợp lệ.")
+    ids = list(dict.fromkeys(check_id(c, "Nhân vật") for c in character_ids))
+    with registry.store.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        job = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not job:
+            raise ValueError("Không tìm thấy prompt này trong hàng đợi.")
+        if job["status"] == "running":
+            raise ValueError("Prompt đang chạy, không đổi nhân vật được.")
+        if ids and db.execute(f"SELECT count(*) FROM characters WHERE id IN ({','.join('?' * len(ids))})", ids).fetchone()[0] != len(ids):
+            raise ValueError("Có nhân vật không còn tồn tại. Tải lại trang rồi thử lại.")
+        db.execute("UPDATE jobs SET character_ids=?,updated=? WHERE id=?", (json.dumps(ids), time.time(), job_id))
+
+
+def _attach_job_characters(registry, job_id, confirm=False):
+    """Auto Character Mapper cho một prompt: gắn ảnh Master đã duyệt của đúng các nhân vật trong prompt vào jobs.images.
+    Không gắn nhân vật không có trong prompt; không tạo ảnh mới; không đụng prompt đang chạy. Cần xác nhận khi
+    sẽ thay ảnh người dùng tự gắn hoặc khi phải chuyển prompt sang chế độ Ảnh → video."""
+    info = registry.job_characters(job_id)
+    if not info["selected"]:
+        raise ValueError("Prompt chưa có nhân vật. Chọn nhân vật cho prompt (hoặc cho cảnh gốc) trước.")
+    missing = [c["code"] for c in info["selected"] if not c["master_token"]]
+    if missing:
+        raise ValueError("Chưa có ảnh Master đã duyệt cho: " + ", ".join(missing) + ". Duyệt ảnh nhân vật ở Character Library trước.")
+    tokens = list(dict.fromkeys(c["master_token"] for c in info["selected"]))
+    if len(tokens) > MAX_REFERENCE_IMAGES:
+        raise ValueError(f"Prompt có {len(tokens)} nhân vật nhưng chế độ Ảnh → video của Muse chỉ nhận tối đa "
+                         f"{MAX_REFERENCE_IMAGES} ảnh. Bỏ bớt nhân vật của prompt này.")
+    with registry.store.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        job = db.execute("SELECT status, images, images_origin, generation_mode FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if job["status"] == "running":
+            raise ValueError("Prompt đang chạy, không gắn ảnh được.")
+        current = json.loads(job["images"] or "[]")
+        if not confirm:
+            notes = []
+            if current and job["images_origin"] == "manual" and sorted(current) != sorted(tokens):
+                notes.append(f"thay {len(current)} ảnh bạn tự gắn bằng {len(tokens)} ảnh nhân vật")
+            if job["generation_mode"] != "image":
+                notes.append("chuyển prompt sang chế độ Ảnh → video (Muse dùng ảnh nhân vật làm ảnh tham chiếu)")
+            if notes:
+                raise NeedsConfirm("Gắn ảnh nhân vật sẽ " + " và ".join(notes) + ". Tiếp tục?")
+        db.execute("UPDATE jobs SET images=?,generation_mode='image',images_origin='auto',updated=? WHERE id=?",
+                   (json.dumps(tokens), time.time(), job_id))
+    registry.store.cleanup_images()
+    return tokens
+
+
+CharacterRegistry.job_characters = _job_characters
+CharacterRegistry.set_job_characters = _set_job_characters
+CharacterRegistry.attach_job_characters = _attach_job_characters

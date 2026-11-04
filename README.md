@@ -73,7 +73,17 @@ Mục tiêu: mỗi nhân vật có **một ảnh Master** dùng lại cho mọi 
 4. Ở **Nhân vật trong từng cảnh**, tick nhân vật rồi bấm **Lưu** để sửa tay. Cảnh đã chỉnh tay hiện "đã chỉnh tay" và **không bị AI ghi đè** khi bấm Tìm nhân vật lần nữa. Nhân vật đã duyệt ảnh hoặc đã khóa cũng không bị AI sửa.
 5. Mỗi cảnh hiện số nhân vật; mỗi nhân vật hiện số cảnh có mặt. Danh sách nhân vật ở bên trái, bấm một nhân vật để xem và sửa chi tiết bên phải. Nút **Duyệt / Khóa** dùng được khi nhân vật đã có ảnh Master; **Tạo lại** và **Thay ảnh** sẽ hoạt động khi có bước tạo ảnh bằng Google Flow.
 
-Chưa có trong bản này: tự tạo ảnh Master bằng Google Flow (Nano Banana), duyệt/khóa ảnh trên giao diện, và tự gắn ảnh vào prompt video. Các bước đó làm ở giai đoạn tiếp theo.
+**Ảnh Master của nhân vật (bán tự động, Google Flow · Nano Banana):**
+1. Chọn nhân vật, bấm **✦ Mở Flow & điền prompt**. Tool mở Google Flow (Chrome `Profile 2`) và điền prompt tạo ảnh của nhân vật. Trong Flow bạn chọn **Hình ảnh**, mô hình **Nano Banana**, bấm tạo rồi tải ảnh xuống. (Veo là mô hình tạo **video**; ảnh nhân vật tạo bằng Nano Banana/Imagen.)
+2. Bấm **⇄ Thay ảnh → ⇩ Lấy ảnh mới tải từ Flow**, rồi bấm ảnh muốn dùng: ảnh đó thành **ảnh Master đã duyệt**. Cũng có thể **Tải ảnh lên** hoặc chọn ảnh có sẵn trong thư viện.
+3. Mỗi ảnh của nhân vật hiện thành ảnh nhỏ dưới ảnh lớn; bấm ảnh nhỏ để đổi ảnh Master. Bấm **🔒 Duyệt / Khóa** để khóa: không đổi ảnh, không sửa, AI không ghi đè.
+
+**Nhân vật và ảnh tham chiếu của từng prompt (Prompt Studio):**
+- Prompt đưa từ bước 4 sang Studio (khi dự án có cùng số cảnh) được nối với cảnh gốc, nên tự có danh sách **Nhân vật** của cảnh đó. Prompt khác có thể tick chọn nhân vật của dự án đang mở rồi bấm **Lưu nhân vật**.
+- **Ảnh nhân vật tham chiếu** hiện ảnh Master của từng nhân vật trong prompt, kèm trạng thái: đã gắn / chưa gắn / thiếu ảnh Master.
+- **🔗 Gắn ảnh nhân vật vào prompt** đặt đúng ảnh Master của các nhân vật trong prompt vào ảnh đầu vào của prompt (tối đa 10 ảnh, giới hạn của Muse). Tool hỏi xác nhận trước khi chuyển prompt sang chế độ **Ảnh → video** hoặc trước khi thay ảnh bạn tự gắn; không gắn nhân vật không có trong prompt, không sửa prompt đang chạy.
+
+Chưa có trong bản này: tự động hoàn toàn bước tạo và tải ảnh trên Flow, và gắn ảnh hàng loạt cho mọi prompt cùng lúc.
 
 ## Mức độ đã xác minh — đọc trước khi chạy
 

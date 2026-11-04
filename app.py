@@ -12,12 +12,13 @@ import sys
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from runner import content
 from runner.gemini_web import GeminiWebRunner
 from runner.chatgpt_web import chatgpt_runner
 from runner.engine import Engine
+from runner.characters import NeedsConfirm
 from runner.store import Store
 from runner.instance import InstanceLock
 from runner.paths import data_root, frozen, resource_root
@@ -100,7 +101,10 @@ class Handler(BaseHTTPRequestHandler):
         job_match = re.fullmatch(r"/api/job/([a-f0-9]{32})", path)
         if job_match:
             try:
-                return self.reply(self.server.store.job_detail(job_match.group(1)))
+                job = self.server.store.job_detail(job_match.group(1))
+                project = (parse_qs(urlsplit(self.path).query).get("project") or [None])[0]
+                job["characters"] = self.server.store.characters.job_characters(job["id"], project)
+                return self.reply(job)
             except ValueError as error:
                 return self.reply({"error": str(error)}, 404)
         if path == "/api/library":
@@ -238,6 +242,19 @@ class Handler(BaseHTTPRequestHandler):
                                        body.get("mode", "text"), account)
                 engine.changed.set()
                 return self.reply({"ok": True, "job": job})
+            elif path in ("/api/jobs/characters", "/api/jobs/attach-characters"):
+                registry = store.characters
+                if path == "/api/jobs/characters":
+                    registry.set_job_characters(body["id"], body.get("character_ids", []))
+                else:
+                    try:
+                        registry.attach_job_characters(body["id"], body.get("confirm") is True)
+                    except NeedsConfirm as question:
+                        return self.reply({"ok": False, "confirm": str(question)})
+                    engine.changed.set()
+                job = store.job_detail(body["id"])
+                job["characters"] = registry.job_characters(body["id"])
+                return self.reply({"ok": True, "job": job})
             elif path == "/api/jobs/rerun":
                 store.rerun(body["id"], bool(body.get("confirmed")))
                 engine.changed.set()
@@ -360,6 +377,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"ok": True, **made})
             elif path == "/api/characters/update":
                 store.characters.update_character(body["id"], body.get("name"), body.get("description"), body.get("image_prompt"))
+            elif path == "/api/characters/asset":
+                # Ảnh nhân vật lấy từ thư viện / tải lên / tải từ Flow. approve=True: dùng luôn làm ảnh Master.
+                origin = body.get("origin") if body.get("origin") in ("flow", "upload", "library") else "library"
+                asset = store.characters.add_asset(body["character_id"], body["token"], origin)
+                if body.get("approve") is True:
+                    store.characters.approve_asset(asset)
+                return self.reply({"ok": True, "asset_id": asset})
+            elif path == "/api/characters/approve":
+                store.characters.approve_asset(body["asset_id"])
             elif path == "/api/characters/lock":
                 store.characters.set_locked(body["id"], body.get("locked") is True)
             elif path == "/api/characters/delete":

@@ -244,10 +244,10 @@ class Store:
         cost = number(cost, 0.01)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            wanted = {item for item in scene_ids if item}
-            if wanted and db.execute(f"SELECT count(*) FROM scenes WHERE id IN ({','.join('?' * len(wanted))})",
-                                     list(wanted)).fetchone()[0] != len(wanted):
-                raise ValueError("Có cảnh không còn tồn tại. Tải lại dự án rồi thử lại.")
+            wanted = list({item for item in scene_ids if item})
+            existing = {row["id"] for row in db.execute(
+                f"SELECT id FROM scenes WHERE id IN ({','.join('?' * len(wanted))})", wanted)} if wanted else set()
+            scene_ids = [item if item in existing else None for item in scene_ids]  # cảnh đã xóa: bỏ liên kết, vẫn thêm prompt
             previous = db.execute("SELECT prompt,cost,images,generation_mode FROM jobs WHERE batch=? ORDER BY ordinal",
                                   (batch,)).fetchall()
             if previous:
