@@ -52,7 +52,17 @@ CREATE INDEX IF NOT EXISTS image_tasks_status ON image_tasks(status, created);
 JOB_COLUMNS = {
     "scene_id": "TEXT",
     "images_origin": "TEXT NOT NULL DEFAULT 'manual'",
+    # Nhân vật chọn riêng cho prompt (JSON). Trống = dùng nhân vật của cảnh gốc (scene_id).
+    "character_ids": "TEXT NOT NULL DEFAULT '[]'",
 }
+MAX_REFERENCE_IMAGES = 10  # giới hạn ảnh đầu vào mỗi prompt của chế độ Ảnh → video trên Muse
+
+def migrate(db):
+    """Cột thêm sau khi bảng đã tạo (dữ liệu của bản trước giữ nguyên)."""
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(scenes)")}
+    if "manual_characters" not in columns:  # 1 = người dùng tự chọn nhân vật cho cảnh: AI không ghi đè
+        db.execute("ALTER TABLE scenes ADD COLUMN manual_characters INTEGER NOT NULL DEFAULT 0")
+
 
 CHARACTER_STATUSES = ("draft", "generating", "review", "approved")
 ASSET_ORIGINS = ("flow", "upload", "library")
@@ -195,6 +205,8 @@ class CharacterRegistry:
                 if found != len(character_ids):
                     raise ValueError("Có nhân vật không thuộc dự án của cảnh này.")
             db.execute("DELETE FROM scene_characters WHERE scene_id=?", (scene_id,))
+            db.execute("UPDATE scenes SET manual_characters=?,updated=? WHERE id=?",
+                       (int(source == "manual"), time.time(), scene_id))
             db.executemany("INSERT INTO scene_characters(scene_id,character_id,source) VALUES(?,?,?)",
                            [(scene_id, c, source) for c in character_ids])
 
@@ -324,7 +336,7 @@ class CharacterRegistry:
                 "SELECT * FROM scenes WHERE project_id=? ORDER BY ordinal, rowid", (project_id,))]
             links = {}
             for row in db.execute("""SELECT sc.scene_id, sc.character_id, sc.source FROM scene_characters sc
-                                     JOIN scenes s ON s.id=sc.scene_id WHERE s.project_id=?""", (project_id,)):
+                                     JOIN scenes s ON s.id=sc.scene_id WHERE s.project_id=? ORDER BY sc.rowid""", (project_id,)):
                 links.setdefault(row["scene_id"], []).append(row["character_id"])
             jobs = {}
             for row in db.execute("""SELECT j.id, j.scene_id, j.status FROM jobs j JOIN scenes s ON s.id=j.scene_id
@@ -336,5 +348,299 @@ class CharacterRegistry:
             character["locked"] = bool(character["locked"])
         for scene in scenes:
             scene["character_ids"] = links.get(scene["id"], [])
+            scene["manual"] = bool(scene.pop("manual_characters", 0))
             scene["jobs"] = jobs.get(scene["id"], [])
         return {**dict(project), "characters": characters, "scenes": scenes}
+
+
+# ================= Character Extractor (giai đoạn 2) =================
+# AI (Gemini/ChatGPT) đọc kịch bản + danh sách cảnh, liệt kê nhân vật DUY NHẤT với Character ID, mô tả ngoại hình cố định,
+# prompt ảnh Master tiếng Anh, và Character ID xuất hiện trong từng cảnh. Định dạng dòng văn bản để đọc chắc chắn.
+END_CHARACTERS = "HẾT DANH SÁCH NHÂN VẬT"
+NONE_WORDS = {"", "KHONG", "KHONG_CO", "NONE", "NO", "NULL", "N_A", "NA"}
+MAX_CHARACTERS = 60
+_LEAD = r"^\s*(?:\d+[.)]\s*)?[-*•–\s]*"
+NV_LINE = re.compile(_LEAD + r"NV\s*\|\s*(.+)$", re.IGNORECASE)
+SCENE_LINK = re.compile(_LEAD + r"C(?:[ảa]nh)?\s*(\d{1,4})\s*[|:：]\s*(.*)$", re.IGNORECASE)
+LABEL_DESC = re.compile(r"^\s*m[ôo]\s*t[ảa]\s*[:：]\s*", re.IGNORECASE)
+LABEL_PROMPT = re.compile(r"^\s*(?:prompt\s*[ảa]nh|image\s*prompt)\s*[:：]\s*", re.IGNORECASE)
+
+
+def scene_line(number, scene):
+    parts = [("Bối cảnh", scene.get("setting")), ("góc quay", scene.get("camera")),
+             ("hành vi nhân vật", scene.get("behavior")), ("hành động", scene.get("action"))]
+    body = ", ".join(f"{label}: {text(value, 1500)}" for label, value in parts if text(value))
+    return f"C{number}: {body or text(scene.get('source') or scene.get('prompt'), 3000)}"
+
+
+def extraction_request(script, scenes, numbers=None, known=None):
+    """Yêu cầu gửi AI. numbers: chỉ hỏi lại các cảnh này (đánh số 1..N theo thứ tự danh sách gửi đi)."""
+    total = len(scenes)
+    if numbers:
+        codes = ", ".join(known or []) or "(chưa có)"
+        wanted = ", ".join(f"C{n}" for n in numbers)
+        return ("Còn thiếu dòng nhân vật cho các cảnh: " + wanted + ".\n"
+                "Chỉ viết lại các dòng đó, mỗi dòng: C<số> | <Character ID>, <Character ID> (không có nhân vật thì ghi KHONG). "
+                "Chỉ dùng các Character ID đã liệt kê: " + codes + ". Nếu thật sự có nhân vật mới, thêm dòng NV như trước.\n"
+                + "\n".join(scene_line(n, scenes[n - 1]) for n in numbers)
+                + f"\nCuối cùng viết đúng một dòng: {END_CHARACTERS}")
+    return (
+        "Bạn là trợ lý tiền kỳ cho video. Đọc KỊCH BẢN và DANH SÁCH CẢNH bên dưới rồi làm 3 việc:\n"
+        "1. Liệt kê MỌI nhân vật DUY NHẤT (người, con vật, sinh vật có vai trò). Một nhân vật xuất hiện ở nhiều cảnh chỉ liệt kê "
+        "MỘT lần. Một nhóm giống hệt nhau không phân biệt từng cá thể (ví dụ “đàn sói”) có thể là một nhân vật nhóm. "
+        "Không liệt kê đồ vật, bối cảnh hay thời tiết.\n"
+        "2. Mỗi nhân vật: Character ID viết HOA, không dấu, nối bằng dấu _ (ví dụ DE_DUC, BAO_TUYET); tên tiếng Việt; "
+        "mô tả ngoại hình CỐ ĐỊNH để mọi cảnh giống nhau (loài/giới tính/tuổi, màu lông hoặc da, vóc dáng, đặc điểm nhận dạng, "
+        "trang phục nếu có); và một prompt ảnh tham chiếu TIẾNG ANH cho ảnh Master của nhân vật: chỉ một nhân vật, toàn thân, "
+        "nhìn chính diện, đứng yên, nền trơn trung tính, ánh sáng studio đều, ảnh chân thực, không chữ, không logo, "
+        "KHÔNG có bối cảnh của cảnh quay.\n"
+        "3. Với TỪNG cảnh C1 đến C" + str(total) + ", ghi các Character ID xuất hiện trong cảnh đó; cảnh không có nhân vật ghi KHONG.\n\n"
+        "ĐỊNH DẠNG BẮT BUỘC (mỗi mục một dòng, không bảng, không markdown, không giải thích thêm):\n"
+        "NV | DE_DUC | Dê đực đầu đàn | Mô tả: dê núi ibex đực trưởng thành, lông xám nâu, cặp sừng cong lớn | "
+        "Prompt ảnh: full body photo of an adult male alpine ibex with large curved horns, grey-brown coat, front view, "
+        "standing still, plain neutral grey background, even studio lighting, photorealistic, no text\n"
+        "C1 | DE_DUC, DE_CON\n"
+        "C2 | KHONG\n"
+        f"Viết đủ các dòng C1 đến C{total}. Cuối cùng viết đúng một dòng: {END_CHARACTERS}\n\n"
+        "KỊCH BẢN:\n" + (str(script or "").strip()[:30000] or "(không có, chỉ dựa vào danh sách cảnh)") + "\n\n"
+        "DANH SÁCH CẢNH:\n" + "\n".join(scene_line(n, scene) for n, scene in enumerate(scenes, 1)))
+
+
+def parse_characters(answer, total, known=()):
+    """Đọc câu trả lời: {"characters": [{code,name,description,image_prompt}], "scenes": {n: [code]}, "unknown": [code]}.
+    known: Character ID đã có từ lượt trước (lượt hỏi lại thường chỉ có dòng C…)."""
+    characters, scenes, order = {}, {}, []
+    for raw in str(answer or "").replace("\r", "").split("\n"):
+        line = re.sub(r"[*`#>]+", "", raw).strip()  # giữ dấu _ của Character ID
+        match = NV_LINE.match(line)
+        if match:
+            parts = [part.strip() for part in match.group(1).split("|")]
+            code = character_code(parts[0]) if parts and parts[0] else ""
+            if not parts or not parts[0].strip():
+                continue
+            name, description, prompt = (parts[1] if len(parts) > 1 else "") or code.replace("_", " ").title(), "", ""
+            for part in parts[2:]:
+                if LABEL_PROMPT.match(part):
+                    prompt = LABEL_PROMPT.sub("", part)
+                elif LABEL_DESC.match(part):
+                    description = LABEL_DESC.sub("", part)
+                elif not description:
+                    description = part
+                elif not prompt:
+                    prompt = part
+            if code not in characters and len(characters) < MAX_CHARACTERS:
+                order.append(code)
+            if len(characters) < MAX_CHARACTERS or code in characters:
+                characters[code] = {"code": code, "name": text(name, 200), "description": text(description, 5000),
+                                    "image_prompt": text(prompt, 5000)}
+            continue
+        match = SCENE_LINK.match(line)
+        if match and 1 <= int(match.group(1)) <= total:
+            codes = []
+            for item in re.split(r"[,;、]+", match.group(2)):
+                code = character_code(item) if item.strip() else ""
+                if code and code not in NONE_WORDS and code != "NHAN_VAT" and code not in codes:
+                    codes.append(code)
+            scenes[int(match.group(1))] = codes
+    valid = set(characters) | set(known)
+    unknown = sorted({code for codes in scenes.values() for code in codes if code not in valid})
+    scenes = {n: [code for code in codes if code in valid] for n, codes in scenes.items()}
+    return {"characters": [characters[code] for code in order], "scenes": scenes, "unknown": unknown}
+
+
+def missing_scenes(scenes, total):
+    return [n for n in range(1, total + 1) if n not in scenes]
+
+
+def merge_extraction(result, extra):
+    """Gộp lượt hỏi lại: nhân vật mới thêm vào cuối, dòng cảnh mới bổ sung (không ghi đè cảnh đã có)."""
+    known = {c["code"] for c in result["characters"]}
+    result["characters"] += [c for c in extra["characters"] if c["code"] not in known]
+    known = {c["code"] for c in result["characters"]}
+    for n, codes in extra["scenes"].items():
+        result["scenes"].setdefault(n, [code for code in codes if code in known])
+    result["unknown"] = sorted(set(result["unknown"]) | {c for c in extra["unknown"] if c not in known})
+    return result
+
+
+def _apply_extraction(registry, project_id, scene_ids, result):
+    """Lưu kết quả phân tích vào dự án. scene_ids: Scene ID theo đúng thứ tự đã gửi cho AI (C1 = scene_ids[0]).
+    Nhân vật đã có (cùng Character ID): chỉ cập nhật khi còn bản nháp và chưa khóa. Cảnh người dùng đã tự gán thì giữ nguyên."""
+    check_id(project_id, "Dự án")
+    with registry.store.connect() as db:
+        existing = {row["code"]: dict(row) for row in db.execute("SELECT * FROM characters WHERE project_id=?", (project_id,))}
+        manual = {row["id"] for row in db.execute(
+            "SELECT id FROM scenes WHERE project_id=? AND manual_characters=1", (project_id,))}
+        valid = {row["id"] for row in db.execute("SELECT id FROM scenes WHERE project_id=?", (project_id,))}
+    ids, added, updated = {}, 0, 0
+    for character in result.get("characters", []):
+        old = existing.get(character["code"])
+        if old:
+            ids[character["code"]] = old["id"]
+            if old["status"] == "draft" and not old["locked"]:
+                registry.update_character(old["id"], character["name"], character["description"] or old["description"],
+                                          character["image_prompt"] or old["image_prompt"])
+                updated += 1
+        else:
+            made = registry.add_character(project_id, character["name"], character["description"],
+                                          character["image_prompt"], code=character["code"])
+            ids[character["code"]] = made["id"]
+            added += 1
+    linked = kept = 0
+    for number, codes in sorted(result.get("scenes", {}).items(), key=lambda item: int(item[0])):
+        number = int(number)
+        if not 1 <= number <= len(scene_ids) or scene_ids[number - 1] not in valid:
+            continue
+        scene_id = scene_ids[number - 1]
+        if scene_id in manual:
+            kept += 1
+            continue
+        registry.set_scene_characters(scene_id, [ids[code] for code in codes if code in ids], source="ai")
+        linked += 1
+    return {"added": added, "updated": updated, "linked": linked, "kept_manual": kept}
+
+
+def _delete_character(registry, character_id):
+    check_id(character_id, "Nhân vật")
+    with registry.store.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT locked FROM characters WHERE id=?", (character_id,)).fetchone()
+        if not row:
+            raise ValueError("Không tìm thấy nhân vật.")
+        if row["locked"]:
+            raise ValueError("Nhân vật đã khóa. Mở khóa trước khi xóa.")
+        if db.execute("SELECT 1 FROM image_tasks WHERE character_id=? AND status='running'", (character_id,)).fetchone():
+            raise ValueError("Nhân vật đang được tạo ảnh. Đợi xong rồi xóa.")
+        db.execute("DELETE FROM characters WHERE id=?", (character_id,))
+    registry.store.cleanup_images()
+
+
+def _scene_inputs(registry, project_id):
+    """Danh sách cảnh (thứ tự hiển thị) và Scene ID tương ứng để gửi cho AI."""
+    project = registry.project(project_id)
+    return project, [scene["id"] for scene in project["scenes"]], project["scenes"]
+
+
+CharacterRegistry.apply_extraction = _apply_extraction
+CharacterRegistry.delete_character = _delete_character
+CharacterRegistry.scene_inputs = _scene_inputs
+
+
+# ================= Nhân vật & ảnh tham chiếu của từng prompt (Prompt Studio) =================
+class NeedsConfirm(ValueError):
+    """Thao tác cần người dùng xác nhận (ví dụ thay ảnh tự gắn, đổi chế độ video)."""
+
+
+def _character_rows(db, ids):
+    if not ids:
+        return {}
+    rows = db.execute(f"""SELECT c.*, a.image_token AS master_token FROM characters c
+                          LEFT JOIN character_assets a ON a.id=c.approved_asset_id
+                          WHERE c.id IN ({','.join('?' * len(ids))})""", list(ids)).fetchall()
+    return {row["id"]: dict(row) for row in rows}
+
+
+def _public(registry, row):
+    token = row.get("master_token")
+    if token and not registry.store.image_file(token):
+        token = None
+    return {"id": row["id"], "code": row["code"], "name": row["name"], "status": row["status"],
+            "locked": bool(row["locked"]), "project_id": row["project_id"], "master_token": token}
+
+
+def _job_characters(registry, job_id, project_id=None):
+    """Nhân vật của prompt: chọn riêng cho prompt, nếu không thì lấy theo cảnh gốc. Kèm danh sách nhân vật có thể chọn
+    (của dự án chứa cảnh/nhân vật, hoặc dự án đang mở ở Content Studio) và trạng thái gắn ảnh Master."""
+    check_id(job_id, "Prompt")
+    with registry.store.connect() as db:
+        job = db.execute("SELECT scene_id, character_ids, images, images_origin, generation_mode FROM jobs WHERE id=?",
+                         (job_id,)).fetchone()
+        if not job:
+            raise ValueError("Không tìm thấy prompt này trong hàng đợi.")
+        own = [c for c in json.loads(job["character_ids"] or "[]") if isinstance(c, str) and ID.fullmatch(c)]
+        scene = db.execute("SELECT id, project_id, ordinal FROM scenes WHERE id=?", (job["scene_id"],)).fetchone() if job["scene_id"] else None
+        scene_ids = [row["character_id"] for row in db.execute(
+            "SELECT character_id FROM scene_characters WHERE scene_id=? ORDER BY rowid", (scene["id"],))] if scene else []
+        ids, source = (own, "prompt") if own else (scene_ids, "scene") if scene else ([], "none")
+        rows = _character_rows(db, ids)
+        project = (scene["project_id"] if scene else None) or next((rows[c]["project_id"] for c in ids if c in rows), None)
+        if not project and project_id and ID.fullmatch(str(project_id)):
+            project = project_id
+        project_row = db.execute("SELECT id, name FROM projects WHERE id=?", (project,)).fetchone() if project else None
+        options = [dict(row) for row in db.execute(
+            """SELECT c.*, a.image_token AS master_token FROM characters c LEFT JOIN character_assets a ON a.id=c.approved_asset_id
+               WHERE c.project_id=? ORDER BY c.created, c.rowid""", (project_row["id"],))] if project_row else []
+    selected = [_public(registry, rows[c]) for c in ids if c in rows]
+    images = json.loads(job["images"] or "[]")
+    masters = [c["master_token"] for c in selected if c["master_token"]]
+    attached = [token for token in masters if token in images]
+    if not selected:
+        state = "none"
+    elif len(attached) == len(selected) and len(images) == len(attached):
+        state = "attached"
+    elif any(not c["master_token"] for c in selected):
+        state = "missing_master"
+    else:
+        state = "not_attached"
+    return {"source": source, "scene_number": scene["ordinal"] + 1 if scene else None,
+            "project": dict(project_row) if project_row else None,
+            "selected": selected, "options": [_public(registry, row) for row in options],
+            "attached": len(attached), "state": state, "images_origin": job["images_origin"],
+            "mode": job["generation_mode"], "limit": MAX_REFERENCE_IMAGES}
+
+
+def _set_job_characters(registry, job_id, character_ids):
+    """Chọn nhân vật riêng cho prompt (danh sách rỗng = quay lại dùng nhân vật của cảnh gốc)."""
+    check_id(job_id, "Prompt")
+    if not isinstance(character_ids, list) or len(character_ids) > 50:
+        raise ValueError("Danh sách nhân vật không hợp lệ.")
+    ids = list(dict.fromkeys(check_id(c, "Nhân vật") for c in character_ids))
+    with registry.store.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        job = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not job:
+            raise ValueError("Không tìm thấy prompt này trong hàng đợi.")
+        if job["status"] == "running":
+            raise ValueError("Prompt đang chạy, không đổi nhân vật được.")
+        if ids and db.execute(f"SELECT count(*) FROM characters WHERE id IN ({','.join('?' * len(ids))})", ids).fetchone()[0] != len(ids):
+            raise ValueError("Có nhân vật không còn tồn tại. Tải lại trang rồi thử lại.")
+        db.execute("UPDATE jobs SET character_ids=?,updated=? WHERE id=?", (json.dumps(ids), time.time(), job_id))
+
+
+def _attach_job_characters(registry, job_id, confirm=False):
+    """Auto Character Mapper cho một prompt: gắn ảnh Master đã duyệt của đúng các nhân vật trong prompt vào jobs.images.
+    Không gắn nhân vật không có trong prompt; không tạo ảnh mới; không đụng prompt đang chạy. Cần xác nhận khi
+    sẽ thay ảnh người dùng tự gắn hoặc khi phải chuyển prompt sang chế độ Ảnh → video."""
+    info = registry.job_characters(job_id)
+    if not info["selected"]:
+        raise ValueError("Prompt chưa có nhân vật. Chọn nhân vật cho prompt (hoặc cho cảnh gốc) trước.")
+    missing = [c["code"] for c in info["selected"] if not c["master_token"]]
+    if missing:
+        raise ValueError("Chưa có ảnh Master đã duyệt cho: " + ", ".join(missing) + ". Duyệt ảnh nhân vật ở Character Library trước.")
+    tokens = list(dict.fromkeys(c["master_token"] for c in info["selected"]))
+    if len(tokens) > MAX_REFERENCE_IMAGES:
+        raise ValueError(f"Prompt có {len(tokens)} nhân vật nhưng chế độ Ảnh → video của Muse chỉ nhận tối đa "
+                         f"{MAX_REFERENCE_IMAGES} ảnh. Bỏ bớt nhân vật của prompt này.")
+    with registry.store.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        job = db.execute("SELECT status, images, images_origin, generation_mode FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if job["status"] == "running":
+            raise ValueError("Prompt đang chạy, không gắn ảnh được.")
+        current = json.loads(job["images"] or "[]")
+        if not confirm:
+            notes = []
+            if current and job["images_origin"] == "manual" and sorted(current) != sorted(tokens):
+                notes.append(f"thay {len(current)} ảnh bạn tự gắn bằng {len(tokens)} ảnh nhân vật")
+            if job["generation_mode"] != "image":
+                notes.append("chuyển prompt sang chế độ Ảnh → video (Muse dùng ảnh nhân vật làm ảnh tham chiếu)")
+            if notes:
+                raise NeedsConfirm("Gắn ảnh nhân vật sẽ " + " và ".join(notes) + ". Tiếp tục?")
+        db.execute("UPDATE jobs SET images=?,generation_mode='image',images_origin='auto',updated=? WHERE id=?",
+                   (json.dumps(tokens), time.time(), job_id))
+    registry.store.cleanup_images()
+    return tokens
+
+
+CharacterRegistry.job_characters = _job_characters
+CharacterRegistry.set_job_characters = _set_job_characters
+CharacterRegistry.attach_job_characters = _attach_job_characters

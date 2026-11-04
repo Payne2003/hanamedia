@@ -12,12 +12,17 @@ import sys
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from runner import content
 from runner.gemini_web import GeminiWebRunner
-from runner.chatgpt_web import chatgpt_runner
+from runner.chatgpt_web import chatgpt_login_url, chatgpt_runner
+from runner.engine import FLOW_URL
+from runner.flow import default_chrome_profile
+from runner.gemini_web import chrome_executable, login_url
+from runner.profiles import SharedProfile
 from runner.engine import Engine
+from runner.characters import NeedsConfirm
 from runner.store import Store
 from runner.instance import InstanceLock
 from runner.paths import data_root, frozen, resource_root
@@ -36,10 +41,53 @@ class AppServer(ThreadingHTTPServer):
         self.origin = f"http://127.0.0.1:{self.server_port}"
         self.secret = secrets.token_urlsafe(32)
         self.folder_lock = threading.Lock()
+        self.character_jobs = {}  # mã việc phân tích nhân vật -> (dự án, Scene ID theo thứ tự đã gửi)
         if store.setting("gemini_api_key"):  # Chế độ Gemini API đã bỏ: không giữ khóa API cũ trên máy.
             store.save_setting("gemini_api_key", "")
-        self.gemini_web = GeminiWebRunner(Path(store.path).parent / "profiles" / "gemini-web")
-        self.chatgpt_web = chatgpt_runner(Path(store.path).parent / "profiles" / "chatgpt-web")
+        self.data_dir = Path(store.path).parent
+        self.gemini_web = GeminiWebRunner(self.data_dir / "profiles" / "gemini-web")
+        self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
+        # Tài khoản chung: Gemini, ChatGPT, Flow dùng một hồ sơ Chrome (đăng nhập Google một lần).
+        self.shared = SharedProfile(self.data_dir)
+        self.gemini_web.gate = self.chatgpt_web.gate = self.shared
+        self.shared.register("Gemini", self.gemini_web.release_session)
+        self.shared.register("ChatGPT", self.chatgpt_web.release_session)
+        if hasattr(engine, "release_flow"):
+            engine.gate = self.shared
+            self.shared.register("Flow", engine.release_flow)
+        if store.setting("shared_google_profile") is True:
+            self.apply_shared(True)
+
+    def apply_shared(self, enabled):
+        """Bật/tắt tài khoản chung. Chỉ đổi khi không phần nào đang chạy; đóng mọi Chrome tự động đang rảnh."""
+        busy = [name for name, runner in (("Gemini", self.gemini_web), ("ChatGPT", self.chatgpt_web))
+                if runner.snapshot().get("busy")]
+        if getattr(self.engine, "flow_busy", False):
+            busy.append("Flow")
+        busy += [name for name in self.shared.release_all() if name not in busy]
+        if busy:
+            raise ValueError(", ".join(busy) + " đang chạy. Đợi chạy xong rồi đổi chế độ tài khoản.")
+        self.shared.enabled = bool(enabled)
+        profiles = self.data_dir / "profiles"
+        self.gemini_web.profile = self.shared.dir if enabled else profiles / "gemini-web"
+        self.chatgpt_web.profile = self.shared.dir if enabled else profiles / "chatgpt-web"
+        if hasattr(self.engine, "flow_profile"):
+            self.engine.flow_profile = self.shared.dir / "Default" if enabled else default_chrome_profile(self.data_dir)
+        self.store.save_setting("shared_google_profile", bool(enabled))
+
+    def open_shared_login(self, email="", launcher=subprocess.Popen):
+        """Một cửa sổ Chrome THƯỜNG với hồ sơ chung: đăng nhập Google, rồi các tab Gemini, ChatGPT, Flow."""
+        if not self.shared.enabled:
+            raise ValueError("Bật “Dùng một tài khoản cho tất cả” trước.")
+        if self.shared.login_open():
+            raise ValueError("Cửa sổ đăng nhập đang mở. Đăng nhập xong thì đóng hẳn cửa sổ đó.")
+        busy = self.shared.release_all()
+        if busy:
+            raise ValueError(", ".join(busy) + " đang chạy. Đợi chạy xong rồi đăng nhập.")
+        self.shared.dir.mkdir(parents=True, exist_ok=True)
+        self.shared.login_process = launcher([chrome_executable(), f"--user-data-dir={self.shared.dir}",
+                                              "--profile-directory=Default", "--no-first-run", "--new-window",
+                                              login_url(email), chatgpt_login_url(), FLOW_URL])
 
     def handle_error(self, request, client_address):
         error = sys.exc_info()[1]
@@ -89,6 +137,9 @@ class Handler(BaseHTTPRequestHandler):
             data["engine"] = self.server.engine.snapshot()
             data["key"] = self.server.secret
             data["app_version"] = APP_VERSION
+            shared = self.server.shared
+            data["shared_account"] = {"enabled": shared.enabled, "profile": str(shared.dir), "login_open": shared.login_open(),
+                                      "profile_used": (shared.dir / "Local State").exists()}
             data["content"] = {"version": content.VERSION,
                                "web": dict(self.server.gemini_web.snapshot(),
                                            email=self.server.store.setting("gemini_web_email") or "",
@@ -99,11 +150,22 @@ class Handler(BaseHTTPRequestHandler):
         job_match = re.fullmatch(r"/api/job/([a-f0-9]{32})", path)
         if job_match:
             try:
-                return self.reply(self.server.store.job_detail(job_match.group(1)))
+                job = self.server.store.job_detail(job_match.group(1))
+                project = (parse_qs(urlsplit(self.path).query).get("project") or [None])[0]
+                job["characters"] = self.server.store.characters.job_characters(job["id"], project)
+                return self.reply(job)
             except ValueError as error:
                 return self.reply({"error": str(error)}, 404)
         if path == "/api/library":
             return self.reply({"images": self.server.store.library_images()})
+        if path == "/api/projects":
+            return self.reply({"projects": self.server.store.characters.projects()})
+        project_match = re.fullmatch(r"/api/project/([a-f0-9]{32})", path)
+        if project_match:
+            try:
+                return self.reply(self.server.store.characters.project(project_match.group(1)))
+            except ValueError as error:
+                return self.reply({"error": str(error)}, 404)
         library_image = re.fullmatch(r"/api/library/image/([a-f0-9]{32})", path)
         if library_image:
             image = self.server.store.image_file(library_image.group(1))
@@ -166,12 +228,14 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
             return
-        mapping = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
+        mapping = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css",
+                   "/logo.png": "logo.png", "/logo.svg": "logo.svg", "/favicon.ico": "favicon.ico"}
         if path not in mapping:
             return self.reply({"error": "Không tìm thấy."}, 404)
         file = ROOT / "web" / mapping[path]
         body = file.read_bytes()
-        self.headers_out(200, (mimetypes.guess_type(file.name)[0] or "text/plain") + "; charset=utf-8", len(body))
+        kind = {".ico": "image/x-icon", ".png": "image/png", ".svg": "image/svg+xml"}.get(file.suffix)
+        self.headers_out(200, kind or (mimetypes.guess_type(file.name)[0] or "text/plain") + "; charset=utf-8", len(body))
         self.end_headers()
         self.wfile.write(body)
 
@@ -229,6 +293,19 @@ class Handler(BaseHTTPRequestHandler):
                                        body.get("mode", "text"), account)
                 engine.changed.set()
                 return self.reply({"ok": True, "job": job})
+            elif path in ("/api/jobs/characters", "/api/jobs/attach-characters"):
+                registry = store.characters
+                if path == "/api/jobs/characters":
+                    registry.set_job_characters(body["id"], body.get("character_ids", []))
+                else:
+                    try:
+                        registry.attach_job_characters(body["id"], body.get("confirm") is True)
+                    except NeedsConfirm as question:
+                        return self.reply({"ok": False, "confirm": str(question)})
+                    engine.changed.set()
+                job = store.job_detail(body["id"])
+                job["characters"] = registry.job_characters(body["id"])
+                return self.reply({"ok": True, "job": job})
             elif path == "/api/jobs/rerun":
                 store.rerun(body["id"], bool(body.get("confirmed")))
                 engine.changed.set()
@@ -240,6 +317,15 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/library/import-flow":
                 imported = store.import_flow_downloads(engine.flow_downloads)
                 return self.reply({"ok": True, "imported": imported})
+            elif path == "/api/settings/shared-account":
+                self.server.apply_shared(body.get("enabled") is True)
+            elif path == "/api/shared-login":
+                self.server.open_shared_login(store.setting("gemini_web_email") or "")
+            elif path == "/api/flow/login":
+                if self.server.shared.enabled:
+                    self.server.open_shared_login(store.setting("gemini_web_email") or "")
+                else:
+                    engine.open_flow_login()
             elif path == "/api/flow/create-image":
                 engine.create_flow_image(body["prompt"])
             elif path == "/api/start":
@@ -305,6 +391,69 @@ class Handler(BaseHTTPRequestHandler):
                                                     body.get("seconds") if body.get("seconds") in content.SECONDS_CHOICES
                                                     else content.DEFAULT_SECONDS))
                 return self.reply({"ok": True, "id": job, "total": len(lines), "engine": "chatgpt" if chatgpt else "gemini"})
+            elif path == "/api/projects/create":
+                registry = store.characters
+                scenes = body.get("scenes")
+                if not isinstance(scenes, list) or not scenes:
+                    raise ValueError("Chưa có danh sách cảnh để lưu thành dự án.")
+                project_id = registry.create_project(body.get("name", ""), body.get("brief", ""),
+                                                     body.get("video_url", ""), body.get("script", ""))
+                try:
+                    registry.add_scenes(project_id, scenes)
+                except ValueError:
+                    registry.delete_project(project_id)
+                    raise
+                return self.reply({"ok": True, "project": registry.project(project_id)})
+            elif path == "/api/projects/delete":
+                store.characters.delete_project(body["id"])
+            elif path == "/api/characters/extract":
+                project, scene_ids, scenes = store.characters.scene_inputs(body["project_id"])
+                if not scenes:
+                    raise ValueError("Dự án chưa có cảnh nào.")
+                chatgpt = body.get("engine") == "chatgpt"
+                runner = self.server.chatgpt_web if chatgpt else self.server.gemini_web
+                job = runner.start("characters", project["script"], "" if chatgpt else (store.setting("gemini_web_email") or ""),
+                                   store.setting("chatgpt_web_model" if chatgpt else "gemini_web_model") or "", scenes)
+                # Ghi nhớ Scene ID theo đúng thứ tự gửi cho AI: C1 = cảnh đầu tiên lúc gửi, kể cả nếu sau đó sắp xếp lại.
+                self.server.character_jobs[job] = (project["id"], scene_ids)
+                return self.reply({"ok": True, "id": job, "engine": "chatgpt" if chatgpt else "gemini", "total": len(scenes)})
+            elif path == "/api/characters/apply":
+                runner = self.server.chatgpt_web if body.get("engine") == "chatgpt" else self.server.gemini_web
+                job = runner.snapshot()
+                pending = self.server.character_jobs.get(str(body.get("job_id", "")))
+                if not pending or job.get("id") != body.get("job_id") or job.get("kind") != "characters":
+                    raise ValueError("Không tìm thấy kết quả phân tích nhân vật này (có thể đã lưu rồi).")
+                if job.get("busy"):
+                    raise ValueError("AI vẫn đang phân tích nhân vật. Đợi xong rồi lưu.")
+                if not job.get("result"):
+                    raise ValueError(job.get("error") or "Không có kết quả phân tích nhân vật.")
+                summary = store.characters.apply_extraction(pending[0], pending[1], job["result"])
+                self.server.character_jobs.pop(body["job_id"], None)
+                return self.reply({"ok": True, "summary": summary, "missing": job["result"].get("missing", []),
+                                   "unknown": job["result"].get("unknown", []), "project": store.characters.project(pending[0])})
+            elif path == "/api/characters/add":
+                made = store.characters.add_character(body["project_id"], body.get("name", ""), body.get("description", ""),
+                                                      body.get("image_prompt", ""))
+                return self.reply({"ok": True, **made})
+            elif path == "/api/characters/update":
+                store.characters.update_character(body["id"], body.get("name"), body.get("description"), body.get("image_prompt"))
+            elif path == "/api/characters/asset":
+                # Ảnh nhân vật lấy từ thư viện / tải lên / tải từ Flow. approve=True: dùng luôn làm ảnh Master.
+                origin = body.get("origin") if body.get("origin") in ("flow", "upload", "library") else "library"
+                asset = store.characters.add_asset(body["character_id"], body["token"], origin)
+                if body.get("approve") is True:
+                    store.characters.approve_asset(asset)
+                return self.reply({"ok": True, "asset_id": asset})
+            elif path == "/api/characters/approve":
+                store.characters.approve_asset(body["asset_id"])
+            elif path == "/api/characters/lock":
+                store.characters.set_locked(body["id"], body.get("locked") is True)
+            elif path == "/api/characters/delete":
+                store.characters.delete_character(body["id"])
+            elif path == "/api/scenes/characters":
+                store.characters.set_scene_characters(body["scene_id"], body.get("character_ids", []), source="manual")
+            elif path == "/api/content/web-login" and self.server.shared.enabled:
+                self.server.open_shared_login(store.setting("gemini_web_email") or "")
             elif path == "/api/content/web-login":
                 if body.get("engine") == "chatgpt":
                     self.server.chatgpt_web.open_login()

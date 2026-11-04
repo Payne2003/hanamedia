@@ -24,6 +24,7 @@ CloseApplications=yes
 RestartApplications=no
 UninstallDisplayName=HANA MEDIA
 UninstallDisplayIcon={app}\HanaMedia.exe
+SetupIconFile=hanamedia.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

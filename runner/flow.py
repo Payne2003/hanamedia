@@ -4,14 +4,12 @@ from pathlib import Path
 
 
 def default_chrome_profile(data):
+    """Hồ sơ Chrome RIÊNG của tool cho Google Flow (data/profiles/google-flow), giống Gemini/ChatGPT: máy nào cũng dùng được,
+    không phụ thuộc hồ sơ Chrome cá nhân. Đăng nhập một lần bằng nút trong Cài đặt.
+    HUMY_FLOW_PROFILE_PATH: (nâng cao) dùng một hồ sơ Chrome khác."""
     configured = os.environ.get("HUMY_FLOW_PROFILE_PATH")
     if configured:
         return Path(configured).expanduser()
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        profile = Path(local_app_data) / "Google" / "Chrome" / "User Data" / "Profile 2"
-        if profile.is_dir():
-            return profile
     return Path(data) / "profiles" / "google-flow" / "Default"
 
 

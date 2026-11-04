@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .content import parse_structured
-from .characters import JOB_COLUMNS, SCHEMA as CHARACTER_SCHEMA, CharacterRegistry
+from .characters import JOB_COLUMNS, SCHEMA as CHARACTER_SCHEMA, CharacterRegistry, migrate as migrate_characters
 
 
 def number(value, minimum=0):
@@ -62,6 +62,7 @@ class Store:
                 token TEXT PRIMARY KEY, name TEXT NOT NULL, created REAL NOT NULL);
             """)
             db.executescript(CHARACTER_SCHEMA)  # dự án, cảnh, nhân vật, ảnh Master, hàng đợi ảnh nhân vật
+            migrate_characters(db)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
             migrations = {
                 "images": "TEXT NOT NULL DEFAULT '[]'",
@@ -243,10 +244,10 @@ class Store:
         cost = number(cost, 0.01)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            wanted = {item for item in scene_ids if item}
-            if wanted and db.execute(f"SELECT count(*) FROM scenes WHERE id IN ({','.join('?' * len(wanted))})",
-                                     list(wanted)).fetchone()[0] != len(wanted):
-                raise ValueError("Có cảnh không còn tồn tại. Tải lại dự án rồi thử lại.")
+            wanted = list({item for item in scene_ids if item})
+            existing = {row["id"] for row in db.execute(
+                f"SELECT id FROM scenes WHERE id IN ({','.join('?' * len(wanted))})", wanted)} if wanted else set()
+            scene_ids = [item if item in existing else None for item in scene_ids]  # cảnh đã xóa: bỏ liên kết, vẫn thêm prompt
             previous = db.execute("SELECT prompt,cost,images,generation_mode FROM jobs WHERE batch=? ORDER BY ordinal",
                                   (batch,)).fetchall()
             if previous:

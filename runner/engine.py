@@ -2,15 +2,20 @@ import queue
 import shutil
 import threading
 from pathlib import Path
-from .flow import FlowImageSession, default_chrome_profile
+import subprocess
+from .flow import FlowImageSession, chrome_profile_arguments, default_chrome_profile
+from .gemini_web import chrome_executable
+
+FLOW_URL = "https://labs.google/fx/tools/flow"
+FLOW_LOGIN = object()  # yêu cầu đặc biệt trong hàng đợi Flow: mở Chrome thường để đăng nhập
+FLOW_CLOSE = object()  # đóng Chrome Flow do tool điều khiển (nhường hồ sơ Google chung)
 from .muse import MuseBrowser, MuseFailure
 
 
 class Engine:
     def __init__(self, store, data):
         self.store, self.data = store, Path(data)
-        self.flow_profile = Path(store.setting(
-            "flow_profile", str(default_chrome_profile(self.data))))
+        self.flow_profile = default_chrome_profile(self.data)
         self.lock = threading.RLock()
         self.changed = threading.Event()
         self.enabled = False
@@ -26,8 +31,12 @@ class Engine:
         self.flow_downloads = self.data / "flow-downloads"
         self.flow_downloads.mkdir(parents=True, exist_ok=True)
         self.flow_requests = queue.Queue()
+        self.flow_launcher = subprocess.Popen
+        self.flow_closed = threading.Event()
+        self.gate = None  # SharedProfile khi bật "Tài khoản chung"
         self.flow_busy = False
-        self.flow_status = f"Sẵn sàng mở Flow · Chrome profile {self.flow_profile.name}"
+        self.flow_status = ("Sẵn sàng mở Flow · hồ sơ Chrome riêng của tool" if (self.flow_profile.parent / "Local State").exists()
+                            else "Chưa đăng nhập Google Flow: vào Cài đặt → Google Flow → Đăng nhập")
         self.flow_thread = threading.Thread(target=self.flow_worker, daemon=True)
         self.flow_thread.start()
         self.store.recover()
@@ -75,6 +84,26 @@ class Engine:
             self.flow_status = "Đang mở Flow và điền prompt ảnh"
             self.flow_requests.put(prompt.strip())
 
+    def release_flow(self):
+        """Đóng Chrome Flow nếu đang rảnh (gọi từ hồ sơ Google chung)."""
+        with self.lock:
+            if self.flow_busy:
+                return False
+        self.flow_closed.clear()
+        self.flow_requests.put(FLOW_CLOSE)
+        self.flow_closed.wait(15)
+        return True
+
+    def open_flow_login(self):
+        with self.lock:
+            if self.closing:
+                raise ValueError("Bộ chạy đang tắt.")
+            if self.flow_busy:
+                raise ValueError("Flow đang bận. Đợi một chút rồi thử lại.")
+            self.flow_busy = True
+            self.flow_status = "Đang mở Chrome thường để đăng nhập Google Flow"
+            self.flow_requests.put(FLOW_LOGIN)
+
     def flow_worker(self):
         browser = None
         while not self.closing:
@@ -84,8 +113,35 @@ class Engine:
                 continue
             if prompt is None:
                 break
+            if prompt is FLOW_CLOSE:
+                if browser:
+                    browser.close()
+                    browser = None
+                self.flow_closed.set()
+                continue
+            if prompt == FLOW_LOGIN:
+                # Đăng nhập: đóng Chrome do tool điều khiển (cùng hồ sơ) rồi mở Chrome thường để Google cho đăng nhập.
+                if browser:
+                    browser.close()
+                    browser = None
+                try:
+                    self.flow_launcher([chrome_executable(), *chrome_profile_arguments(self.flow_profile),
+                                        "--no-first-run", FLOW_URL])
+                    self.flow_status = (f"Đã mở Chrome thường với hồ sơ {self.flow_profile.name}. Đăng nhập Google, thấy trang Flow "
+                                        "thì đóng hẳn cửa sổ đó.")
+                except Exception as error:
+                    self.flow_status = f"Không mở được Chrome: {error}"
+                finally:
+                    with self.lock:
+                        self.flow_busy = False
+                continue
             try:
+                if browser is not None and self.gate and self.gate.enabled and self.gate.holder != "Flow":
+                    browser.close()  # phần khác đã dùng hồ sơ chung: Chrome Flow cũ đã bị đóng
+                    browser = None
                 if browser is None:
+                    if self.gate:
+                        self.gate.take("Flow")
                     browser = FlowImageSession(self.flow_profile, self.flow_downloads)
                 self.flow_status = "Flow đang mở; đăng nhập nếu được yêu cầu"
                 browser.prompt(prompt)
@@ -329,6 +385,8 @@ class Engine:
         with self.lock:
             return {"enabled": self.enabled, "parallel": self.limit, "headless": self.headless, "automatic": self.automatic,
                     "output_folder": self.store.setting("output_folder", ""), "flow_status": self.flow_status,
+                    "flow_profile": str(self.flow_profile), "flow_busy": self.flow_busy,
+                    "flow_profile_used": (self.flow_profile.parent / "Local State").exists(),
                     "login_all": self.login_all_status, "login_all_running": self.login_all_running}
 
     def shutdown(self):

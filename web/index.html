@@ -4,20 +4,24 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>HANA MEDIA · AI Studio</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/logo.png">
 </head>
 <body>
-  <header>
-    <a class="brand" href="/"><span class="logo">HM</span><span>HANA MEDIA<small>AI IMAGE & VIDEO</small></span></a>
-    <nav class="primary-nav" aria-label="Điều hướng chính">
-      <button type="button" class="active" data-nav="studio" id="navStudio">▦ Studio</button>
-      <button type="button" data-nav="content" id="openContent">✎ Viết content</button>
-      <button type="button" id="openLibrary">▧ Thư viện</button>
-      <button type="button" id="accountsButton">♙ Tài khoản <b id="accountCount">0</b></button>
-      <button type="button" data-coming>◉ Proxy</button>
-      <button type="button" data-coming>⚙ Cài đặt</button>
+  <div class="app-shell">
+  <aside class="sidebar" aria-label="Điều hướng chính">
+    <a class="brand" href="/"><img class="logo logo-img" src="/logo.png" alt="" width="40" height="40"><span>HANA MEDIA<small>AI Video Studio</small></span></a>
+    <nav class="primary-nav">
+      <button type="button" class="active" data-nav="studio" id="navStudio"><i>⌂</i>Studio · Video Queue<b id="sideRuns" class="nav-badge" hidden>0</b></button>
+      <button type="button" data-nav="content" id="openContent"><i>✎</i>Content Studio</button>
+      <button type="button" id="navCharacters"><i>☺</i>Character Library</button>
+      <button type="button" id="openLibrary"><i>▧</i>Image Library</button>
+      <button type="button" id="accountsButton"><i>♙</i>Tài khoản Muse <b id="accountCount" class="nav-badge">0</b></button>
+      <button type="button" data-nav="settings" id="navSettings"><i>⚙</i>Cài đặt</button>
     </nav>
-    <div class="header-actions"><span id="connection" class="connection">Đang kết nối…</span><span class="running-pill"><i></i><b id="headerRuns">0</b> luồng đang chạy</span></div>
-  </header>
+    <div class="sidebar-foot"><span id="connection" class="connection">Đang kết nối…</span><span class="running-pill"><i></i><b id="headerRuns">0</b> luồng đang chạy</span><small id="appVersion">v1.0.0</small></div>
+  </aside>
+  <div class="app-main">
   <main>
     <div id="studioView">
     <section class="studio-toolbar">
@@ -69,6 +73,7 @@
           <label>Ảnh tham chiếu / Tải tệp lên</label>
           <div id="jobDrop" class="job-drop"><span>🖼 Kéo thả tệp vào đây hoặc</span><button id="jobChoose" type="button" data-job-field>Chọn tệp</button><small>Hỗ trợ: JPG, PNG, WEBP (tối đa 10MB) · tối đa 10 ảnh</small><input id="jobFiles" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></div>
           <div id="jobImages" class="job-images"></div>
+          <div id="jobCharacters" class="job-characters"></div>
           <label for="jobCamera">Góc quay</label>
           <input id="jobCamera" list="jobCameras" maxlength="5000" data-job-field placeholder="Ví dụ: Góc quay ngang, cận cảnh, theo chân (tracking)"><datalist id="jobCameras"><option value="Góc quay ngang, cận cảnh, theo chân (tracking)"><option value="Toàn cảnh, máy quay cố định"><option value="Trung cảnh, lia máy chậm"><option value="Cận cảnh khuôn mặt, máy quay đứng yên"><option value="Góc thấp nhìn lên, máy quay theo dõi"><option value="Góc cao nhìn xuống (high angle)"><option value="Flycam bao quát từ xa"></datalist>
           <div class="job-grid"><div><label>Loại <b class="required">*</b></label><div class="job-type" role="group"><button type="button" data-job-type="text" data-job-field>▣ Video</button><button type="button" data-job-type="image" data-job-field>▧ Ảnh → video</button></div></div>
@@ -79,26 +84,135 @@
         </div>
       </div>
     </section>
+    <section id="settingsView" class="settings-page" hidden>
+      <div class="content-topbar"><h1>Cài đặt</h1><span class="crumb">/</span><span class="detail">Đăng nhập các tài khoản tool cần dùng. Tool không đọc hay lưu mật khẩu.</span></div>
+      <div class="settings-grid-v2">
+        <div class="card settings-card shared-card"><div class="settings-head"><span class="settings-icon">★</span><div><h3>Tài khoản chung</h3><small>Một tài khoản Google có đủ Gemini, ChatGPT (đăng nhập bằng Google) và Google Flow</small></div><span id="sharedBadge" class="status-chip">Đang tắt</span></div>
+          <label class="check shared-toggle"><input id="sharedAccount" type="checkbox"><span>Dùng một tài khoản cho Gemini, ChatGPT và Google Flow<small>Cả ba dùng chung một hồ sơ Chrome của tool, nên chỉ đăng nhập một lần. Mỗi lúc chỉ một phần mở Chrome: phần đang rảnh sẽ được đóng để phần khác dùng. Muse vẫn đăng nhập riêng bằng email + OTP.</small></span></label>
+          <button id="sharedLogin" type="button" class="full primary" hidden>Đăng nhập tài khoản chung (mở Chrome thường)</button>
+          <p class="detail" id="sharedHint" hidden><b>Cách đăng nhập:</b> cửa sổ mở 3 tab. Tab 1 đăng nhập Google; tab 2 ChatGPT bấm <b>Continue with Google</b> và chọn đúng tài khoản; tab 3 kiểm tra Flow đã vào được. Xong thì <b>đóng hẳn cửa sổ đó</b>. Đổi sang tài khoản chung lần đầu cần đăng nhập lại một lần; hồ sơ riêng cũ vẫn giữ để tắt chế độ này là dùng lại được.</p>
+        </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">G</span><div><h3>Gemini Pro</h3><small>Viết kịch bản, chia cảnh, tìm nhân vật, prompt tiếng Anh</small></div><span id="geminiBadge" class="status-chip">Chưa đặt tài khoản</span></div>
+          <div class="content-grid"><label>Tài khoản Google <small>(không bắt buộc · để tool kiểm tra đúng tài khoản)</small><input id="autoEmail" type="email" maxlength="254" placeholder="ten@gmail.com"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40" placeholder="Pro"><datalist id="autoModels"><option value="Pro"><option value="Argon"><option value="Flash"></datalist></label></div>
+          <button id="loginAuto" type="button" class="full">Đăng nhập Google · Gemini (mở Chrome thường)</button>
+          <p class="detail"><b>Lần đầu:</b> bấm Đăng nhập để mở Chrome thường bằng hồ sơ riêng của tool, đăng nhập tài khoản Google ở trên (tool không đọc mật khẩu), thấy trang Gemini thì <b>đóng hẳn cửa sổ đó</b>. Các lần sau chỉ cần bấm Chạy. Tool tự dán yêu cầu, chờ Gemini viết, tự nhắn “viết tiếp” khi câu trả lời bị cắt rồi đọc kết quả. Giữ cửa sổ Gemini mở, không gõ vào đó khi tool đang chạy.</p>
+        </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">AI</span><div><h3>ChatGPT</h3><small>Tìm nhân vật và viết prompt tiếng Anh</small></div><span id="chatgptBadge" class="status-chip">Chưa kiểm tra</span></div>
+          <label>Model ChatGPT <small>(để trống: model đang chọn)</small><input id="chatgptModel" list="chatgptModels" maxlength="40" placeholder="Ví dụ: GPT-5"><datalist id="chatgptModels"><option value="Auto"><option value="Instant"><option value="Thinking"></datalist></label>
+          <button id="loginChatgpt" type="button" class="full">Đăng nhập ChatGPT (mở Chrome thường)</button>
+          <p class="detail">Lần đầu: bấm Đăng nhập ChatGPT, đăng nhập tài khoản ChatGPT của bạn trong Chrome vừa mở, thấy ô nhắn tin thì đóng hẳn cửa sổ đó. ChatGPT chạy trong Chrome riêng, tách khỏi Gemini.</p>
+        </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">F</span><div><h3>Google Flow · Nano Banana</h3><small>Tạo ảnh Master của nhân vật</small></div><span id="flowBadge" class="status-chip">Chưa đăng nhập</span></div>
+          <p class="detail">Hồ sơ Chrome riêng của tool (giống Gemini, ChatGPT; máy nào cũng dùng được): <code id="flowProfile"></code></p>
+          <button id="loginFlow" type="button" class="full">Đăng nhập Google Flow (mở Chrome thường)</button>
+          <p class="detail" id="settingsFlowStatus"></p>
+          <p class="detail"><b>Lần đầu:</b> bấm Đăng nhập, đăng nhập tài khoản Google có Flow, thấy trang Flow thì <b>đóng hẳn cửa sổ đó</b>. Phiên đăng nhập được lưu trong hồ sơ này; tool dùng nó khi mở Flow để điền prompt ảnh, nên không mở hai cửa sổ Flow cùng lúc.</p>
+        </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">M</span><div><h3>Tài khoản Muse</h3><small>Tạo video hàng loạt</small></div><span id="museBadge" class="status-chip">0 tài khoản</span></div>
+          <p class="detail" id="museSummary"></p>
+          <button type="button" class="full primary" data-open-accounts>Quản lý & đăng nhập tài khoản Muse</button>
+        </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">▰</span><div><h3>Thư mục lưu video</h3><small>Video tải về được lưu ở đây</small></div></div>
+          <p class="detail" id="settingsFolder">Chưa chọn thư mục lưu</p>
+          <button type="button" class="full" data-pick-folder>Chọn thư mục lưu</button>
+        </div>
+      </div>
+      <div class="card guide-card" id="userGuide">
+        <div class="settings-head"><span class="settings-icon">📖</span><div><h3>Hướng dẫn sử dụng</h3><small>Làm theo thứ tự từ trên xuống. Bấm từng mục để mở.</small></div></div>
+        <details open><summary><b>1</b> Chuẩn bị lần đầu (chỉ làm một lần trên mỗi máy)</summary>
+          <ol>
+            <li><b>Chọn thư mục lưu video</b> ở thẻ “Thư mục lưu video” phía trên.</li>
+            <li><b>Đăng nhập AI:</b>
+              <ul>
+                <li>Nếu một tài khoản Google có đủ Gemini, ChatGPT (đăng nhập bằng Google) và Google Flow: bật <b>★ Tài khoản chung</b>, bấm <b>Đăng nhập tài khoản chung</b>. Cửa sổ Chrome mở 3 tab: đăng nhập Google → ở tab ChatGPT bấm <b>Continue with Google</b> → kiểm tra tab Flow vào được → <b>đóng hẳn cửa sổ</b>.</li>
+                <li>Nếu dùng tài khoản khác nhau: bấm lần lượt nút <b>Đăng nhập</b> ở thẻ Gemini, ChatGPT, Google Flow. Mỗi lần đăng nhập xong thì đóng hẳn cửa sổ đó.</li>
+              </ul></li>
+            <li><b>Tài khoản Muse:</b> bấm <b>Quản lý &amp; đăng nhập tài khoản Muse</b>, thêm email (mỗi dòng một email), bấm <b>Đăng nhập</b> hoặc <b>Đăng nhập tất cả</b>. Tool mở Muse, điền email, mở hộp thư Tuan89 ở tab bên cạnh; bạn <b>Copy OTP</b> rồi dán vào Muse.</li>
+            <li>Nhãn ở mỗi thẻ cho biết trạng thái: <b>✓ Đã đăng nhập</b> là tool đã thấy trang hoạt động; màu vàng là đã mở đăng nhập nhưng chưa chạy lần nào để kiểm tra.</li>
+          </ol>
+        </details>
+        <details><summary><b>2</b> Viết kịch bản và chia cảnh (Content Studio · bước 1–2)</summary>
+          <ol>
+            <li>Mở <b>Content Studio</b> ở thanh bên trái. Bước <b>1 Ý tưởng</b>: nhập yêu cầu (prompt) và link YouTube video gốc nếu có.</li>
+            <li>Bấm <b>✦ Chạy tự động trên Gemini</b>. Tool dán yêu cầu vào Gemini, chờ viết xong, tự nhắn “viết tiếp” nếu bị cắt. Không gõ vào cửa sổ Gemini khi tool đang chạy.</li>
+            <li>Gemini viết xong, tool tự chuyển sang bước <b>2 Kịch bản</b>: xem, sửa, thêm/xóa/đổi thứ tự cảnh. Bấm <b>↻ Kiểm tra thiếu cảnh / lỗi</b> để Gemini rà lại.</li>
+            <li>Nếu Gemini đã trả lời mà tool vẫn chờ: bấm <b>Lấy kết quả ngay</b>.</li>
+          </ol>
+        </details>
+        <details><summary><b>3</b> Nhân vật và ảnh Master (bước 3 · Nhân vật)</summary>
+          <ol>
+            <li>Bấm <b>💾 Lưu danh sách cảnh thành dự án</b>, chọn Gemini Pro hoặc ChatGPT, bấm <b>✦ Tìm nhân vật</b>. AI liệt kê các nhân vật duy nhất (Character ID, mô tả, prompt ảnh) và nhân vật xuất hiện trong từng cảnh.</li>
+            <li>Bấm một nhân vật ở danh sách bên trái để xem/sửa chi tiết bên phải, rồi bấm <b>Lưu thay đổi</b>.</li>
+            <li><b>Tạo ảnh Master:</b> bấm <b>✦ Mở Flow &amp; điền prompt</b> → trong Flow chọn <b>Hình ảnh</b>, mô hình <b>Nano Banana</b>, bấm tạo, tải ảnh xuống → quay lại bấm <b>⇄ Thay ảnh → ⇩ Lấy ảnh mới tải từ Flow</b> → bấm ảnh muốn dùng. (Veo là mô hình tạo <b>video</b>; ảnh nhân vật tạo bằng Nano Banana.)</li>
+            <li>Có thể <b>Tải ảnh lên</b> hoặc chọn ảnh trong thư viện. Bấm ảnh nhỏ dưới ảnh lớn để đổi ảnh Master. Ưng ý thì bấm <b>🔒 Duyệt / Khóa</b>.</li>
+            <li>Ở <b>Nhân vật trong từng cảnh</b>: tick nhân vật rồi bấm <b>Lưu</b> để sửa tay. Cảnh đã chỉnh tay không bị AI ghi đè.</li>
+          </ol>
+        </details>
+        <details><summary><b>4</b> Prompt tiếng Anh và đưa sang Studio (bước 4)</summary>
+          <ol>
+            <li>Bấm <b>↓ Lấy từ danh sách cảnh</b>, chọn thời lượng, tỷ lệ khung hình, bật <b>Prompt chuẩn đủ trường</b> nếu muốn.</li>
+            <li>Bấm <b>✦ Viết prompt tiếng Anh bằng ChatGPT</b>. Cảnh nào thiếu hoặc còn tiếng Việt, tool tự hỏi lại.</li>
+            <li>Bấm <b>→ Đưa vào Studio</b>. Prompt giữ liên kết với cảnh gốc (khi dự án có cùng số cảnh) nên tự biết nhân vật của mình.</li>
+          </ol>
+        </details>
+        <details><summary><b>5</b> Gắn ảnh nhân vật cho từng prompt (Prompt Studio)</summary>
+          <ol>
+            <li>Ở <b>Studio · Video Queue</b>, bấm vào một prompt trong hàng đợi để mở <b>Prompt Studio</b>.</li>
+            <li>Mục <b>Nhân vật</b> hiện nhân vật của cảnh gốc (hoặc tick chọn rồi bấm <b>Lưu nhân vật</b>). Mục <b>Ảnh nhân vật tham chiếu</b> hiện ảnh Master tương ứng.</li>
+            <li>Bấm <b>🔗 Gắn ảnh nhân vật vào prompt</b>: tool đặt đúng ảnh Master của các nhân vật trong prompt (tối đa 10 ảnh) và hỏi trước khi chuyển sang chế độ <b>Ảnh → video</b>.</li>
+          </ol>
+        </details>
+        <details><summary><b>6</b> Tạo video hàng loạt trên Muse</summary>
+          <ol>
+            <li>Ở <b>Studio · Video Queue</b>: chọn số tài khoản chạy đồng thời (nên bắt đầu với 1–2), bỏ chọn <b>Chạy ẩn cửa sổ Chrome</b> nếu muốn xem cửa sổ Muse làm việc.</li>
+            <li>Bấm <b>▶ Chạy</b>. Tool chia prompt cho các tài khoản, tạo video và tải về thư mục lưu với tên <b>Prompt N.mp4</b>.</li>
+            <li>Prompt lỗi <b>sau khi đã gửi</b> lên Muse thì tool không tự gửi lại: mở Muse kiểm tra rồi mới bấm Chạy lại trong Prompt Studio.</li>
+          </ol>
+        </details>
+        <details><summary><b>7</b> Khi gặp lỗi</summary>
+          <ul>
+            <li><b>“Xác minh bạn là con người” (Cloudflare) trên ChatGPT:</b> tự bấm ô xác minh trong cửa sổ đó; tool chờ rồi chạy tiếp. Tool không tự vượt qua bước này. Bị hỏi liên tục thì dùng Gemini cho bước đó.</li>
+            <li><b>“Chưa đăng nhập …”:</b> đăng nhập lại ở thẻ tương ứng phía trên (hoặc nút Đăng nhập tài khoản chung).</li>
+            <li><b>“… đang dùng hồ sơ Google chung”:</b> một phần khác đang chạy; đợi xong rồi bấm lại.</li>
+            <li><b>Tool không đọc được câu trả lời:</b> tool dừng (không gửi lại) và ghi file chẩn đoán trong thư mục dữ liệu <code>profiles/</code> (ví dụ <code>gemini-debug.txt</code>, <code>chatgpt-debug.txt</code>, <code>&lt;mã tài khoản&gt;-login-debug.txt</code>). Gửi file đó cho người hỗ trợ.</li>
+            <li><b>Trang báo “Bộ chạy đang chạy bản cũ”:</b> tắt hẳn tool rồi mở lại, nhấn Ctrl+F5.</li>
+          </ul>
+        </details>
+        <details><summary><b>8</b> Cập nhật tool</summary>
+          <ul>
+            <li><b>App Windows:</b> tải bộ cài mới (HanaMedia-Setup), đóng app, cài đè lên. Tài khoản, dự án, nhân vật và các Chrome đã đăng nhập được giữ nguyên.</li>
+            <li><b>Chạy bằng mã nguồn:</b> đóng CHAY_WINDOWS.cmd, chạy <code>git pull origin main</code> trong thư mục tool, mở lại CHAY_WINDOWS.cmd và nhấn Ctrl+F5.</li>
+            <li>Dữ liệu (tài khoản, hàng đợi, hồ sơ Chrome) nằm trong thư mục dữ liệu của tool, chỉ ở trên máy này. Không gửi thư mục này cho người khác.</li>
+          </ul>
+        </details>
+      </div>
+    </section>
     <section id="contentView" class="content-page" hidden>
-      <div class="content-page-heading"><div><div class="eyebrow">PROMPT + VIDEO GỐC → GEMINI PRO → HÀNG LOẠT PROMPT</div><h1>Viết content</h1><p>Gemini xem video gốc, viết lại kịch bản và chia cảnh: <b>bối cảnh, góc quay, hành vi nhân vật, nội dung hành động nhân vật</b>. Kiểm tra lại thiếu cảnh/lỗi rồi đưa hàng loạt prompt vào Studio.</p></div><button id="closeContent" type="button">← Về Studio</button></div>
+      <div class="content-topbar"><h1>Content Studio</h1><span class="crumb">/</span><label class="project-picker">Dự án<select id="projectSelect" aria-label="Chọn dự án"><option value="">— Chưa lưu dự án —</option></select></label><span class="bulk-spacer"></span><span class="tool-chip"><i class="dot green"></i>Flow (Nano Banana)</span><span class="tool-chip">▣ Muse Video</span><button id="closeContent" type="button">← Về Studio</button></div>
+      <nav class="stepper" aria-label="Các bước">
+        <button type="button" data-step="1"><span>1</span>Ý tưởng</button><i></i>
+        <button type="button" data-step="2"><span>2</span>Kịch bản</button><i></i>
+        <button type="button" data-step="3"><span>3</span>Nhân vật</button><i></i>
+        <button type="button" data-step="4"><span>4</span>Prompt</button><i></i>
+        <button type="button" data-step="5"><span>5</span>Tổng quan</button>
+      </nav>
       <div id="runnerOutdated" class="content-error" role="alert" hidden><b>Bộ chạy đang chạy bản cũ.</b> Đóng cửa sổ đen CHAY_WINDOWS.cmd (hoặc nhấn Ctrl+C trong đó), mở lại CHAY_WINDOWS.cmd rồi tải lại trang này bằng Ctrl+F5.</div>
       <div class="content-columns">
-        <div class="content-input card">
+        <div class="content-input card" data-step-panel="1">
           <section class="content-step first"><h3><span>1</span>Đầu vào · Gemini Pro</h3>
             <label for="contentBrief">Prompt · yêu cầu cho Gemini</label>
             <textarea id="contentBrief" rows="6" maxlength="20000"></textarea>
             <label>Link video gốc <small>(YouTube · có thể bỏ trống)</small><input id="contentVideo" type="url" placeholder="https://www.youtube.com/watch?v=..."></label>
             <label>Ngôn ngữ kịch bản<select id="contentLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
             <div>
-              <div class="content-grid"><label>Tài khoản Google<input id="autoEmail" type="email" maxlength="254" placeholder="ten@gmail.com"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40" placeholder="Pro"><datalist id="autoModels"><option value="Pro"><option value="Argon"><option value="Flash"></datalist></label></div>
-              <button id="loginAuto" type="button" class="full">① Đăng nhập Google (mở Chrome thường)</button>
+              <p class="detail account-line" id="geminiAccountLine"></p>
               <button id="runAuto" type="button" class="primary full">✦ Chạy tự động trên Gemini</button>
               <div id="autoProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="autoStatus"></span><button id="takeAuto" type="button" title="Bấm khi Gemini đã viết xong mà tool vẫn đang chờ">Lấy kết quả ngay</button><button id="stopAuto" type="button">Dừng</button></div></div>
-              <p class="detail"><b>Lần đầu:</b> bấm ① để mở Chrome thường bằng hồ sơ riêng của tool, đăng nhập tài khoản Google ở trên (tool không đọc mật khẩu), thấy trang Gemini thì <b>đóng hẳn cửa sổ đó</b>. Các lần sau chỉ cần bấm Chạy. Tool tự dán yêu cầu, chờ Gemini viết, tự nhắn “viết tiếp” khi câu trả lời bị cắt rồi đọc kết quả. Giữ cửa sổ Gemini mở, không gõ vào đó khi tool đang chạy.</p>
+              
             </div>
           </section>
         </div>
-        <div class="content-output card">
+        <div class="content-output card" data-step-panel="2">
           <div id="contentEmpty" class="empty"><span>✎</span><h3>Chưa có kịch bản</h3><p>Nhập yêu cầu và link video gốc bên trái, rồi bấm Chạy tự động trên Gemini.</p></div>
           <section class="content-step first" id="contentResult" hidden><h3><span>2</span>Đầu ra</h3>
             <details class="original-script"><summary>Kịch bản video gốc</summary><textarea id="contentScript" rows="8"></textarea></details>
@@ -112,17 +226,17 @@
           </section>
         </div>
       </div>
-      <div class="english-card card">
-        <div class="english-heading"><h3><span>4</span>Prompt tiếng Anh · Gemini Pro / ChatGPT</h3><p>Mỗi “Bối cảnh N: …” thành 1 prompt tiếng Anh, mỗi dòng một prompt. Chọn Gemini Pro hoặc ChatGPT; kết quả mỗi bên lưu riêng để so sánh. Cảnh nào thiếu hoặc chưa phải tiếng Anh, tool tự hỏi lại riêng những cảnh đó.</p></div>
+      <div class="english-card card" data-step-panel="4">
+        <div class="english-heading"><h3><span>4</span>Prompt tiếng Anh · ChatGPT</h3><p>Mỗi “Bối cảnh N: …” thành 1 prompt tiếng Anh, mỗi dòng một prompt, viết bằng ChatGPT. Cảnh nào thiếu hoặc chưa phải tiếng Anh, tool tự hỏi lại riêng những cảnh đó.</p></div>
         <div class="english-columns">
           <div>
             <div class="english-label"><label for="englishInput">Đầu vào · danh sách cảnh</label><button id="englishFromScenes" type="button" class="text-button">↓ Lấy từ danh sách cảnh</button></div>
             <textarea id="englishInput" rows="9" maxlength="600000" placeholder="Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;&#10;Bối cảnh 2: ..."></textarea>
             <div class="content-grid english-options"><label>Phong cách chung <small>(không bắt buộc)</small><input id="englishStyle" maxlength="2000" placeholder="Ví dụ: cinematic, ánh sáng tự nhiên"></label><label>Thời lượng mỗi cảnh<select id="englishSeconds"><option value="15">15 giây</option><option value="10">10 giây</option><option value="8">8 giây</option><option value="5">5 giây</option></select></label><label>Tỷ lệ khung hình<select id="englishAspect"><option value="16:9">16:9 · ngang</option><option value="9:16">9:16 · dọc</option><option value="1:1">1:1 · vuông</option></select></label></div>
             <label class="check english-structured"><input id="englishStructured" type="checkbox" checked><span>Prompt chuẩn đủ trường<small>Mỗi prompt viết theo khung <code>Setting: …; Camera: …; Character behavior: …; Action: …; Style: …</code>. Tool tách trường ngay từ prompt và tự hỏi lại cảnh nào thiếu trường.</small></span></label>
-            <div class="english-engines" role="group" aria-label="Chọn AI viết prompt"><button type="button" data-english-engine="gemini">Gemini Pro</button><button type="button" data-english-engine="chatgpt">ChatGPT</button></div>
-            <div id="chatgptOptions" hidden><div class="content-grid"><label>Model ChatGPT <small>(để trống: model đang chọn)</small><input id="chatgptModel" list="chatgptModels" maxlength="40" placeholder="Ví dụ: GPT-5"><datalist id="chatgptModels"><option value="Auto"><option value="Instant"><option value="Thinking"></datalist></label><div><button id="loginChatgpt" type="button" class="full">Đăng nhập ChatGPT (mở Chrome thường)</button></div></div><p class="detail">Lần đầu: bấm Đăng nhập ChatGPT, đăng nhập tài khoản ChatGPT của bạn trong Chrome vừa mở, thấy ô nhắn tin thì đóng hẳn cửa sổ đó. ChatGPT chạy trong Chrome riêng, tách khỏi Gemini.</p></div>
-            <button id="runEnglish" type="button" class="primary full">✦ Viết prompt tiếng Anh bằng Gemini</button>
+            
+            <div id="chatgptOptions" hidden><p class="detail account-line">ChatGPT dùng tài khoản và model trong <button type="button" class="text-button" data-open-settings>⚙ Cài đặt</button>.</p></div>
+            <button id="runEnglish" type="button" class="primary full">✦ Viết prompt tiếng Anh bằng ChatGPT</button>
             <div id="englishProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="englishStatus"></span><button id="takeEnglish" type="button" title="Bấm khi AI đã viết xong mà tool vẫn đang chờ">Lấy kết quả ngay</button><button id="stopEnglish" type="button">Dừng</button></div></div>
           </div>
           <div>
@@ -133,8 +247,44 @@
           </div>
         </div>
       </div>
+      <div class="character-studio" id="characterPanel" data-step-panel="3">
+        <div class="character-toolbar card">
+          <span id="projectInfo" class="detail">Chưa có dự án. Viết cảnh ở bước 2 rồi bấm Lưu thành dự án.</span>
+          <span class="bulk-spacer"></span>
+          <button id="saveProject" type="button">💾 Lưu danh sách cảnh thành dự án</button>
+          <div class="english-engines" role="group" aria-label="AI tìm nhân vật"><button type="button" data-character-engine="gemini">Gemini Pro</button><button type="button" data-character-engine="chatgpt">ChatGPT</button></div>
+        </div>
+        <div id="characterProgress" class="content-progress card" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="characterStatus"></span><button id="takeCharacters" type="button" title="Bấm khi AI đã viết xong mà tool vẫn đang chờ">Lấy kết quả ngay</button><button id="stopCharacters" type="button">Dừng</button></div></div>
+        <div id="characterNotice" class="content-issues" hidden></div>
+        <div class="character-master-detail">
+          <aside class="character-sidebar card">
+            <div class="cs-head"><h3>Nhân vật <small>(Character Master)</small></h3><span id="characterTotal" class="step-count">0</span></div>
+            <button id="extractCharacters" type="button" class="primary full">✦ Tìm nhân vật bằng AI</button>
+            <div id="characterList" class="character-list"></div>
+            <details class="character-add"><summary>＋ Thêm nhân vật thủ công</summary>
+              <label>Tên nhân vật<input id="newCharacterName" maxlength="200" placeholder="Ví dụ: Dê con"></label>
+              <label>Mô tả ngoại hình<input id="newCharacterDesc" maxlength="5000" placeholder="Lông nâu sáng, nhỏ, tai vểnh"></label>
+              <label>Prompt ảnh Master (tiếng Anh)<textarea id="newCharacterPrompt" rows="2" maxlength="5000" placeholder="full body photo of ..., front view, plain neutral background, studio lighting, photorealistic, no text"></textarea></label>
+              <button id="addCharacter" type="button" class="full">＋ Thêm nhân vật</button>
+            </details>
+          </aside>
+          <section id="characterDetail" class="character-detail card"></section>
+        </div>
+        <div class="scenes-card card">
+          <div class="english-label"><b>Nhân vật trong từng cảnh</b><small id="projectSceneHint" class="detail"></small></div>
+          <div id="projectScenes" class="project-scenes"></div>
+        </div>
+        <div class="character-summary card"><span class="summary-icon">☺</span><div><b>Tổng quan nhân vật</b><small id="characterSummary">0 nhân vật</small></div><span class="bulk-spacer"></span><button type="button" class="primary" data-goto-step="4">Tiếp tục: Tạo Prompt →</button></div>
+      </div>
+      <div class="overview card" data-step-panel="5">
+        <div class="english-heading"><h3><span>5</span>Tổng quan dự án</h3><p>Kiểm tra nhanh trước khi đưa prompt sang Studio để tạo video.</p></div>
+        <div id="overviewStats" class="overview-grid"></div>
+        <div class="content-actions"><button type="button" data-goto-step="2">Xem kịch bản &amp; cảnh</button><button type="button" data-goto-step="3">Nhân vật</button><button type="button" class="primary" data-goto-step="4">Prompt tiếng Anh → Studio</button></div>
+      </div>
     </section>
   </main>
+  </div>
+  </div>
   <dialog id="accounts"><div class="dialog-heading"><div><div class="eyebrow">EMAIL + OTP · KHÔNG MẬT KHẨU</div><h2>Tài khoản Muse</h2></div><button id="closeAccounts" aria-label="Đóng">✕</button></div><p class="dialog-description">Mỗi tài khoản có phiên Chrome riêng. Tool thử lấy OTP mới từ link hộp thư; nếu hộp thư lỗi, nhập mã trực tiếp trên cửa sổ Muse.</p><div class="login-all"><label>Chrome đăng nhập cùng lúc<select id="loginParallel"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="5">5</option></select></label><button id="loginAll" type="button" class="primary">Đăng nhập tất cả tài khoản chưa sẵn sàng</button><span id="loginAllStatus" class="detail"></span></div><div id="accountList"></div><form id="accountForm"><h3>Thêm tài khoản</h3><div class="form-grid"><label>Email Muse <small>(mỗi dòng một email, thêm bao nhiêu cũng được)</small><textarea id="email" rows="4" autocomplete="off" required maxlength="200000" placeholder="email1@tuan89.site&#10;email2@tuan89.site"></textarea></label><label>Ngân sách credit dự kiến<input id="budget" type="number" required min="0" step="0.01" value="10"></label></div><label>Link hộp thư OTP <small>(chỉ khi thêm 1 email)</small><input id="mailbox" type="url" placeholder="Tự điền link Tuan89 theo email nếu để trống"></label><button class="primary" type="submit">+ Thêm tài khoản</button></form><p class="subtle-note">Phiên đăng nhập được giữ trên máy. Không chia sẻ thư mục data. Tài khoản hết ngân sách hoặc cần kiểm tra sẽ không nhận tác vụ mới.</p></dialog>
   <dialog id="player"><div class="dialog-heading"><h2 id="playerTitle">Video của cảnh</h2><button id="closePlayer" aria-label="Đóng video">✕</button></div><video id="videoPlayer" controls playsinline></video><p id="playerPrompt"></p></dialog>
   <dialog id="imageLibrary"><div class="dialog-heading"><div><div class="eyebrow">THƯ VIỆN CỤC BỘ</div><h2>Ảnh tham chiếu</h2></div><button id="closeImageLibrary" aria-label="Đóng thư viện">✕</button></div><p class="dialog-description">Chọn ảnh đã tạo từ Flow hoặc ảnh đã thêm trước đây để gắn vào prompt đang chọn.</p><div id="imageLibraryGrid" class="image-library-grid"></div></dialog>

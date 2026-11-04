@@ -274,6 +274,14 @@ class GeminiWebSession:
     def new_chat(self):
         self.driver.get(self.URL)
 
+    def report_account(self, logged_in, email):
+        callback = getattr(self, "account_seen", None)
+        if callback:
+            try:
+                callback(logged_in, email)
+            except Exception:
+                pass
+
     def wait_ready(self, status, stop, email="", timeout=900):
         """Chờ ô nhập xuất hiện; nếu chưa đăng nhập thì chờ người dùng đăng nhập trong cửa sổ."""
         deadline = time.monotonic() + timeout
@@ -286,9 +294,11 @@ class GeminiWebSession:
             except Exception:
                 page, field = {}, None
             if page.get("signIn") or page.get("rejected") or page.get("loggedOut"):
+                self.report_account(False, "")
                 # Google không cho nhập mật khẩu trong Chrome đang bị điều khiển tự động.
                 raise GeminiWebError(f"Chưa đăng nhập {self.NAME} trong hồ sơ của tool. {self.LOGIN_HINT}")
             if field:
+                self.report_account(True, page.get("email") or "")
                 if email and page.get("email") and page["email"] != email.lower():
                     raise GeminiWebError(f"Cửa sổ {self.NAME} đang đăng nhập {page['email']}, không phải {email}. "
                                          "Đổi tài khoản trong cửa sổ đó rồi bấm lại.")
@@ -509,6 +519,39 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
 MAX_MISSING_ROUNDS = 3
 
 
+def run_characters(session, script, scenes, status, stop, email="", model=""):
+    """Character Extractor: AI liệt kê nhân vật duy nhất + nhân vật của từng cảnh; hỏi lại riêng các cảnh còn thiếu."""
+    from . import characters as chars
+    total = len(scenes)
+    name = getattr(session, "NAME", "Gemini")
+    session.new_chat()
+    session.wait_ready(status, stop, email)
+    if model:
+        picked = session.choose_model(model)
+        status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
+    answer = session.ask(chars.extraction_request(script, scenes), status, stop, email,
+                         label=f"{name} đang tìm nhân vật trong {total} cảnh")
+    result = chars.parse_characters(answer, total)
+    if not result["characters"] and not result["scenes"]:
+        where = session.dump("Không đọc được nhân vật nào trong câu trả lời đầu tiên", answer) if hasattr(session, "dump") else ""
+        raise GeminiWebError(f"Tool không đọc được nhân vật nào trong câu trả lời của {name} nên đã dừng (không gửi lại). "
+                             + (f"Gửi file chẩn đoán {where} cho người hỗ trợ." if where else ""))
+    rounds = 1
+    for attempt in range(MAX_MISSING_ROUNDS):
+        missing = chars.missing_scenes(result["scenes"], total)
+        if not missing:
+            break
+        before = len(missing)
+        answer = session.ask(chars.extraction_request(script, scenes, missing, [c["code"] for c in result["characters"]]),
+                             status, stop, email, label=f"Thiếu {before} cảnh · {name} đang bổ sung (lần {attempt + 1})")
+        rounds += 1
+        result = chars.merge_extraction(result, chars.parse_characters(answer, total, [c["code"] for c in result["characters"]]))
+        if len(chars.missing_scenes(result["scenes"], total)) == before:
+            break  # hỏi lại mà không thêm được cảnh nào: dừng, không gửi lặp
+    result.update(missing=chars.missing_scenes(result["scenes"], total), total=total, rounds=rounds)
+    return result
+
+
 def run_english(session, lines, status, stop, email="", model="", style="", aspect="16:9", structured=True,
                 seconds=content.DEFAULT_SECONDS):
     """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
@@ -575,13 +618,37 @@ class GeminiWebRunner:
         self.requests = queue.Queue()
         self.session = None
         self.login_process = None
+        self.gate = None  # SharedProfile khi bật "Tài khoản chung"
         self.job = {"id": "", "busy": False, "status": f"Chưa mở {name}", "result": None, "error": ""}
         self.thread = threading.Thread(target=self.worker, daemon=True)
         self.thread.start()
 
+    def account_file(self):
+        return self.profile.parent / f"{self.name.lower()}-account.json"
+
+    def record_account(self, logged_in, email):
+        """Kết quả kiểm tra đăng nhập thật lần gần nhất (khi tool mở trang): giữ qua các lần khởi động."""
+        import json
+        try:
+            self.account_file().write_text(json.dumps({"logged_in": bool(logged_in), "email": str(email or "")[:254],
+                                                       "checked": time.time()}), encoding="utf-8")
+        except OSError:
+            pass
+
+    def account(self):
+        import json
+        try:
+            data = json.loads(self.account_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        return {"logged_in": data.get("logged_in"), "email": data.get("email", ""), "checked": data.get("checked"),
+                "profile_used": (self.profile / "Local State").exists()}
+
     def snapshot(self):
         with self.lock:
-            return dict(self.job)
+            job = dict(self.job)
+        job["account"] = self.account()
+        return job
 
     def set(self, **values):
         with self.lock:
@@ -606,6 +673,16 @@ class GeminiWebRunner:
         if not self.snapshot()["busy"]:
             raise ValueError(f"{self.name} không có yêu cầu nào đang chạy.")
         self.take.set()
+
+    def release_session(self):
+        """Đóng Chrome tự động của phần này nếu đang rảnh (để phần khác dùng hồ sơ chung)."""
+        with self.lock:
+            if self.job["busy"]:
+                return False
+            session, self.session = self.session, None
+        if session:
+            session.close()
+        return True
 
     def login_window_open(self):
         return bool(self.login_process and self.login_process.poll() is None)
@@ -640,13 +717,25 @@ class GeminiWebRunner:
                 if not self.session or not self.session.alive():
                     if self.session:
                         self.session.close()
+                    if self.gate:
+                        try:
+                            self.gate.take(self.name)  # hồ sơ chung: phần khác đang rảnh thì đóng Chrome của nó
+                        except RuntimeError as error:
+                            raise GeminiWebError(str(error)) from None
                     status(f"Đang mở Chrome cho {self.name}…")
                     self.session = self.factory(self.profile)
                     try:
+                        self.session.account_seen = self.record_account
                         self.session.debug_path = self.profile.parent / f"{self.name.lower()}-debug.txt"
                         self.session.take_now = self.take
                     except Exception:
                         pass
+                if kind == "characters":
+                    result = run_characters(self.session, prompt, lines, status, self.stop, email, model)
+                    self.set(busy=False, result=result,
+                             status=f"Xong: {len(result['characters'])} nhân vật, {result['total'] - len(result['missing'])}/{result['total']} cảnh"
+                                    + (f" · còn thiếu {len(result['missing'])} cảnh" if result["missing"] else ""))
+                    continue
                 if kind == "english":
                     defaults = ("", "16:9", True, content.DEFAULT_SECONDS)
                     options = tuple(style) if isinstance(style, tuple) else (style,)

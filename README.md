@@ -16,7 +16,7 @@ Bản chạy cục bộ cho Windows, viết bằng **Python + Selenium + SQLite*
 | Gắn video vào đúng cảnh | Mã tác vụ trong prompt, kiểm tra video xuất hiện sau prompt đó, đối chiếu tên file mới, chờ tải hoàn tất rồi gắn đường dẫn vào cảnh. Có nút Xem và Tải MP4. |
 | Thư viện ảnh tham chiếu | Ảnh cục bộ được lưu trong thư viện và có thể gắn lại vào từng prompt. Ảnh tải xuống từ Flow có thể nhập vào thư viện. |
 | Ảnh → video | Chọn **Ảnh → video** trong khung tạo, gắn tối thiểu 1 và tối đa 10 ảnh cho từng prompt; ảnh được tải lên Muse trước khi gửi prompt và hiện ảnh thu nhỏ trong hàng đợi. |
-| Tạo ảnh | **Tạo ảnh · Google Flow** mở Flow bằng profile Chrome `Profile 2` hiện có, điền prompt, và lưu tải xuống Flow vào thư mục dữ liệu của tool. Trong Flow chọn **Hình ảnh**, tạo và tải kết quả; bấm **Nhập ảnh Flow đã tải** để thêm ảnh vào thư viện. |
+| Tạo ảnh | **Tạo ảnh · Google Flow** mở Flow bằng hồ sơ Chrome riêng của tool (`data/profiles/google-flow`, đăng nhập một lần trong **Cài đặt**), điền prompt, và lưu tải xuống Flow vào thư mục dữ liệu của tool. Trong Flow chọn **Hình ảnh**, tạo và tải kết quả; bấm **Nhập ảnh Flow đã tải** để thêm ảnh vào thư viện. |
 | Chọn và xóa prompt | Chọn từng prompt hoặc toàn bộ kết quả lọc rồi xóa khỏi hàng đợi. Không xóa tác vụ đang chạy; video đã tải được giữ nguyên trong thư mục lưu. |
 | Tự mở các tài khoản, prompt sẵn để dán | Chế độ hỗ trợ mở Chrome và điền sẵn prompt; bạn bấm Gửi và Tải xuống. Mỗi cảnh có thêm nút Chép prompt. |
 
@@ -56,9 +56,46 @@ Nếu AI đã viết xong trên cửa sổ Chrome mà tool vẫn hiện đang ch
 
 Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt khi chuyển trang hoặc tải lại. Tool dò ô nhập, nút Gửi và câu trả lời theo giao diện Gemini hiện tại; nếu Google đổi giao diện mà tool báo không điền/không đọc được, cần cập nhật tool. Việc điều khiển trình duyệt tự động có thể trái điều khoản sử dụng của Google; dùng ở mức vừa phải trên tài khoản của chính bạn.
 
+## Giao diện
+
+- Thanh bên trái: **Studio · Video Queue** (hàng đợi và tạo video), **Content Studio**, **Character Library** (mở thẳng bước Nhân vật), **Image Library**, **Tài khoản Muse**. Góc dưới hiện trạng thái kết nối, số luồng đang chạy và phiên bản.
+- **⚙ Cài đặt** (thanh bên trái): đăng nhập mọi tài khoản tool cần ở một chỗ, không phải đăng nhập trong Viết content nữa.
+  - **★ Tài khoản chung** (khi một tài khoản Google có đủ Gemini, ChatGPT đăng nhập bằng Google, và Google Flow): bật **Dùng một tài khoản cho Gemini, ChatGPT và Google Flow**, rồi bấm **Đăng nhập tài khoản chung**. Một cửa sổ Chrome thường mở 3 tab (Google, ChatGPT, Flow): đăng nhập Google, bấm **Continue with Google** ở ChatGPT, kiểm tra Flow, rồi đóng hẳn cửa sổ. Cả ba dùng một hồ sơ Chrome (`profiles/google-shared`), nên mỗi lúc chỉ một phần mở Chrome: phần đang rảnh được đóng để phần khác dùng; phần đang chạy thì tool báo đợi. Chỉ bật/tắt được khi không phần nào đang chạy; tắt là dùng lại các hồ sơ riêng cũ. Muse vẫn đăng nhập riêng.
+  - **Gemini Pro**: tài khoản Google, model, nút **Đăng nhập Google · Gemini (mở Chrome thường)**.
+  - **ChatGPT**: model, nút **Đăng nhập ChatGPT (mở Chrome thường)**.
+  - **Google Flow · Nano Banana**: hiện hồ sơ Chrome dùng cho Flow, nút **Đăng nhập Google Flow (mở Chrome thường)**. Tool đóng cửa sổ Flow đang điều khiển (nếu có) rồi mở Chrome thường với đúng hồ sơ đó; đăng nhập xong thì đóng hẳn cửa sổ.
+  - **Tài khoản Muse**: số tài khoản, trạng thái, nút mở bảng quản lý/đăng nhập Muse.
+  - **Thư mục lưu video**.
+  Content Studio chỉ còn dòng "Tài khoản Gemini: … · Đổi trong Cài đặt" và nút chạy.
+- **Content Studio** có thanh 5 bước: **1 Ý tưởng** (yêu cầu + link video, chạy Gemini) → **2 Kịch bản** (kịch bản và các cảnh; tự chuyển sang khi Gemini viết xong) → **3 Nhân vật** (Character Library) → **4 Prompt** (prompt tiếng Anh) → **5 Tổng quan**. Ô **Dự án** ở trên cùng để mở lại dự án đã lưu.
+
+## Character Library: nhân vật của dự án (bước 3 · Nhân vật trong Content Studio)
+
+Mục tiêu: mỗi nhân vật có **một ảnh Master** dùng lại cho mọi cảnh, không tạo ảnh riêng cho từng cảnh.
+
+1. Viết cảnh ở bước 2 như trước, rồi bấm **💾 Lưu danh sách cảnh thành dự án**. Mỗi cảnh được cấp một Scene ID riêng (không dùng số thứ tự cảnh làm khóa).
+2. Chọn **Gemini Pro** hoặc **ChatGPT**, bấm **✦ Tìm nhân vật**. AI đọc kịch bản và các cảnh, trả về:
+   - danh sách nhân vật **duy nhất**, mỗi nhân vật một **Character ID** (ví dụ `DE_DUC`, `BAO_TUYET`), mô tả ngoại hình cố định và **prompt ảnh Master** tiếng Anh (toàn thân, nhìn chính diện, nền trơn, không có bối cảnh cảnh quay);
+   - nhân vật xuất hiện trong **từng cảnh**. Cảnh nào AI bỏ sót, tool tự hỏi lại riêng các cảnh đó (tối đa 3 lần, dừng nếu không có tiến triển).
+3. Sửa tên, mô tả, prompt ảnh của từng nhân vật rồi bấm **Lưu**; thêm nhân vật thủ công nếu thiếu; xóa nhân vật thừa.
+4. Ở **Nhân vật trong từng cảnh**, tick nhân vật rồi bấm **Lưu** để sửa tay. Cảnh đã chỉnh tay hiện "đã chỉnh tay" và **không bị AI ghi đè** khi bấm Tìm nhân vật lần nữa. Nhân vật đã duyệt ảnh hoặc đã khóa cũng không bị AI sửa.
+5. Mỗi cảnh hiện số nhân vật; mỗi nhân vật hiện số cảnh có mặt. Danh sách nhân vật ở bên trái, bấm một nhân vật để xem và sửa chi tiết bên phải. Nút **Duyệt / Khóa** dùng được khi nhân vật đã có ảnh Master; **Tạo lại** và **Thay ảnh** sẽ hoạt động khi có bước tạo ảnh bằng Google Flow.
+
+**Ảnh Master của nhân vật (bán tự động, Google Flow · Nano Banana):**
+1. Chọn nhân vật, bấm **✦ Mở Flow & điền prompt**. Tool mở Google Flow (hồ sơ Chrome riêng của tool) và điền prompt tạo ảnh của nhân vật. Trong Flow bạn chọn **Hình ảnh**, mô hình **Nano Banana**, bấm tạo rồi tải ảnh xuống. (Veo là mô hình tạo **video**; ảnh nhân vật tạo bằng Nano Banana/Imagen.)
+2. Bấm **⇄ Thay ảnh → ⇩ Lấy ảnh mới tải từ Flow**, rồi bấm ảnh muốn dùng: ảnh đó thành **ảnh Master đã duyệt**. Cũng có thể **Tải ảnh lên** hoặc chọn ảnh có sẵn trong thư viện.
+3. Mỗi ảnh của nhân vật hiện thành ảnh nhỏ dưới ảnh lớn; bấm ảnh nhỏ để đổi ảnh Master. Bấm **🔒 Duyệt / Khóa** để khóa: không đổi ảnh, không sửa, AI không ghi đè.
+
+**Nhân vật và ảnh tham chiếu của từng prompt (Prompt Studio):**
+- Prompt đưa từ bước 4 sang Studio (khi dự án có cùng số cảnh) được nối với cảnh gốc, nên tự có danh sách **Nhân vật** của cảnh đó. Prompt khác có thể tick chọn nhân vật của dự án đang mở rồi bấm **Lưu nhân vật**.
+- **Ảnh nhân vật tham chiếu** hiện ảnh Master của từng nhân vật trong prompt, kèm trạng thái: đã gắn / chưa gắn / thiếu ảnh Master.
+- **🔗 Gắn ảnh nhân vật vào prompt** đặt đúng ảnh Master của các nhân vật trong prompt vào ảnh đầu vào của prompt (tối đa 10 ảnh, giới hạn của Muse). Tool hỏi xác nhận trước khi chuyển prompt sang chế độ **Ảnh → video** hoặc trước khi thay ảnh bạn tự gắn; không gắn nhân vật không có trong prompt, không sửa prompt đang chạy.
+
+Chưa có trong bản này: tự động hoàn toàn bước tạo và tải ảnh trên Flow, và gắn ảnh hàng loạt cho mọi prompt cùng lúc.
+
 ## Mức độ đã xác minh — đọc trước khi chạy
 
-- Tạo ảnh dùng giao diện Google Flow trên Chrome profile `Profile 2` trong `%LOCALAPPDATA%\Google\Chrome\User Data`, không dùng API riêng/không công khai. Profile này phải được đóng trong các cửa sổ Chrome khác trước khi bấm **Mở Flow và điền prompt**; Chrome không cho hai tiến trình dùng chung profile cùng lúc. Tool điền prompt nhưng người dùng cần chọn **Hình ảnh**, bấm tạo và tải ảnh trong Flow; sau đó nhập ảnh tải xuống vào thư viện. Đăng nhập Google trực tiếp trên cửa sổ Flow; tool không đọc/lưu mật khẩu.
+- Tạo ảnh dùng giao diện Google Flow, không dùng API riêng/không công khai. Flow chạy trong hồ sơ Chrome riêng của tool `data/profiles/google-flow` (giống Gemini/ChatGPT), nên máy nào cũng dùng được: lần đầu vào **Cài đặt → Google Flow → Đăng nhập Google Flow (mở Chrome thường)**, đăng nhập rồi đóng hẳn cửa sổ đó. Tool điền prompt; bạn chọn **Hình ảnh**, bấm tạo và tải ảnh trong Flow, rồi nhập ảnh tải xuống vào thư viện. Muốn dùng một hồ sơ Chrome khác: đặt biến môi trường `HUMY_FLOW_PROFILE_PATH`.
 - Đã quan sát đăng nhập Muse bằng email + OTP, gửi một yêu cầu video 5 giây, nhận video thật có thời lượng 5 giây và menu Tải xuống trên tài khoản mẫu trong trình duyệt ngày 02/11/2026.
 - Luồng tải ảnh lên Muse phụ thuộc vào ô chọn ảnh của giao diện Muse hiện tại và chưa được xác minh bằng một video ảnh → video thật. Nếu Muse không cung cấp ô tải ảnh tương thích hoặc không nhận nhiều ảnh, tác vụ sẽ báo lỗi trước khi gửi prompt.
 - Mã Selenium bám theo các nhãn/DOM vừa quan sát. Đây là bản triển khai để thử trên Windows; **chưa kiểm thử trọn quy trình bằng chính gói này trên Windows và chưa thử nhiều tài khoản thật cùng lúc**. Phiên Chrome riêng, chế độ ẩn, thư mục tải và lấy OTP tự động cần kiểm tra trên máy cài đặt.
@@ -86,7 +123,11 @@ Ngoài cách chạy bằng mã nguồn (`CHAY_WINDOWS.cmd`), tool có bản **ap
 - Bộ cài cài vào `%LOCALAPPDATA%\Programs\HanaMedia`, không cần quyền quản trị. Lần đầu Windows có thể báo SmartScreen ("ứng dụng không rõ nguồn gốc") vì app chưa ký số: bấm **Thông tin thêm → Vẫn chạy**.
 - Dữ liệu của app nằm riêng ở `%LOCALAPPDATA%\HanaMedia\data`: tài khoản, hàng đợi, ảnh, và các **hồ sơ Chrome đã đăng nhập** (Muse, Gemini, ChatGPT).
 - **Lần đầu mở app**, app tự tìm dữ liệu của bản mã nguồn (ví dụ `D:\Huy-Muse-Runner\data`) và **chép** sang, nên các tài khoản và Chrome đã đăng nhập vẫn giữ nguyên, không phải đăng nhập lại. Đóng `CHAY_WINDOWS.cmd` trước khi mở app lần đầu (app không chép dữ liệu đang mở). Thư mục cũ không bị sửa hay xóa. Nếu dữ liệu cũ nằm chỗ khác: đóng app, chạy `set HANAMEDIA_IMPORT=E:\đường-dẫn\data` rồi mở `%LOCALAPPDATA%\Programs\HanaMedia\HanaMedia.exe` từ cùng cửa sổ đó.
-- Chrome profile `Profile 2` dùng cho Flow là Chrome thường của bạn, không nằm trong dữ liệu app nên không bị ảnh hưởng.
+- Hồ sơ Chrome dùng cho Flow nằm trong dữ liệu của tool (`profiles/google-flow`), nên được chép sang cùng các hồ sơ khác.
+
+**Logo của app**
+- Logo nằm ở `web/logo.svg` (bản gốc), `web/logo.png` (thanh bên trái), `web/favicon.ico` (tab trình duyệt) và `packaging/hanamedia.ico` (file `HanaMedia.exe`, bộ cài, shortcut Desktop).
+- Đổi logo: chuẩn bị một ảnh PNG vuông (từ 256×256, nên bo góc hoặc nền trong suốt), chạy `python packaging\make_icons.py duong-dan\logo.png` (cần `pip install pillow`), rồi đóng gói lại. Script tạo lại cả 3 file trên.
 
 **Cập nhật và sửa tính năng sau khi đã đóng gói**
 1. Sửa code trong repo như trước (hoặc nhờ Claude sửa), merge vào `main`.

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sqlite3
 import struct
+import shutil
 import tempfile
 import threading
 import time
@@ -627,15 +628,14 @@ class FlowTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_default_flow_profile_uses_installed_chrome_profile_2(self):
+    def test_default_flow_profile_is_the_tools_own_profile(self):
         local_app_data = self.root / "AppData"
-        profile = local_app_data / "Google" / "Chrome" / "User Data" / "Profile 2"
-        profile.mkdir(parents=True)
-        with patch.dict(os.environ, {
-            "LOCALAPPDATA": str(local_app_data),
-            "HUMY_FLOW_PROFILE_PATH": "",
-        }):
-            self.assertEqual(default_chrome_profile(self.root / "data"), profile)
+        (local_app_data / "Google" / "Chrome" / "User Data" / "Profile 2").mkdir(parents=True)
+        with patch.dict(os.environ, {"LOCALAPPDATA": str(local_app_data), "HUMY_FLOW_PROFILE_PATH": ""}):
+            # Không dùng hồ sơ Chrome cá nhân (Profile 2) dù máy có: luôn là hồ sơ riêng trong thư mục dữ liệu của tool.
+            self.assertEqual(default_chrome_profile(self.root / "data"), self.root / "data" / "profiles" / "google-flow" / "Default")
+        with patch.dict(os.environ, {"HUMY_FLOW_PROFILE_PATH": str(self.root / "custom" / "Profile 9")}):
+            self.assertEqual(default_chrome_profile(self.root / "data"), self.root / "custom" / "Profile 9")
 
     def test_flow_session_targets_existing_profile_directory(self):
         profile = self.root / "User Data" / "Profile 2"
@@ -763,3 +763,29 @@ class HTTPTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FlowLoginTests(unittest.TestCase):
+    def test_flow_login_opens_normal_chrome_with_the_flow_profile(self):
+        root = Path(tempfile.mkdtemp())
+        store = Store(root / "studio.sqlite3")
+        engine = Engine(store, root)
+        launched = []
+        engine.flow_launcher = lambda args: launched.append(args)
+        try:
+            with patch("runner.engine.chrome_executable", lambda: "chrome.exe"):
+                engine.open_flow_login()
+                with self.assertRaises(ValueError):
+                    engine.open_flow_login()  # đang mở: không mở hai lần
+                deadline = time.time() + 5
+                while engine.flow_busy and time.time() < deadline:
+                    time.sleep(0.05)
+            self.assertEqual(len(launched), 1)
+            self.assertEqual(launched[0][0], "chrome.exe")
+            self.assertIn(f"--profile-directory={engine.flow_profile.name}", launched[0])
+            self.assertEqual(launched[0][-1], "https://labs.google/fx/tools/flow")
+            self.assertIn("Đã mở Chrome thường", engine.flow_status)
+        finally:
+            engine.shutdown()
+            engine.close_browsers()
+            shutil.rmtree(root, ignore_errors=True)

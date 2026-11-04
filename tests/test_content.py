@@ -723,3 +723,42 @@ class SecondsTests(unittest.TestCase):
                 "Style: Photorealistic; 15 seconds; 16:9 aspect ratio.")
         self.assertEqual(content.parse_structured(line)["style"], "Photorealistic")
         self.assertEqual(content.parse_structured("Setting: A; Camera: B; Character behavior: C; Action: D, 15 seconds.")["action"], "D")
+
+
+class AccountStatusTests(unittest.TestCase):
+    def test_login_state_is_recorded_from_real_pages_and_survives_restart(self):
+        from runner import gemini_web
+        temp = tempfile.TemporaryDirectory()
+        profile = Path(temp.name) / "profiles" / "gemini-web"
+        runner = gemini_web.GeminiWebRunner(profile)
+        try:
+            self.assertEqual(runner.snapshot()["account"]["logged_in"], None)
+            self.assertFalse(runner.snapshot()["account"]["profile_used"])
+            profile.mkdir(parents=True)
+            (profile / "Local State").write_text("{}")  # đã mở Chrome thường để đăng nhập
+            self.assertTrue(runner.snapshot()["account"]["profile_used"])
+
+            class Driver:
+                def __init__(self, field):
+                    self.field = field
+                def execute_script(self, script, *args):
+                    return self.field
+
+            session = object.__new__(gemini_web.GeminiWebSession)
+            session.account_seen = runner.record_account
+            session.state = lambda: {"email": "ban@gmail.com"}
+            session.driver = Driver(True)
+            session.wait_ready(lambda _: None, threading.Event())
+            account = runner.snapshot()["account"]
+            self.assertEqual((account["logged_in"], account["email"]), (True, "ban@gmail.com"))
+            again = gemini_web.GeminiWebRunner(profile)  # khởi động lại tool: vẫn nhớ
+            self.assertEqual(again.snapshot()["account"]["email"], "ban@gmail.com")
+            again.close()
+            session.state = lambda: {"signIn": True}
+            session.driver = Driver(None)
+            with self.assertRaises(gemini_web.GeminiWebError):
+                session.wait_ready(lambda _: None, threading.Event())
+            self.assertIs(runner.snapshot()["account"]["logged_in"], False)
+        finally:
+            runner.close()
+            temp.cleanup()
