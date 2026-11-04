@@ -274,6 +274,14 @@ class GeminiWebSession:
     def new_chat(self):
         self.driver.get(self.URL)
 
+    def report_account(self, logged_in, email):
+        callback = getattr(self, "account_seen", None)
+        if callback:
+            try:
+                callback(logged_in, email)
+            except Exception:
+                pass
+
     def wait_ready(self, status, stop, email="", timeout=900):
         """Chờ ô nhập xuất hiện; nếu chưa đăng nhập thì chờ người dùng đăng nhập trong cửa sổ."""
         deadline = time.monotonic() + timeout
@@ -286,9 +294,11 @@ class GeminiWebSession:
             except Exception:
                 page, field = {}, None
             if page.get("signIn") or page.get("rejected") or page.get("loggedOut"):
+                self.report_account(False, "")
                 # Google không cho nhập mật khẩu trong Chrome đang bị điều khiển tự động.
                 raise GeminiWebError(f"Chưa đăng nhập {self.NAME} trong hồ sơ của tool. {self.LOGIN_HINT}")
             if field:
+                self.report_account(True, page.get("email") or "")
                 if email and page.get("email") and page["email"] != email.lower():
                     raise GeminiWebError(f"Cửa sổ {self.NAME} đang đăng nhập {page['email']}, không phải {email}. "
                                          "Đổi tài khoản trong cửa sổ đó rồi bấm lại.")
@@ -612,9 +622,32 @@ class GeminiWebRunner:
         self.thread = threading.Thread(target=self.worker, daemon=True)
         self.thread.start()
 
+    def account_file(self):
+        return self.profile.parent / f"{self.name.lower()}-account.json"
+
+    def record_account(self, logged_in, email):
+        """Kết quả kiểm tra đăng nhập thật lần gần nhất (khi tool mở trang): giữ qua các lần khởi động."""
+        import json
+        try:
+            self.account_file().write_text(json.dumps({"logged_in": bool(logged_in), "email": str(email or "")[:254],
+                                                       "checked": time.time()}), encoding="utf-8")
+        except OSError:
+            pass
+
+    def account(self):
+        import json
+        try:
+            data = json.loads(self.account_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        return {"logged_in": data.get("logged_in"), "email": data.get("email", ""), "checked": data.get("checked"),
+                "profile_used": (self.profile / "Local State").exists()}
+
     def snapshot(self):
         with self.lock:
-            return dict(self.job)
+            job = dict(self.job)
+        job["account"] = self.account()
+        return job
 
     def set(self, **values):
         with self.lock:
@@ -676,6 +709,7 @@ class GeminiWebRunner:
                     status(f"Đang mở Chrome cho {self.name}…")
                     self.session = self.factory(self.profile)
                     try:
+                        self.session.account_seen = self.record_account
                         self.session.debug_path = self.profile.parent / f"{self.name.lower()}-debug.txt"
                         self.session.take_now = self.take
                     except Exception:

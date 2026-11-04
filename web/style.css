@@ -288,3 +288,5 @@ button.cd-thumb{padding:0;background:none;cursor:pointer}button.cd-thumb:disable
 .settings-card code{font-size:11px;overflow-wrap:anywhere;color:#d6c4ff}
 .account-line{font-size:12px!important;margin:8px 0}
 @media(max-width:880px){.settings-grid-v2{grid-template-columns:1fr}.settings-card .content-grid{grid-template-columns:1fr}}
+
+.status-chip.error{background:#3b202b;color:#ff9aaa}

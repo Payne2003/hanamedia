@@ -362,6 +362,7 @@ class Engine:
             return {"enabled": self.enabled, "parallel": self.limit, "headless": self.headless, "automatic": self.automatic,
                     "output_folder": self.store.setting("output_folder", ""), "flow_status": self.flow_status,
                     "flow_profile": str(self.flow_profile), "flow_busy": self.flow_busy,
+                    "flow_profile_used": (self.flow_profile.parent / "Local State").exists(),
                     "login_all": self.login_all_status, "login_all_running": self.login_all_running}
 
     def shutdown(self):

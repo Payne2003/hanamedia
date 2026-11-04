@@ -716,8 +716,19 @@ function renderSettings(force){
   if(!state)return;
   const web=state.content?.web||{},chat=state.content?.chatgpt||{},engine=state.engine||{};
   const email=web.email||'',model=web.model||'';
-  $('geminiBadge').textContent=email?`✓ ${email}`:'Chưa đặt tài khoản';$('geminiBadge').className='status-chip'+(email?' approved':' review');
-  $('geminiAccountLine').innerHTML=`Tài khoản Gemini: <b>${esc(email||'chưa đặt')}</b>${model?` · model ${esc(model)}`:''} · <button type="button" class="text-button" data-open-settings>⚙ Đổi trong Cài đặt</button>`;
+  const badge=(id,account,name)=>{
+    const a=account||{};let text,kind;
+    if(a.logged_in===true){text='✓ Đã đăng nhập'+(a.email?` · ${a.email}`:'');kind='approved';}
+    else if(a.logged_in===false){text='Chưa đăng nhập';kind='error';}
+    else if(a.profile_used){text='Đã mở đăng nhập · kiểm tra ở lần chạy đầu';kind='review';}
+    else{text='Chưa đăng nhập';kind='error';}
+    $(id).textContent=text;$(id).className='status-chip '+kind;
+    $(id).title=a.checked?`${name}: kiểm tra lần cuối ${new Date(a.checked*1000).toLocaleString('vi-VN')}`:`${name}: tool chưa mở trang lần nào`;
+  };
+  badge('geminiBadge',web.account,'Gemini');badge('chatgptBadge',chat.account,'ChatGPT');
+  $('flowBadge').textContent=engine.flow_profile_used?'Đã mở đăng nhập trên máy này':'Chưa đăng nhập';$('flowBadge').className='status-chip '+(engine.flow_profile_used?'approved':'error');
+  const seen=web.account?.logged_in?(web.account.email||'đã đăng nhập'):'';
+  $('geminiAccountLine').innerHTML=`Tài khoản Gemini: <b>${esc(email||seen||'chưa đăng nhập')}</b>${model?` · model ${esc(model)}`:''} · <button type="button" class="text-button" data-open-settings>⚙ Đổi trong Cài đặt</button>`;
   if(force||document.activeElement!==$('chatgptModel'))$('chatgptModel').value=chat.model||'';
   $('flowProfile').textContent=engine.flow_profile||'';
   $('settingsFlowStatus').textContent=engine.flow_status||'';$('loginFlow').disabled=Boolean(engine.flow_busy);
