@@ -303,6 +303,11 @@ class MuseBrowser:
     def composer(self):
         return self.named("textarea,input,[role='textbox']", {"Nhắn tin"})
 
+    def new_chat(self):
+        """Mở cuộc trò chuyện Muse mới cho mỗi prompt: prompt sau không dùng ngữ cảnh/ảnh của prompt trước."""
+        self.driver.get("https://muse.ai")
+        self.wait(lambda: self.composer(), 60, "Không mở được cuộc trò chuyện Muse mới. Kiểm tra phiên Muse.")
+
     def session_ready(self):
         host = urlparse(self.driver.current_url).hostname or ""
         return (host == "muse.ai" or host.endswith(".muse.ai")) and self.composer() is not None

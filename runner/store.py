@@ -69,6 +69,8 @@ class Store:
                 "generation_mode": "TEXT NOT NULL DEFAULT 'text'",
                 "assigned_account_id": "TEXT",
                 "progress": "INTEGER NOT NULL DEFAULT 0",
+                # 1 = người dùng tự chọn tài khoản trong Prompt Studio: không chuyển sang tài khoản khác.
+                "assigned_manual": "INTEGER NOT NULL DEFAULT 0",
                 # Ghi chú cảnh cho Prompt Studio: bối cảnh, góc quay, hành vi nhân vật, nội dung hành động (JSON).
                 "details": "TEXT NOT NULL DEFAULT '{}'",
                 **JOB_COLUMNS,  # scene_id, images_origin (Character Master)
@@ -435,10 +437,13 @@ class Store:
             db.execute("BEGIN IMMEDIATE")
             if db.execute("SELECT count(*) FROM accounts WHERE state IN ('busy','authenticating','reviewing')").fetchone()[0] >= limit:
                 return None
-            pair = db.execute("""SELECT j.id AS job_id, a.id AS account_id FROM jobs j JOIN accounts a
+            pick = """SELECT j.id AS job_id, a.id AS account_id FROM jobs j JOIN accounts a
                 ON a.id=j.assigned_account_id AND a.enabled=1 AND a.state IN ('new','ready')
                 AND a.budget+0.000001>=j.cost
-                WHERE j.status='waiting' ORDER BY j.created,j.rowid LIMIT 1""").fetchone()
+                WHERE j.status='waiting' ORDER BY j.created,j.rowid LIMIT 1"""
+            pair = db.execute(pick).fetchone()
+            if not pair and self.rebalance(db):
+                pair = db.execute(pick).fetchone()
             if not pair:
                 return None
             job = dict(db.execute("SELECT * FROM jobs WHERE id=?", (pair["job_id"],)).fetchone())
@@ -457,6 +462,28 @@ class Store:
             job["account_id"] = account["id"]
             job["progress"] = 3
             return job, account
+
+    def rebalance(self, db):
+        """Tài khoản rảnh mà hết prompt của mình: nhận một prompt CHƯA GỬI (đang chờ) từ tài khoản còn nhiều prompt chờ nhất,
+        lấy từ cuối hàng đợi của tài khoản đó. Không chuyển prompt người dùng đã tự chọn tài khoản. Trả về True nếu đã chuyển."""
+        free = db.execute("""SELECT a.id, a.budget FROM accounts a WHERE a.enabled=1 AND a.state IN ('new','ready')
+                             AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.status='waiting' AND j.assigned_account_id=a.id)
+                             ORDER BY a.rowid""").fetchall()
+        moved = False
+        for account in free:
+            donor = db.execute("""SELECT j.assigned_account_id AS id, COUNT(*) AS waiting FROM jobs j
+                                  WHERE j.status='waiting' AND j.assigned_manual=0 AND j.assigned_account_id IS NOT NULL
+                                  AND j.assigned_account_id!=? GROUP BY j.assigned_account_id
+                                  ORDER BY waiting DESC LIMIT 1""", (account["id"],)).fetchone()
+            if not donor:
+                break
+            job = db.execute("""SELECT id FROM jobs WHERE status='waiting' AND assigned_manual=0 AND assigned_account_id=?
+                                AND cost<=?+0.000001 ORDER BY created DESC, rowid DESC LIMIT 1""",
+                             (donor["id"], account["budget"])).fetchone()
+            if job:
+                db.execute("UPDATE jobs SET assigned_account_id=? WHERE id=?", (account["id"], job["id"]))
+                moved = True
+        return moved
 
     def plan_waiting(self):
         """Balance unassigned prompts across eligible accounts and retain each assignment."""
@@ -616,9 +643,9 @@ class Store:
                 account = db.execute("SELECT enabled FROM accounts WHERE id=?", (account_id,)).fetchone()
                 if not account:
                     raise ValueError("Tài khoản đã chọn không còn trong danh sách.")
-            db.execute("UPDATE jobs SET prompt=?,details=?,images=?,generation_mode=?,assigned_account_id=?,images_origin=?,updated=? WHERE id=?",
+            db.execute("UPDATE jobs SET prompt=?,details=?,images=?,generation_mode=?,assigned_account_id=?,assigned_manual=?,images_origin=?,updated=? WHERE id=?",
                        (prompt.strip(), json.dumps(details, ensure_ascii=False), json.dumps(images), mode,
-                        account_id or None, origin, time.time(), job_id))
+                        account_id or None, int(bool(account_id)), origin, time.time(), job_id))
         self.plan_waiting()
         self.cleanup_images()
         return self.job_detail(job_id)

@@ -846,3 +846,89 @@ class FlowLoginTests(unittest.TestCase):
             engine.shutdown()
             engine.close_browsers()
             shutil.rmtree(root, ignore_errors=True)
+
+
+class RebalanceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = Store(Path(self.temp.name) / "studio.sqlite3")
+        for email in ("a@x.vn", "b@x.vn"):
+            self.store.add_account(email, "", 100)
+        self.a, self.b = [acc["id"] for acc in self.store.snapshot()["accounts"]]
+        self.store.enqueue([f"Cảnh {i}" for i in range(6)], 1, uuid.uuid4().hex)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def assigned(self):
+        with self.store.connect() as db:
+            return {r["id"]: r["assigned_account_id"] for r in db.execute("SELECT id, assigned_account_id FROM jobs WHERE status='waiting'")}
+
+    def test_idle_account_takes_unsent_prompts_from_a_busy_account(self):
+        first, account = self.store.claim(2)  # A nhận prompt đầu tiên
+        second, other = self.store.claim(2)
+        self.assertNotEqual(account["id"], other["id"])
+        # B làm xong rất nhanh 2 prompt của mình; A vẫn đang chạy prompt đầu tiên.
+        self.store.finish(second["id"], output="x.mp4")
+        for _ in range(2):
+            job, acc = self.store.claim(2)
+            self.assertEqual(acc["id"], other["id"])
+            self.store.finish(job["id"], output="x.mp4")
+        # B hết prompt của mình: nhận prompt CHỜ của A (A vẫn bận), không đụng prompt A đang chạy.
+        job, acc = self.store.claim(2)
+        self.assertEqual(acc["id"], other["id"])
+        self.assertNotEqual(job["id"], first["id"])
+        with self.store.connect() as db:
+            self.assertEqual(db.execute("SELECT status, account_id FROM jobs WHERE id=?", (first["id"],)).fetchone()["account_id"], account["id"])
+
+    def test_prompt_with_user_chosen_account_is_never_moved(self):
+        jobs = [j["id"] for j in self.store.snapshot()["jobs"]]
+        for job_id in jobs:
+            self.store.update_job(job_id, self.store.job_detail(job_id)["prompt"], account_id=self.a)
+        job, acc = self.store.claim(2)
+        self.assertEqual(acc["id"], self.a)
+        self.assertIsNone(self.store.claim(2))  # B rảnh nhưng mọi prompt đã được người dùng gán cho A
+        self.assertTrue(all(owner == self.a for owner in self.assigned().values()))
+
+
+class NewChatTests(unittest.TestCase):
+    def test_each_prompt_starts_a_new_muse_chat_on_a_reused_browser(self):
+        temp = tempfile.TemporaryDirectory()
+        root = Path(temp.name)
+        store = Store(root / "studio.sqlite3")
+        store.add_account("a@x.vn", "", 10)
+        account = store.snapshot()["accounts"][0]
+        store.set_account(account["id"], "ready")
+        store.enqueue(["Cảnh 1", "Cảnh 2"], 1, uuid.uuid4().hex)
+        engine = Engine(store, root / "engine")
+        calls = []
+
+        class Browser:
+            def __init__(self, *args):
+                self.driver = type("D", (), {"window_handles": ["w"], "current_url": "https://muse.ai"})()
+                self.downloads = root
+            def login(self, account):
+                calls.append("login")
+            def new_chat(self):
+                calls.append("new_chat")
+            def session_ready(self):
+                return True
+            def set_download_directory(self, target):
+                self.downloads = Path(target)
+            def generate(self, prompt, job_id, before, automatic=True, images=None):
+                before()
+                file = self.downloads / (job_id + ".mp4")
+                file.write_bytes(b"x")
+                return file
+            def close(self):
+                pass
+        try:
+            with patch("runner.engine.MuseBrowser", Browser):
+                for _ in range(2):
+                    job, acc = store.claim(1)
+                    engine.work(job, acc, False, str(root / "out"), True)
+            self.assertEqual(calls, ["login", "new_chat"])  # lần 1: đăng nhập mở trang mới; lần 2: trò chuyện mới
+        finally:
+            engine.shutdown()
+            engine.close_browsers()
+            temp.cleanup()
