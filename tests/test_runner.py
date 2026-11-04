@@ -603,8 +603,65 @@ class ParsingTests(unittest.TestCase):
             browser.driver = Driver()
             file_input = FileInput()
             browser.elements = lambda _: [file_input]
+            browser.phase, browser.guard, browser.composer = (lambda _: None), (lambda: None), (lambda: "box")
+            # Muse hiện ảnh xem trước sau khi tải lên (đọc ô nhập, không đọc lại ô chọn file).
+            browser.attachments = lambda box=None: {"count": 1 if file_input.paths else 0, "busy": False, "removers": 1}
             browser.attach_images([image])
             self.assertEqual(file_input.paths, str(image.resolve()))
+
+    def test_image_attach_waits_for_upload_and_fails_before_submit(self):
+        class FileInput:
+            def __init__(self, multiple):
+                self.sent, self.multiple = [], multiple
+            def get_attribute(self, name):
+                return "image/*" if name == "accept" else ("true" if name == "multiple" and self.multiple else None)
+            def send_keys(self, paths):
+                self.sent.append(paths)
+
+        with tempfile.TemporaryDirectory() as folder:
+            images = []
+            for name in ("a.png", "b.png"):
+                images.append(Path(folder) / name)
+                images[-1].write_bytes(b"fixture")
+            browser = object.__new__(MuseBrowser)
+            browser.phase, browser.guard, browser.composer = (lambda _: None), (lambda: None), (lambda: "box")
+            # Ô chọn ảnh không nhận nhiều file: tải từng ảnh; ảnh xem trước hiện dần, có lúc đang tải.
+            single = FileInput(multiple=False)
+            browser.elements = lambda _: [single]
+            import itertools
+            states = itertools.chain([{"count": 0, "busy": False}, {"count": 1, "busy": True}, {"count": 2, "busy": True}],
+                                     itertools.repeat({"count": 2, "busy": False}))
+            browser.attachments = lambda box=None: next(states)
+            with patch("runner.muse.time.sleep", lambda _: None):
+                browser.attach_images(images)
+            self.assertEqual(single.sent, [str(images[0].resolve()), str(images[1].resolve())])
+            # Không thấy ảnh xem trước: báo lỗi TRƯỚC khi gửi prompt (không gửi prompt thiếu ảnh).
+            browser.elements = lambda _: [FileInput(multiple=True)]
+            browser.attachments = lambda box=None: {"count": 0, "busy": False}
+            with self.assertRaisesRegex(MuseFailure, "Chưa gửi prompt"):
+                browser.attach_images(images, timeout=0.01)
+
+    def test_leftover_attachments_are_removed_or_block_submit(self):
+        browser = object.__new__(MuseBrowser)
+        left = {"count": 2}
+
+        class Driver:
+            def execute_script(self, script, *args):
+                if left["count"]:
+                    left["count"] -= 1
+                    return True
+                return False
+        browser.driver, browser.composer = Driver(), (lambda: "box")
+        browser.attachments = lambda box=None: {"count": left["count"], "busy": False}
+        with patch("runner.muse.time.sleep", lambda _: None):
+            browser.clear_attachments()
+        self.assertEqual(left["count"], 0)
+        stuck = object.__new__(MuseBrowser)
+        stuck.driver = type("D", (), {"execute_script": lambda self, *a: False})()
+        stuck.composer = lambda: "box"
+        stuck.attachments = lambda box=None: {"count": 1, "busy": False}
+        with self.assertRaisesRegex(MuseFailure, "còn ảnh đính kèm"):
+            stuck.clear_attachments()
 
     def test_truncated_download_is_not_valid(self):
         def box(kind, content):
