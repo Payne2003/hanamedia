@@ -6,7 +6,7 @@ import subprocess
 from .flow import FlowImageSession, chrome_profile_arguments, default_chrome_profile
 from .gemini_web import chrome_executable
 
-FLOW_URL = "https://labs.google/fx/tools/flow"
+from .flow import FLOW_URL  # noqa: E402  (flow.google.com)
 FLOW_LOGIN = object()  # yêu cầu đặc biệt trong hàng đợi Flow: mở Chrome thường để đăng nhập
 FLOW_CLOSE = object()  # đóng Chrome Flow do tool điều khiển (nhường hồ sơ Google chung)
 from .muse import MuseBrowser, MuseFailure
