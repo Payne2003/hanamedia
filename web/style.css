@@ -275,3 +275,16 @@ button.cd-thumb{padding:0;background:none;cursor:pointer}button.cd-thumb:disable
 .picker-upload{display:inline-flex!important;align-items:center;margin:0!important;padding:9px 13px;border:1px solid var(--border);border-radius:10px;background:var(--panel2);color:var(--text)!important;cursor:pointer;font-size:13px!important}
 .picker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;max-height:260px;overflow-y:auto}
 .picker-grid button{padding:0;aspect-ratio:1;overflow:hidden;border-radius:10px}.picker-grid img{width:100%;height:100%;object-fit:cover}
+
+/* Trang Cài đặt */
+.settings-grid-v2{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px}
+.settings-card{padding:18px;display:flex;flex-direction:column;gap:10px}
+.settings-card label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);margin:0}
+.settings-card .content-grid{display:grid;grid-template-columns:2fr 1fr;gap:10px}
+.settings-head{display:flex;align-items:center;gap:12px}
+.settings-head h3{margin:0;font-size:15px}.settings-head small{color:var(--muted);font-size:11px}
+.settings-head .status-chip{margin-left:auto}
+.settings-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,var(--violet-1),var(--violet-2));color:#fff;font-weight:700;flex:0 0 auto}
+.settings-card code{font-size:11px;overflow-wrap:anywhere;color:#d6c4ff}
+.account-line{font-size:12px!important;margin:8px 0}
+@media(max-width:880px){.settings-grid-v2{grid-template-columns:1fr}.settings-card .content-grid{grid-template-columns:1fr}}

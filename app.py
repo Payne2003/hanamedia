@@ -266,6 +266,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/library/import-flow":
                 imported = store.import_flow_downloads(engine.flow_downloads)
                 return self.reply({"ok": True, "imported": imported})
+            elif path == "/api/flow/login":
+                engine.open_flow_login()
             elif path == "/api/flow/create-image":
                 engine.create_flow_image(body["prompt"])
             elif path == "/api/start":

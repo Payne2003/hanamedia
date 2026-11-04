@@ -59,6 +59,13 @@ Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt 
 ## Giao diện
 
 - Thanh bên trái: **Studio · Video Queue** (hàng đợi và tạo video), **Content Studio**, **Character Library** (mở thẳng bước Nhân vật), **Image Library**, **Tài khoản Muse**. Góc dưới hiện trạng thái kết nối, số luồng đang chạy và phiên bản.
+- **⚙ Cài đặt** (thanh bên trái): đăng nhập mọi tài khoản tool cần ở một chỗ, không phải đăng nhập trong Viết content nữa.
+  - **Gemini Pro**: tài khoản Google, model, nút **Đăng nhập Google · Gemini (mở Chrome thường)**.
+  - **ChatGPT**: model, nút **Đăng nhập ChatGPT (mở Chrome thường)**.
+  - **Google Flow · Nano Banana**: hiện hồ sơ Chrome dùng cho Flow, nút **Đăng nhập Google Flow (mở Chrome thường)**. Tool đóng cửa sổ Flow đang điều khiển (nếu có) rồi mở Chrome thường với đúng hồ sơ đó; đăng nhập xong thì đóng hẳn cửa sổ.
+  - **Tài khoản Muse**: số tài khoản, trạng thái, nút mở bảng quản lý/đăng nhập Muse.
+  - **Thư mục lưu video**.
+  Content Studio chỉ còn dòng "Tài khoản Gemini: … · Đổi trong Cài đặt" và nút chạy.
 - **Content Studio** có thanh 5 bước: **1 Ý tưởng** (yêu cầu + link video, chạy Gemini) → **2 Kịch bản** (kịch bản và các cảnh; tự chuyển sang khi Gemini viết xong) → **3 Nhân vật** (Character Library) → **4 Prompt** (prompt tiếng Anh) → **5 Tổng quan**. Ô **Dự án** ở trên cùng để mở lại dự án đã lưu.
 
 ## Character Library: nhân vật của dự án (bước 3 · Nhân vật trong Content Studio)

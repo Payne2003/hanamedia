@@ -15,7 +15,7 @@
       <button type="button" id="navCharacters"><i>☺</i>Character Library</button>
       <button type="button" id="openLibrary"><i>▧</i>Image Library</button>
       <button type="button" id="accountsButton"><i>♙</i>Tài khoản Muse <b id="accountCount" class="nav-badge">0</b></button>
-      <button type="button" data-coming><i>⚙</i>Cài đặt</button>
+      <button type="button" data-nav="settings" id="navSettings"><i>⚙</i>Cài đặt</button>
     </nav>
     <div class="sidebar-foot"><span id="connection" class="connection">Đang kết nối…</span><span class="running-pill"><i></i><b id="headerRuns">0</b> luồng đang chạy</span><small id="appVersion">v1.0.0</small></div>
   </aside>
@@ -82,6 +82,35 @@
         </div>
       </div>
     </section>
+    <section id="settingsView" class="settings-page" hidden>
+      <div class="content-topbar"><h1>Cài đặt</h1><span class="crumb">/</span><span class="detail">Đăng nhập các tài khoản tool cần dùng. Tool không đọc hay lưu mật khẩu.</span></div>
+      <div class="settings-grid-v2">
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">G</span><div><h3>Gemini Pro</h3><small>Viết kịch bản, chia cảnh, tìm nhân vật, prompt tiếng Anh</small></div><span id="geminiBadge" class="status-chip">Chưa đặt tài khoản</span></div>
+          <div class="content-grid"><label>Tài khoản Google<input id="autoEmail" type="email" maxlength="254" placeholder="ten@gmail.com"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40" placeholder="Pro"><datalist id="autoModels"><option value="Pro"><option value="Argon"><option value="Flash"></datalist></label></div>
+          <button id="loginAuto" type="button" class="full">Đăng nhập Google · Gemini (mở Chrome thường)</button>
+          <p class="detail"><b>Lần đầu:</b> bấm Đăng nhập để mở Chrome thường bằng hồ sơ riêng của tool, đăng nhập tài khoản Google ở trên (tool không đọc mật khẩu), thấy trang Gemini thì <b>đóng hẳn cửa sổ đó</b>. Các lần sau chỉ cần bấm Chạy. Tool tự dán yêu cầu, chờ Gemini viết, tự nhắn “viết tiếp” khi câu trả lời bị cắt rồi đọc kết quả. Giữ cửa sổ Gemini mở, không gõ vào đó khi tool đang chạy.</p>
+        </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">AI</span><div><h3>ChatGPT</h3><small>Tìm nhân vật và viết prompt tiếng Anh (tùy chọn)</small></div></div>
+          <label>Model ChatGPT <small>(để trống: model đang chọn)</small><input id="chatgptModel" list="chatgptModels" maxlength="40" placeholder="Ví dụ: GPT-5"><datalist id="chatgptModels"><option value="Auto"><option value="Instant"><option value="Thinking"></datalist></label>
+          <button id="loginChatgpt" type="button" class="full">Đăng nhập ChatGPT (mở Chrome thường)</button>
+          <p class="detail">Lần đầu: bấm Đăng nhập ChatGPT, đăng nhập tài khoản ChatGPT của bạn trong Chrome vừa mở, thấy ô nhắn tin thì đóng hẳn cửa sổ đó. ChatGPT chạy trong Chrome riêng, tách khỏi Gemini.</p>
+        </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">F</span><div><h3>Google Flow · Nano Banana</h3><small>Tạo ảnh Master của nhân vật</small></div></div>
+          <p class="detail">Hồ sơ Chrome: <code id="flowProfile"></code></p>
+          <button id="loginFlow" type="button" class="full">Đăng nhập Google Flow (mở Chrome thường)</button>
+          <p class="detail" id="settingsFlowStatus"></p>
+          <p class="detail"><b>Lần đầu:</b> bấm Đăng nhập, đăng nhập tài khoản Google có Flow, thấy trang Flow thì <b>đóng hẳn cửa sổ đó</b>. Tool dùng chung hồ sơ này khi mở Flow để điền prompt ảnh, nên không mở hai cửa sổ cùng lúc.</p>
+        </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">M</span><div><h3>Tài khoản Muse</h3><small>Tạo video hàng loạt</small></div><span id="museBadge" class="status-chip">0 tài khoản</span></div>
+          <p class="detail" id="museSummary"></p>
+          <button type="button" class="full primary" data-open-accounts>Quản lý & đăng nhập tài khoản Muse</button>
+        </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">▰</span><div><h3>Thư mục lưu video</h3><small>Video tải về được lưu ở đây</small></div></div>
+          <p class="detail" id="settingsFolder">Chưa chọn thư mục lưu</p>
+          <button type="button" class="full" data-pick-folder>Chọn thư mục lưu</button>
+        </div>
+      </div>
+    </section>
     <section id="contentView" class="content-page" hidden>
       <div class="content-topbar"><h1>Content Studio</h1><span class="crumb">/</span><label class="project-picker">Dự án<select id="projectSelect" aria-label="Chọn dự án"><option value="">— Chưa lưu dự án —</option></select></label><span class="bulk-spacer"></span><span class="tool-chip"><i class="dot green"></i>Flow (Nano Banana)</span><span class="tool-chip">▣ Muse Video</span><button id="closeContent" type="button">← Về Studio</button></div>
       <nav class="stepper" aria-label="Các bước">
@@ -100,11 +129,10 @@
             <label>Link video gốc <small>(YouTube · có thể bỏ trống)</small><input id="contentVideo" type="url" placeholder="https://www.youtube.com/watch?v=..."></label>
             <label>Ngôn ngữ kịch bản<select id="contentLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
             <div>
-              <div class="content-grid"><label>Tài khoản Google<input id="autoEmail" type="email" maxlength="254" placeholder="ten@gmail.com"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40" placeholder="Pro"><datalist id="autoModels"><option value="Pro"><option value="Argon"><option value="Flash"></datalist></label></div>
-              <button id="loginAuto" type="button" class="full">① Đăng nhập Google (mở Chrome thường)</button>
+              <p class="detail account-line" id="geminiAccountLine"></p>
               <button id="runAuto" type="button" class="primary full">✦ Chạy tự động trên Gemini</button>
               <div id="autoProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="autoStatus"></span><button id="takeAuto" type="button" title="Bấm khi Gemini đã viết xong mà tool vẫn đang chờ">Lấy kết quả ngay</button><button id="stopAuto" type="button">Dừng</button></div></div>
-              <p class="detail"><b>Lần đầu:</b> bấm ① để mở Chrome thường bằng hồ sơ riêng của tool, đăng nhập tài khoản Google ở trên (tool không đọc mật khẩu), thấy trang Gemini thì <b>đóng hẳn cửa sổ đó</b>. Các lần sau chỉ cần bấm Chạy. Tool tự dán yêu cầu, chờ Gemini viết, tự nhắn “viết tiếp” khi câu trả lời bị cắt rồi đọc kết quả. Giữ cửa sổ Gemini mở, không gõ vào đó khi tool đang chạy.</p>
+              
             </div>
           </section>
         </div>
@@ -131,7 +159,7 @@
             <div class="content-grid english-options"><label>Phong cách chung <small>(không bắt buộc)</small><input id="englishStyle" maxlength="2000" placeholder="Ví dụ: cinematic, ánh sáng tự nhiên"></label><label>Thời lượng mỗi cảnh<select id="englishSeconds"><option value="15">15 giây</option><option value="10">10 giây</option><option value="8">8 giây</option><option value="5">5 giây</option></select></label><label>Tỷ lệ khung hình<select id="englishAspect"><option value="16:9">16:9 · ngang</option><option value="9:16">9:16 · dọc</option><option value="1:1">1:1 · vuông</option></select></label></div>
             <label class="check english-structured"><input id="englishStructured" type="checkbox" checked><span>Prompt chuẩn đủ trường<small>Mỗi prompt viết theo khung <code>Setting: …; Camera: …; Character behavior: …; Action: …; Style: …</code>. Tool tách trường ngay từ prompt và tự hỏi lại cảnh nào thiếu trường.</small></span></label>
             <div class="english-engines" role="group" aria-label="Chọn AI viết prompt"><button type="button" data-english-engine="gemini">Gemini Pro</button><button type="button" data-english-engine="chatgpt">ChatGPT</button></div>
-            <div id="chatgptOptions" hidden><div class="content-grid"><label>Model ChatGPT <small>(để trống: model đang chọn)</small><input id="chatgptModel" list="chatgptModels" maxlength="40" placeholder="Ví dụ: GPT-5"><datalist id="chatgptModels"><option value="Auto"><option value="Instant"><option value="Thinking"></datalist></label><div><button id="loginChatgpt" type="button" class="full">Đăng nhập ChatGPT (mở Chrome thường)</button></div></div><p class="detail">Lần đầu: bấm Đăng nhập ChatGPT, đăng nhập tài khoản ChatGPT của bạn trong Chrome vừa mở, thấy ô nhắn tin thì đóng hẳn cửa sổ đó. ChatGPT chạy trong Chrome riêng, tách khỏi Gemini.</p></div>
+            <div id="chatgptOptions" hidden><p class="detail account-line">ChatGPT dùng tài khoản và model trong <button type="button" class="text-button" data-open-settings>⚙ Cài đặt</button>.</p></div>
             <button id="runEnglish" type="button" class="primary full">✦ Viết prompt tiếng Anh bằng Gemini</button>
             <div id="englishProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="englishStatus"></span><button id="takeEnglish" type="button" title="Bấm khi AI đã viết xong mà tool vẫn đang chờ">Lấy kết quả ngay</button><button id="stopEnglish" type="button">Dừng</button></div></div>
           </div>

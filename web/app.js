@@ -252,16 +252,17 @@ function renderScenes(){
 const CONTENT_VERSION='content-19';
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
-  const isContent=view==='content';
-  $('jobView').hidden=true;$('studioView').hidden=isContent;$('contentView').hidden=!isContent;
+  const isContent=view==='content',isSettings=view==='settings';
+  $('jobView').hidden=true;$('studioView').hidden=isContent||isSettings;$('contentView').hidden=!isContent;$('settingsView').hidden=!isSettings;
+  if(isSettings){applyAutoSettings(true);renderSettings(true);}
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
   if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);renderEnglishEngine();openCharacters();}
-  const hash=isContent?'#content':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
+  const hash=isContent?'#content':isSettings?'#settings':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);markSidebar();
 }
 document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>showView(b.dataset.nav));
 $('closeContent').onclick=()=>showView('studio');
-window.addEventListener('hashchange',()=>showView(location.hash==='#content'?'content':'studio'));
+window.addEventListener('hashchange',()=>{if(/^#job=/.test(location.hash))return;showView(location.hash==='#content'?'content':location.hash==='#settings'?'settings':'studio');});
 $('contentBrief').oninput=()=>{content.brief=$('contentBrief').value;saveContent();};
 $('contentVideo').oninput=()=>{content.video=$('contentVideo').value.trim();saveContent();};
 $('contentLanguage').onchange=()=>{content.language=$('contentLanguage').value;saveContent();};
@@ -270,8 +271,8 @@ $('contentScript').oninput=()=>{content.script=$('contentScript').value;saveCont
 let autoJob=null;
 function applyAutoSettings(force){const web=state?.content?.web;if(!web)return;if(force||document.activeElement!==$('autoEmail'))$('autoEmail').value=web.email||'';if(force||document.activeElement!==$('autoModel'))$('autoModel').value=web.model||'';}
 async function saveAutoSettings(){await api('/api/content/web-settings',{email:$('autoEmail').value.trim(),model:$('autoModel').value.trim()});}
-$('autoEmail').onchange=()=>saveAutoSettings().catch(error=>toast(error.message,true));
-$('autoModel').onchange=()=>saveAutoSettings().catch(error=>toast(error.message,true));
+$('autoEmail').onchange=()=>saveAutoSettings().then(refresh).then(()=>renderSettings(false)).catch(error=>toast(error.message,true));
+$('autoModel').onchange=()=>saveAutoSettings().then(refresh).then(()=>renderSettings(false)).catch(error=>toast(error.message,true));
 async function runAuto(kind){
   if(autoJob)return;
   if(kind==='review'&&!content.scenes.length)return;
@@ -703,14 +704,36 @@ function renderOverview(){
   $('overviewStats').innerHTML=tiles.map(([label,value,note])=>`<div class="overview-tile"><small>${esc(label)}</small><b>${esc(String(value))}</b><span>${esc(note)}</span></div>`).join('');
 }
 function markSidebar(){
-  const content=!$('contentView').hidden;
-  $('navStudio').classList.toggle('active',!content);$('openContent').classList.toggle('active',content&&currentStep!==3);$('navCharacters').classList.toggle('active',content&&currentStep===3);
+  const content=!$('contentView').hidden,settings=!$('settingsView').hidden;
+  $('navStudio').classList.toggle('active',!content&&!settings);$('navSettings').classList.toggle('active',settings);$('openContent').classList.toggle('active',content&&currentStep!==3);$('navCharacters').classList.toggle('active',content&&currentStep===3);
 }
 document.querySelectorAll('.stepper [data-step]').forEach(b=>b.onclick=()=>setStep(Number(b.dataset.step)));
 document.addEventListener('click',e=>{const go=e.target.closest('[data-goto-step]');if(go)setStep(Number(go.dataset.gotoStep));});
 $('navCharacters').onclick=()=>{showView('content');setStep(3);};
 setInterval(()=>{if(state?.app_version)$('appVersion').textContent='v'+state.app_version;const runs=$('headerRuns').textContent;$('sideRuns').hidden=!Number(runs);$('sideRuns').textContent=runs;},1000);
-renderMode();await refresh();if(state?.content?.web?.busy)autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(state?.content?.chatgpt?.busy)chatJob={id:state.content.chatgpt.id,kind:state.content.chatgpt.kind};for(const [engine,web] of [['gemini',state?.content?.web],['chatgpt',state?.content?.chatgpt]])if(web?.busy&&web.kind==='characters')charJob={id:web.id,engine};if(location.hash==='#content')showView('content');{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(m)openJob(m[1]);}setInterval(refresh,2000);
+// ---------- Cài đặt: đăng nhập các tài khoản tool cần ----------
+function renderSettings(force){
+  if(!state)return;
+  const web=state.content?.web||{},chat=state.content?.chatgpt||{},engine=state.engine||{};
+  const email=web.email||'',model=web.model||'';
+  $('geminiBadge').textContent=email?`✓ ${email}`:'Chưa đặt tài khoản';$('geminiBadge').className='status-chip'+(email?' approved':' review');
+  $('geminiAccountLine').innerHTML=`Tài khoản Gemini: <b>${esc(email||'chưa đặt')}</b>${model?` · model ${esc(model)}`:''} · <button type="button" class="text-button" data-open-settings>⚙ Đổi trong Cài đặt</button>`;
+  if(force||document.activeElement!==$('chatgptModel'))$('chatgptModel').value=chat.model||'';
+  $('flowProfile').textContent=engine.flow_profile||'';
+  $('settingsFlowStatus').textContent=engine.flow_status||'';$('loginFlow').disabled=Boolean(engine.flow_busy);
+  const accounts=state.accounts||[],ready=accounts.filter(a=>a.state==='ready').length,attention=accounts.filter(a=>a.state==='attention').length;
+  $('museBadge').textContent=`${accounts.length} tài khoản`;
+  $('museSummary').textContent=accounts.length?`${ready} sẵn sàng · ${attention} cần kiểm tra · ${accounts.length-ready-attention} khác`:'Chưa có tài khoản Muse. Thêm email rồi bấm Đăng nhập.';
+  $('settingsFolder').textContent=engine.output_folder||'Chưa chọn thư mục lưu';
+}
+document.addEventListener('click',e=>{
+  if(e.target.closest('[data-open-settings]'))showView('settings');
+  if(e.target.closest('[data-open-accounts]'))$('accountsButton').click();
+  if(e.target.closest('[data-pick-folder]'))$('pickFolder').click();
+});
+$('loginFlow').onclick=()=>action(async()=>{await api('/api/flow/login',{});$('loginFlow').blur();toast('Đang mở Chrome thường cho Google Flow. Đăng nhập xong thì đóng hẳn cửa sổ đó.');});
+setInterval(()=>{renderSettings(false);},1500);
+renderMode();await refresh();if(state?.content?.web?.busy)autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(state?.content?.chatgpt?.busy)chatJob={id:state.content.chatgpt.id,kind:state.content.chatgpt.kind};for(const [engine,web] of [['gemini',state?.content?.web],['chatgpt',state?.content?.chatgpt]])if(web?.busy&&web.kind==='characters')charJob={id:web.id,engine};if(location.hash==='#content')showView('content');else if(location.hash==='#settings')showView('settings');{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(m)openJob(m[1]);}setInterval(refresh,2000);
 
 document.addEventListener('click',e=>{const b=e.target.closest('[data-review],[data-close-review]');if(!b)return;action(async()=>{await api(b.dataset.review?'/api/review':'/api/review-close',{id:b.dataset.review||b.dataset.closeReview});b.blur();toast(b.dataset.review?'Đang mở đúng phiên tài khoản. Đóng phiên trong mục Tài khoản khi kiểm tra xong.':'Đang đóng phiên kiểm tra.');});});
 

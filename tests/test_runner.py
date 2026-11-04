@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sqlite3
 import struct
+import shutil
 import tempfile
 import threading
 import time
@@ -763,3 +764,29 @@ class HTTPTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FlowLoginTests(unittest.TestCase):
+    def test_flow_login_opens_normal_chrome_with_the_flow_profile(self):
+        root = Path(tempfile.mkdtemp())
+        store = Store(root / "studio.sqlite3")
+        engine = Engine(store, root)
+        launched = []
+        engine.flow_launcher = lambda args: launched.append(args)
+        try:
+            with patch("runner.engine.chrome_executable", lambda: "chrome.exe"):
+                engine.open_flow_login()
+                with self.assertRaises(ValueError):
+                    engine.open_flow_login()  # đang mở: không mở hai lần
+                deadline = time.time() + 5
+                while engine.flow_busy and time.time() < deadline:
+                    time.sleep(0.05)
+            self.assertEqual(len(launched), 1)
+            self.assertEqual(launched[0][0], "chrome.exe")
+            self.assertIn(f"--profile-directory={engine.flow_profile.name}", launched[0])
+            self.assertEqual(launched[0][-1], "https://labs.google/fx/tools/flow")
+            self.assertIn("Đã mở Chrome thường", engine.flow_status)
+        finally:
+            engine.shutdown()
+            engine.close_browsers()
+            shutil.rmtree(root, ignore_errors=True)
