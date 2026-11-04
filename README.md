@@ -60,6 +60,7 @@ Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt 
 
 - Thanh bên trái: **Studio · Video Queue** (hàng đợi và tạo video), **Content Studio**, **Character Library** (mở thẳng bước Nhân vật), **Image Library**, **Tài khoản Muse**. Góc dưới hiện trạng thái kết nối, số luồng đang chạy và phiên bản.
 - **⚙ Cài đặt** (thanh bên trái): đăng nhập mọi tài khoản tool cần ở một chỗ, không phải đăng nhập trong Viết content nữa.
+  - **★ Tài khoản chung** (khi một tài khoản Google có đủ Gemini, ChatGPT đăng nhập bằng Google, và Google Flow): bật **Dùng một tài khoản cho Gemini, ChatGPT và Google Flow**, rồi bấm **Đăng nhập tài khoản chung**. Một cửa sổ Chrome thường mở 3 tab (Google, ChatGPT, Flow): đăng nhập Google, bấm **Continue with Google** ở ChatGPT, kiểm tra Flow, rồi đóng hẳn cửa sổ. Cả ba dùng một hồ sơ Chrome (`profiles/google-shared`), nên mỗi lúc chỉ một phần mở Chrome: phần đang rảnh được đóng để phần khác dùng; phần đang chạy thì tool báo đợi. Chỉ bật/tắt được khi không phần nào đang chạy; tắt là dùng lại các hồ sơ riêng cũ. Muse vẫn đăng nhập riêng.
   - **Gemini Pro**: tài khoản Google, model, nút **Đăng nhập Google · Gemini (mở Chrome thường)**.
   - **ChatGPT**: model, nút **Đăng nhập ChatGPT (mở Chrome thường)**.
   - **Google Flow · Nano Banana**: hiện hồ sơ Chrome dùng cho Flow, nút **Đăng nhập Google Flow (mở Chrome thường)**. Tool đóng cửa sổ Flow đang điều khiển (nếu có) rồi mở Chrome thường với đúng hồ sơ đó; đăng nhập xong thì đóng hẳn cửa sổ.

@@ -726,6 +726,13 @@ function renderSettings(force){
     $(id).title=a.checked?`${name}: kiểm tra lần cuối ${new Date(a.checked*1000).toLocaleString('vi-VN')}`:`${name}: tool chưa mở trang lần nào`;
   };
   badge('geminiBadge',web.account,'Gemini');badge('chatgptBadge',chat.account,'ChatGPT');
+  const shared=state.shared_account||{};
+  if(force||document.activeElement!==$('sharedAccount'))$('sharedAccount').checked=Boolean(shared.enabled);
+  $('sharedBadge').textContent=shared.enabled?(shared.login_open?'Cửa sổ đăng nhập đang mở':shared.profile_used?'✓ Đang bật':'Đang bật · chưa đăng nhập'):'Đang tắt';
+  $('sharedBadge').className='status-chip '+(shared.enabled?(shared.profile_used?'approved':'review'):'');
+  $('sharedLogin').hidden=$('sharedHint').hidden=!shared.enabled;$('sharedLogin').disabled=Boolean(shared.login_open);
+  for(const id of ['loginAuto','loginChatgpt','loginFlow']){$(id).textContent=shared.enabled?'Đăng nhập bằng tài khoản chung (ở trên)':{loginAuto:'Đăng nhập Google · Gemini (mở Chrome thường)',loginChatgpt:'Đăng nhập ChatGPT (mở Chrome thường)',loginFlow:'Đăng nhập Google Flow (mở Chrome thường)'}[id];}
+  if(shared.enabled)$('flowProfile').textContent=shared.profile+' (hồ sơ chung)';
   $('flowBadge').textContent=engine.flow_profile_used?'Đã mở đăng nhập trên máy này':'Chưa đăng nhập';$('flowBadge').className='status-chip '+(engine.flow_profile_used?'approved':'error');
   const seen=web.account?.logged_in?(web.account.email||'đã đăng nhập'):'';
   $('geminiAccountLine').innerHTML=`Tài khoản Gemini: <b>${esc(email||seen||'chưa đăng nhập')}</b>${model?` · model ${esc(model)}`:''} · <button type="button" class="text-button" data-open-settings>⚙ Đổi trong Cài đặt</button>`;
@@ -744,6 +751,10 @@ document.addEventListener('click',e=>{
 });
 $('loginFlow').onclick=()=>action(async()=>{await api('/api/flow/login',{});$('loginFlow').blur();toast('Đang mở Chrome thường cho Google Flow. Đăng nhập xong thì đóng hẳn cửa sổ đó.');});
 setInterval(()=>{renderSettings(false);},1500);
+$('sharedAccount').onchange=()=>{const enabled=$('sharedAccount').checked;
+  if(enabled&&!confirm('Dùng một tài khoản Google cho Gemini, ChatGPT và Google Flow?\n\nTool sẽ đóng các cửa sổ Chrome đang rảnh và dùng một hồ sơ chung. Lần đầu cần đăng nhập lại một lần.')){$('sharedAccount').checked=false;return;}
+  action(async()=>{try{await api('/api/settings/shared-account',{enabled});toast(enabled?'Đã bật tài khoản chung. Bấm “Đăng nhập tài khoản chung”.':'Đã tắt tài khoản chung: mỗi phần dùng lại hồ sơ riêng.');}catch(error){$('sharedAccount').checked=!enabled;throw error;}renderSettings(true);});};
+$('sharedLogin').onclick=()=>action(async()=>{await api('/api/shared-login',{});$('sharedLogin').blur();toast('Đã mở Chrome thường với 3 tab: Google, ChatGPT, Flow. Đăng nhập xong thì đóng hẳn cửa sổ đó.');});
 renderMode();await refresh();if(state?.content?.web?.busy)autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(state?.content?.chatgpt?.busy)chatJob={id:state.content.chatgpt.id,kind:state.content.chatgpt.kind};for(const [engine,web] of [['gemini',state?.content?.web],['chatgpt',state?.content?.chatgpt]])if(web?.busy&&web.kind==='characters')charJob={id:web.id,engine};if(location.hash==='#content')showView('content');else if(location.hash==='#settings')showView('settings');{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(m)openJob(m[1]);}setInterval(refresh,2000);
 
 document.addEventListener('click',e=>{const b=e.target.closest('[data-review],[data-close-review]');if(!b)return;action(async()=>{await api(b.dataset.review?'/api/review':'/api/review-close',{id:b.dataset.review||b.dataset.closeReview});b.blur();toast(b.dataset.review?'Đang mở đúng phiên tài khoản. Đóng phiên trong mục Tài khoản khi kiểm tra xong.':'Đang đóng phiên kiểm tra.');});});

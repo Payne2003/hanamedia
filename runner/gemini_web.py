@@ -618,6 +618,7 @@ class GeminiWebRunner:
         self.requests = queue.Queue()
         self.session = None
         self.login_process = None
+        self.gate = None  # SharedProfile khi bật "Tài khoản chung"
         self.job = {"id": "", "busy": False, "status": f"Chưa mở {name}", "result": None, "error": ""}
         self.thread = threading.Thread(target=self.worker, daemon=True)
         self.thread.start()
@@ -673,6 +674,16 @@ class GeminiWebRunner:
             raise ValueError(f"{self.name} không có yêu cầu nào đang chạy.")
         self.take.set()
 
+    def release_session(self):
+        """Đóng Chrome tự động của phần này nếu đang rảnh (để phần khác dùng hồ sơ chung)."""
+        with self.lock:
+            if self.job["busy"]:
+                return False
+            session, self.session = self.session, None
+        if session:
+            session.close()
+        return True
+
     def login_window_open(self):
         return bool(self.login_process and self.login_process.poll() is None)
 
@@ -706,6 +717,11 @@ class GeminiWebRunner:
                 if not self.session or not self.session.alive():
                     if self.session:
                         self.session.close()
+                    if self.gate:
+                        try:
+                            self.gate.take(self.name)  # hồ sơ chung: phần khác đang rảnh thì đóng Chrome của nó
+                        except RuntimeError as error:
+                            raise GeminiWebError(str(error)) from None
                     status(f"Đang mở Chrome cho {self.name}…")
                     self.session = self.factory(self.profile)
                     try:

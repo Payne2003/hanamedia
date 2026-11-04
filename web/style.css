@@ -290,3 +290,7 @@ button.cd-thumb{padding:0;background:none;cursor:pointer}button.cd-thumb:disable
 @media(max-width:880px){.settings-grid-v2{grid-template-columns:1fr}.settings-card .content-grid{grid-template-columns:1fr}}
 
 .status-chip.error{background:#3b202b;color:#ff9aaa}
+
+.shared-card{grid-column:1/-1;border-color:#5b47a8;background:linear-gradient(110deg,#221a47,#15112c)}
+.shared-toggle{display:flex!important;flex-direction:row!important;gap:10px!important;align-items:flex-start;color:var(--text)!important;font-size:13px!important}
+.shared-toggle small{display:block;color:var(--muted);font-size:11px;margin-top:4px}

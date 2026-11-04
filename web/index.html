@@ -85,6 +85,11 @@
     <section id="settingsView" class="settings-page" hidden>
       <div class="content-topbar"><h1>Cài đặt</h1><span class="crumb">/</span><span class="detail">Đăng nhập các tài khoản tool cần dùng. Tool không đọc hay lưu mật khẩu.</span></div>
       <div class="settings-grid-v2">
+        <div class="card settings-card shared-card"><div class="settings-head"><span class="settings-icon">★</span><div><h3>Tài khoản chung</h3><small>Một tài khoản Google có đủ Gemini, ChatGPT (đăng nhập bằng Google) và Google Flow</small></div><span id="sharedBadge" class="status-chip">Đang tắt</span></div>
+          <label class="check shared-toggle"><input id="sharedAccount" type="checkbox"><span>Dùng một tài khoản cho Gemini, ChatGPT và Google Flow<small>Cả ba dùng chung một hồ sơ Chrome của tool, nên chỉ đăng nhập một lần. Mỗi lúc chỉ một phần mở Chrome: phần đang rảnh sẽ được đóng để phần khác dùng. Muse vẫn đăng nhập riêng bằng email + OTP.</small></span></label>
+          <button id="sharedLogin" type="button" class="full primary" hidden>Đăng nhập tài khoản chung (mở Chrome thường)</button>
+          <p class="detail" id="sharedHint" hidden><b>Cách đăng nhập:</b> cửa sổ mở 3 tab. Tab 1 đăng nhập Google; tab 2 ChatGPT bấm <b>Continue with Google</b> và chọn đúng tài khoản; tab 3 kiểm tra Flow đã vào được. Xong thì <b>đóng hẳn cửa sổ đó</b>. Đổi sang tài khoản chung lần đầu cần đăng nhập lại một lần; hồ sơ riêng cũ vẫn giữ để tắt chế độ này là dùng lại được.</p>
+        </div>
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">G</span><div><h3>Gemini Pro</h3><small>Viết kịch bản, chia cảnh, tìm nhân vật, prompt tiếng Anh</small></div><span id="geminiBadge" class="status-chip">Chưa đặt tài khoản</span></div>
           <div class="content-grid"><label>Tài khoản Google <small>(không bắt buộc · để tool kiểm tra đúng tài khoản)</small><input id="autoEmail" type="email" maxlength="254" placeholder="ten@gmail.com"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40" placeholder="Pro"><datalist id="autoModels"><option value="Pro"><option value="Argon"><option value="Flash"></datalist></label></div>
           <button id="loginAuto" type="button" class="full">Đăng nhập Google · Gemini (mở Chrome thường)</button>

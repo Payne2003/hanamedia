@@ -16,7 +16,11 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from runner import content
 from runner.gemini_web import GeminiWebRunner
-from runner.chatgpt_web import chatgpt_runner
+from runner.chatgpt_web import chatgpt_login_url, chatgpt_runner
+from runner.engine import FLOW_URL
+from runner.flow import default_chrome_profile
+from runner.gemini_web import chrome_executable, login_url
+from runner.profiles import SharedProfile
 from runner.engine import Engine
 from runner.characters import NeedsConfirm
 from runner.store import Store
@@ -40,8 +44,50 @@ class AppServer(ThreadingHTTPServer):
         self.character_jobs = {}  # mã việc phân tích nhân vật -> (dự án, Scene ID theo thứ tự đã gửi)
         if store.setting("gemini_api_key"):  # Chế độ Gemini API đã bỏ: không giữ khóa API cũ trên máy.
             store.save_setting("gemini_api_key", "")
-        self.gemini_web = GeminiWebRunner(Path(store.path).parent / "profiles" / "gemini-web")
-        self.chatgpt_web = chatgpt_runner(Path(store.path).parent / "profiles" / "chatgpt-web")
+        self.data_dir = Path(store.path).parent
+        self.gemini_web = GeminiWebRunner(self.data_dir / "profiles" / "gemini-web")
+        self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
+        # Tài khoản chung: Gemini, ChatGPT, Flow dùng một hồ sơ Chrome (đăng nhập Google một lần).
+        self.shared = SharedProfile(self.data_dir)
+        self.gemini_web.gate = self.chatgpt_web.gate = self.shared
+        self.shared.register("Gemini", self.gemini_web.release_session)
+        self.shared.register("ChatGPT", self.chatgpt_web.release_session)
+        if hasattr(engine, "release_flow"):
+            engine.gate = self.shared
+            self.shared.register("Flow", engine.release_flow)
+        if store.setting("shared_google_profile") is True:
+            self.apply_shared(True)
+
+    def apply_shared(self, enabled):
+        """Bật/tắt tài khoản chung. Chỉ đổi khi không phần nào đang chạy; đóng mọi Chrome tự động đang rảnh."""
+        busy = [name for name, runner in (("Gemini", self.gemini_web), ("ChatGPT", self.chatgpt_web))
+                if runner.snapshot().get("busy")]
+        if getattr(self.engine, "flow_busy", False):
+            busy.append("Flow")
+        busy += [name for name in self.shared.release_all() if name not in busy]
+        if busy:
+            raise ValueError(", ".join(busy) + " đang chạy. Đợi chạy xong rồi đổi chế độ tài khoản.")
+        self.shared.enabled = bool(enabled)
+        profiles = self.data_dir / "profiles"
+        self.gemini_web.profile = self.shared.dir if enabled else profiles / "gemini-web"
+        self.chatgpt_web.profile = self.shared.dir if enabled else profiles / "chatgpt-web"
+        if hasattr(self.engine, "flow_profile"):
+            self.engine.flow_profile = self.shared.dir / "Default" if enabled else default_chrome_profile(self.data_dir)
+        self.store.save_setting("shared_google_profile", bool(enabled))
+
+    def open_shared_login(self, email="", launcher=subprocess.Popen):
+        """Một cửa sổ Chrome THƯỜNG với hồ sơ chung: đăng nhập Google, rồi các tab Gemini, ChatGPT, Flow."""
+        if not self.shared.enabled:
+            raise ValueError("Bật “Dùng một tài khoản cho tất cả” trước.")
+        if self.shared.login_open():
+            raise ValueError("Cửa sổ đăng nhập đang mở. Đăng nhập xong thì đóng hẳn cửa sổ đó.")
+        busy = self.shared.release_all()
+        if busy:
+            raise ValueError(", ".join(busy) + " đang chạy. Đợi chạy xong rồi đăng nhập.")
+        self.shared.dir.mkdir(parents=True, exist_ok=True)
+        self.shared.login_process = launcher([chrome_executable(), f"--user-data-dir={self.shared.dir}",
+                                              "--profile-directory=Default", "--no-first-run", "--new-window",
+                                              login_url(email), chatgpt_login_url(), FLOW_URL])
 
     def handle_error(self, request, client_address):
         error = sys.exc_info()[1]
@@ -91,6 +137,9 @@ class Handler(BaseHTTPRequestHandler):
             data["engine"] = self.server.engine.snapshot()
             data["key"] = self.server.secret
             data["app_version"] = APP_VERSION
+            shared = self.server.shared
+            data["shared_account"] = {"enabled": shared.enabled, "profile": str(shared.dir), "login_open": shared.login_open(),
+                                      "profile_used": (shared.dir / "Local State").exists()}
             data["content"] = {"version": content.VERSION,
                                "web": dict(self.server.gemini_web.snapshot(),
                                            email=self.server.store.setting("gemini_web_email") or "",
@@ -266,8 +315,15 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/library/import-flow":
                 imported = store.import_flow_downloads(engine.flow_downloads)
                 return self.reply({"ok": True, "imported": imported})
+            elif path == "/api/settings/shared-account":
+                self.server.apply_shared(body.get("enabled") is True)
+            elif path == "/api/shared-login":
+                self.server.open_shared_login(store.setting("gemini_web_email") or "")
             elif path == "/api/flow/login":
-                engine.open_flow_login()
+                if self.server.shared.enabled:
+                    self.server.open_shared_login(store.setting("gemini_web_email") or "")
+                else:
+                    engine.open_flow_login()
             elif path == "/api/flow/create-image":
                 engine.create_flow_image(body["prompt"])
             elif path == "/api/start":
@@ -394,6 +450,8 @@ class Handler(BaseHTTPRequestHandler):
                 store.characters.delete_character(body["id"])
             elif path == "/api/scenes/characters":
                 store.characters.set_scene_characters(body["scene_id"], body.get("character_ids", []), source="manual")
+            elif path == "/api/content/web-login" and self.server.shared.enabled:
+                self.server.open_shared_login(store.setting("gemini_web_email") or "")
             elif path == "/api/content/web-login":
                 if body.get("engine") == "chatgpt":
                     self.server.chatgpt_web.open_login()
