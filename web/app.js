@@ -257,7 +257,7 @@ function showView(view){
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
   if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);renderEnglishEngine();openCharacters();}
   const hash=isContent?'#content':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
-  window.scrollTo(0,0);
+  window.scrollTo(0,0);markSidebar();
 }
 document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>showView(b.dataset.nav));
 $('closeContent').onclick=()=>showView('studio');
@@ -304,7 +304,7 @@ function pollAuto(){
   if(job.kind==='english')return finishEnglish('gemini',result);
   if(job.kind==='review'){content.scenes=result.scenes;content.issues=result.issues;}
   else{content.scenes=result.scenes;content.script=result.original_script;content.issues=result.issues||[];}
-  saveContent();renderScenes();
+  saveContent();renderScenes();if(job.kind!=='review')setStep(2);
   toast(job.kind==='review'?`Đã kiểm tra: ${result.scenes.length} cảnh · ${result.issues.length} vấn đề.`:`Gemini đã viết ${result.scenes.length} cảnh (${result.rounds} lượt trả lời). Bấm “Kiểm tra thiếu cảnh / lỗi” để rà lại.`);
 }
 $('runAuto').onclick=()=>runAuto('generate');
@@ -497,18 +497,42 @@ $('jobImages').onclick=e=>{const b=e.target.closest('[data-remove-job-image]');i
 window.addEventListener('hashchange',()=>{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(m)openJob(m[1]);else if(jobViewShown())closeJob();});
 try{$('prompts').value=localStorage.getItem('huy-runner-draft')||'';const pending=JSON.parse(localStorage.getItem('huy-runner-pending')||'null');if(pending&&typeof pending.id==='string'&&typeof pending.signature==='string')pendingBatch=pending;}catch{}
 // ---------- Character Library (Character Master · giai đoạn 2) ----------
-let project=null,charJob=null;
+let project=null,charJob=null,selectedCharacter='';
+const initials=name=>String(name||'?').split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0]).join('').toUpperCase()||'?';
+const masterImage=c=>(c.assets||[]).find(a=>a.id===c.approved_asset_id)?.image_token||'';
+function statusChip(c){return `<span class="status-chip ${c.status}">${c.status==='approved'?'✓ ':''}${esc(characterStates[c.status]||c.status)}${c.locked?' · 🔒':''}</span>`;}
+function renderCharacterDetail(counts){
+  const c=project?.characters.find(x=>x.id===selectedCharacter);
+  if(!c){$('characterDetail').innerHTML='<div class="empty"><span>☺</span><h3>Chưa chọn nhân vật</h3><p>Danh sách nhân vật hiện ở bên trái sau khi AI phân tích kịch bản.</p></div>';return;}
+  const token=masterImage(c),lock=c.locked?'disabled':'';
+  const thumbs=(c.assets||[]).map(a=>`<span class="cd-thumb${a.id===c.approved_asset_id?' active':''}"><img src="/api/library/image/${a.image_token}" alt=""></span>`).join('');
+  $('characterDetail').innerHTML=`<article class="cd-layout" data-character="${c.id}">
+<div class="cd-media"><div class="cd-image">${token?`<img src="/api/library/image/${token}" alt="Ảnh Master ${esc(c.name)}">`:`<div class="cd-placeholder"><b>${esc(initials(c.name))}</b><span>Chưa có ảnh Master</span><small>Tạo bằng Google Flow (Nano Banana) ở giai đoạn tiếp theo</small></div>`}</div>
+<div class="cd-thumbs">${thumbs||'<small class="detail">Ảnh tạo ra sẽ hiện ở đây để chọn ảnh Master.</small>'}</div></div>
+<div class="cd-info"><div class="cd-top"><code>${esc(c.code)}</code>${statusChip(c)}<span class="badge count">${counts[c.id]||0} cảnh</span></div>
+<input class="cd-name" data-char-name maxlength="200" value="${esc(c.name)}" aria-label="Tên nhân vật" ${lock}>
+<label class="cd-box">Mô tả nhân vật <small>(giữ cố định ở mọi cảnh)</small><textarea data-char-desc rows="4" maxlength="5000" ${lock}>${esc(c.description)}</textarea></label>
+<label class="cd-box">Prompt tạo ảnh (Nano Banana)<textarea data-char-prompt rows="4" maxlength="5000" ${lock}>${esc(c.image_prompt)}</textarea></label>
+<div class="cd-actions"><button type="button" disabled title="Có ở giai đoạn tạo ảnh bằng Google Flow">↻ Tạo lại</button><button type="button" disabled title="Có ở giai đoạn tạo ảnh bằng Google Flow">⇄ Thay ảnh</button><button type="button" class="primary" data-char-lock="${c.id}" data-locked="${c.locked?1:0}" ${c.approved_asset_id?'':'disabled title="Cần có ảnh Master đã duyệt"'}>${c.locked?'🔓 Mở khóa':'🔒 Duyệt / Khóa'}</button></div>
+<div class="cd-actions"><button type="button" data-char-save="${c.id}" ${lock}>Lưu thay đổi</button><button type="button" class="danger-outline" data-char-delete="${c.id}" ${lock}>✕ Xóa nhân vật</button></div></div></article>`;
+}
 let charPrefs={projectId:'',engine:'gemini'};
 try{const saved=JSON.parse(localStorage.getItem('hana-characters')||'{}');charPrefs={projectId:/^[a-f0-9]{32}$/.test(saved.projectId||'')?saved.projectId:'',engine:saved.engine==='chatgpt'?'chatgpt':'gemini'};}catch{}
 function saveCharPrefs(){try{localStorage.setItem('hana-characters',JSON.stringify(charPrefs));}catch{}}
 const characterStates={draft:'Bản nháp',generating:'Đang tạo ảnh',review:'Chờ duyệt ảnh',approved:'Đã duyệt'};
+async function loadProjects(){
+  try{const response=await fetch('/api/projects');if(!response.ok)return;const {projects}=await response.json();
+    $('projectSelect').innerHTML='<option value="">— Chưa lưu dự án —</option>'+projects.map(x=>`<option value="${x.id}">${esc(x.name)} · ${x.scenes} cảnh · ${x.characters} nhân vật</option>`).join('');
+    $('projectSelect').value=project?.id||'';}catch{}
+}
+$('projectSelect').onchange=()=>loadProject($('projectSelect').value).catch(error=>toast(error.message,true));
 async function loadProject(id){
   if(!id){project=null;renderCharacters();return;}
   const response=await fetch('/api/project/'+id);
   if(!response.ok){project=null;charPrefs.projectId='';saveCharPrefs();renderCharacters();return;}
-  project=await response.json();charPrefs.projectId=project.id;saveCharPrefs();renderCharacters();
+  project=await response.json();charPrefs.projectId=project.id;saveCharPrefs();renderCharacters();loadProjects();
 }
-function openCharacters(){renderCharacterEngine();if(charPrefs.projectId&&(!project||project.id!==charPrefs.projectId))loadProject(charPrefs.projectId).catch(()=>{});else renderCharacters();}
+function openCharacters(){renderCharacterEngine();loadProjects();setStep(currentStep,false);if(charPrefs.projectId&&(!project||project.id!==charPrefs.projectId))loadProject(charPrefs.projectId).catch(()=>{});else renderCharacters();}
 function renderCharacterEngine(){document.querySelectorAll('[data-character-engine]').forEach(b=>b.classList.toggle('active',b.dataset.characterEngine===charPrefs.engine));renderCharacterRun();}
 function renderCharacterRun(){
   const web=charJob?state?.content?.[charJob.engine==='chatgpt'?'chatgpt':'web']:null;
@@ -516,7 +540,7 @@ function renderCharacterRun(){
   $('characterProgress').hidden=!charJob;
   if(charJob)$('characterStatus').textContent=web&&web.id===charJob.id?(web.status||''):`Đang mở ${engineNames[charJob.engine]}…`;
   $('extractCharacters').disabled=!project||busy||Boolean(charJob);
-  $('extractCharacters').textContent=charJob?`${engineNames[charJob.engine]} đang tìm nhân vật…`:busy?`${engineNames[charPrefs.engine]} đang bận việc khác…`:`✦ Tìm nhân vật bằng ${engineNames[charPrefs.engine]}`;
+  $('extractCharacters').textContent=charJob?`${engineNames[charJob.engine]} đang tìm nhân vật…`:busy?`${engineNames[charPrefs.engine]} đang bận việc khác…`:project?.characters.length?`↻ Tìm lại nhân vật bằng ${engineNames[charPrefs.engine]}`:`✦ Tìm nhân vật bằng ${engineNames[charPrefs.engine]}`;
   $('saveProject').disabled=Boolean(charJob);
 }
 function renderCharacters(){
@@ -529,14 +553,12 @@ function renderCharacters(){
   document.querySelector('.character-add').hidden=false;
   const counts={};for(const scene of project.scenes)for(const id of scene.character_ids)counts[id]=(counts[id]||0)+1;
   $('projectInfo').textContent=`Dự án “${project.name}” · ${project.scenes.length} cảnh · ${project.characters.length} nhân vật`+(scenesNow&&scenesNow!==project.scenes.length?` · bước 2 đang có ${scenesNow} cảnh (khác dự án): bấm Lưu thành dự án để tạo dự án mới`:'');
-  $('characterList').innerHTML=project.characters.length?project.characters.map(c=>{
-    const master=c.assets.find(a=>a.id===c.approved_asset_id),lock=c.locked?'disabled':'';
-    return `<article class="character-item${c.locked?' locked':''}" data-character="${c.id}"><div class="character-top"><code>${esc(c.code)}</code><b>${esc(c.name)}</b><span class="badge">${esc(characterStates[c.status]||c.status)}${c.locked?' · 🔒 Đã khóa':''}</span><span class="badge count">${counts[c.id]||0} cảnh</span></div>
-<div class="character-master">${master?`<img src="/api/library/image/${master.image_token}" alt="Ảnh Master ${esc(c.name)}">`:'Chưa có ảnh Master<br><small>Tạo ảnh bằng Google Flow ở giai đoạn tiếp theo</small>'}</div>
-<label>Tên<input data-char-name maxlength="200" value="${esc(c.name)}" ${lock}></label>
-<label>Mô tả ngoại hình (giữ cố định ở mọi cảnh)<textarea data-char-desc rows="3" maxlength="5000" ${lock}>${esc(c.description)}</textarea></label>
-<label>Prompt ảnh Master (tiếng Anh)<textarea data-char-prompt rows="3" maxlength="5000" ${lock}>${esc(c.image_prompt)}</textarea></label>
-<div class="content-actions"><button type="button" data-char-save="${c.id}" ${lock}>Lưu</button><button type="button" class="danger-outline" data-char-delete="${c.id}" ${lock}>✕ Xóa</button></div></article>`;}).join(''):'<div class="notice">Chưa có nhân vật. Bấm “Tìm nhân vật” để AI đọc kịch bản, hoặc thêm thủ công.</div>';
+  if(!project.characters.some(c=>c.id===selectedCharacter))selectedCharacter=project.characters[0]?.id||'';
+  $('characterTotal').textContent=String(project.characters.length);
+  $('characterList').innerHTML=project.characters.length?project.characters.map(c=>`<button type="button" class="character-row${c.id===selectedCharacter?' active':''}" data-select-character="${c.id}"><span class="cr-thumb">${masterImage(c)?`<img src="/api/library/image/${masterImage(c)}" alt="">`:esc(initials(c.name))}</span><span class="cr-text"><small>${esc(c.code)}</small><b>${esc(c.name)}</b>${statusChip(c)}</span><span class="cr-scenes">${counts[c.id]||0} cảnh</span></button>`).join(''):'<div class="notice">Chưa có nhân vật. Bấm “Tìm nhân vật bằng AI” để đọc kịch bản, hoặc thêm thủ công.</div>';
+  renderCharacterDetail(counts);
+  const approved=project.characters.filter(c=>c.approved_asset_id).length;
+  $('characterSummary').textContent=`${project.characters.length} nhân vật · Đã duyệt: ${approved} · Cần tạo ảnh: ${project.characters.length-approved}`;
   $('projectSceneHint').textContent=project.characters.length?' · tick nhân vật xuất hiện trong cảnh rồi bấm Lưu; cảnh đã chỉnh tay sẽ không bị AI ghi đè.':'';
   $('projectScenes').innerHTML=project.scenes.map((scene,index)=>{
     const count=scene.character_ids.length;
@@ -549,7 +571,7 @@ function finishCharacters(engine,id,web){
   charJob=null;renderCharacterRun();
   if(web.error)return toast(web.error,true);
   api('/api/characters/apply',{engine,job_id:id}).then(({summary,missing,unknown,project:data})=>{
-    project=data;renderCharacters();
+    project=data;selectedCharacter='';renderCharacters();loadProjects();
     const notes=[];
     if(missing.length)notes.push(`AI chưa ghi nhân vật cho cảnh ${missing.join(', ')}. Tick tay ở danh sách cảnh bên dưới.`);
     if(unknown.length)notes.push(`AI nhắc tới Character ID chưa liệt kê: ${unknown.join(', ')} (đã bỏ qua).`);
@@ -564,7 +586,7 @@ $('saveProject').onclick=()=>action(async()=>{
   if(project&&!confirm(`Tạo dự án mới từ ${content.scenes.length} cảnh hiện tại? Dự án “${project.name}” vẫn được giữ.`))return;
   const name=(content.brief||'').split('\n').map(x=>x.trim()).find(Boolean)||'';
   const {project:data}=await api('/api/projects/create',{name:name.slice(0,80),brief:content.brief,video_url:content.video,script:content.script,scenes:content.scenes});
-  project=data;charPrefs.projectId=data.id;saveCharPrefs();$('characterNotice').hidden=true;renderCharacters();$('saveProject').blur();
+  project=data;charPrefs.projectId=data.id;saveCharPrefs();$('characterNotice').hidden=true;renderCharacters();loadProjects();$('saveProject').blur();
   toast(`Đã lưu dự án với ${data.scenes.length} cảnh. Bấm Tìm nhân vật.`);
 });
 $('extractCharacters').onclick=()=>action(async()=>{
@@ -582,14 +604,20 @@ $('stopCharacters').onclick=()=>charJob&&api('/api/content/web-stop',{engine:cha
 $('addCharacter').onclick=()=>action(async()=>{
   if(!project)return;
   const name=$('newCharacterName').value.trim();if(!name)return toast('Nhập tên nhân vật.',true);
-  const {code}=await api('/api/characters/add',{project_id:project.id,name,description:$('newCharacterDesc').value,image_prompt:$('newCharacterPrompt').value});
-  for(const id of ['newCharacterName','newCharacterDesc','newCharacterPrompt'])$(id).value='';
-  await loadProject(project.id);toast(`Đã thêm nhân vật ${code}.`);
+  const sent={newCharacterName:$('newCharacterName').value,newCharacterDesc:$('newCharacterDesc').value,newCharacterPrompt:$('newCharacterPrompt').value};
+  $('addCharacter').disabled=true;
+  try{
+    const {code,id}=await api('/api/characters/add',{project_id:project.id,name,description:sent.newCharacterDesc,image_prompt:sent.newCharacterPrompt});
+    for(const [field,value] of Object.entries(sent))if($(field).value===value)$(field).value='';  // không xóa nội dung vừa gõ thêm
+    selectedCharacter=id;await loadProject(project.id);toast(`Đã thêm nhân vật ${code}.`);
+  }finally{$('addCharacter').disabled=false;}
 });
-$('characterList').onclick=e=>{
-  const save=e.target.closest('[data-char-save]'),remove=e.target.closest('[data-char-delete]');
+$('characterList').onclick=e=>{const row=e.target.closest('[data-select-character]');if(!row)return;selectedCharacter=row.dataset.selectCharacter;renderCharacters();};
+$('characterDetail').onclick=e=>{
+  const save=e.target.closest('[data-char-save]'),remove=e.target.closest('[data-char-delete]'),lock=e.target.closest('[data-char-lock]');
   if(save){const card=save.closest('[data-character]');action(async()=>{await api('/api/characters/update',{id:save.dataset.charSave,name:card.querySelector('[data-char-name]').value,description:card.querySelector('[data-char-desc]').value,image_prompt:card.querySelector('[data-char-prompt]').value});save.blur();await loadProject(project.id);toast('Đã lưu nhân vật.');});}
-  if(remove){const card=remove.closest('[data-character]');if(!confirm(`Xóa nhân vật ${card.querySelector('code').textContent}? Nhân vật cũng được bỏ khỏi các cảnh.`))return;action(async()=>{await api('/api/characters/delete',{id:remove.dataset.charDelete});await loadProject(project.id);toast('Đã xóa nhân vật.');});}
+  if(lock){const locked=lock.dataset.locked!=='1';action(async()=>{await api('/api/characters/lock',{id:lock.dataset.charLock,locked});lock.blur();await loadProject(project.id);toast(locked?'Đã duyệt và khóa nhân vật.':'Đã mở khóa nhân vật.');});}
+  if(remove){const card=remove.closest('[data-character]');if(!confirm(`Xóa nhân vật ${card.querySelector('code').textContent}? Nhân vật cũng được bỏ khỏi các cảnh.`))return;action(async()=>{await api('/api/characters/delete',{id:remove.dataset.charDelete});selectedCharacter='';await loadProject(project.id);toast('Đã xóa nhân vật.');});}
 };
 $('projectScenes').onclick=e=>{
   const save=e.target.closest('[data-scene-characters]');if(!save)return;
@@ -597,6 +625,30 @@ $('projectScenes').onclick=e=>{
   action(async()=>{await api('/api/scenes/characters',{scene_id:save.dataset.sceneCharacters,character_ids:ids});save.blur();await loadProject(project.id);toast(`Đã lưu ${ids.length} nhân vật cho cảnh.`);});
 };
 setInterval(()=>{if(!$('contentView').hidden)renderCharacterRun();},1000);
+// ---------- Thanh 5 bước của Content Studio ----------
+let currentStep=1;try{currentStep=Math.min(5,Math.max(1,Number(localStorage.getItem('hana-step'))||1));}catch{}
+function stepDone(n){return n===1?Boolean(content.brief.trim()):n===2?content.scenes.length>0:n===3?Boolean(project?.characters.length):n===4?Boolean((content.english||content.englishChatgpt||'').trim()):false;}
+function setStep(n,scroll=true){
+  currentStep=n;try{localStorage.setItem('hana-step',String(n));}catch{}
+  document.querySelectorAll('[data-step-panel]').forEach(el=>el.hidden=Number(el.dataset.stepPanel)!==n);
+  document.querySelectorAll('.stepper [data-step]').forEach(b=>{const k=Number(b.dataset.step);b.classList.toggle('active',k===n);b.classList.toggle('done',k!==n&&stepDone(k));});
+  if(n===5)renderOverview();
+  markSidebar();if(scroll)window.scrollTo({top:0,behavior:'smooth'});
+}
+function renderOverview(){
+  const english=(content.english||'').split('\n').filter(x=>x.trim()).length,chat=(content.englishChatgpt||'').split('\n').filter(x=>x.trim()).length;
+  const chars=project?.characters||[],approved=chars.filter(c=>c.approved_asset_id).length;
+  const tiles=[['Cảnh',content.scenes.length,'bước 2'],['Dự án',project?project.name:'Chưa lưu','bước 3'],['Nhân vật',chars.length,`${approved} đã duyệt · ${chars.length-approved} cần tạo ảnh`],['Prompt · Gemini',english,'bước 4'],['Prompt · ChatGPT',chat,'bước 4']];
+  $('overviewStats').innerHTML=tiles.map(([label,value,note])=>`<div class="overview-tile"><small>${esc(label)}</small><b>${esc(String(value))}</b><span>${esc(note)}</span></div>`).join('');
+}
+function markSidebar(){
+  const content=!$('contentView').hidden;
+  $('navStudio').classList.toggle('active',!content);$('openContent').classList.toggle('active',content&&currentStep!==3);$('navCharacters').classList.toggle('active',content&&currentStep===3);
+}
+document.querySelectorAll('.stepper [data-step]').forEach(b=>b.onclick=()=>setStep(Number(b.dataset.step)));
+document.addEventListener('click',e=>{const go=e.target.closest('[data-goto-step]');if(go)setStep(Number(go.dataset.gotoStep));});
+$('navCharacters').onclick=()=>{showView('content');setStep(3);};
+setInterval(()=>{if(state?.app_version)$('appVersion').textContent='v'+state.app_version;const runs=$('headerRuns').textContent;$('sideRuns').hidden=!Number(runs);$('sideRuns').textContent=runs;},1000);
 renderMode();await refresh();if(state?.content?.web?.busy)autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(state?.content?.chatgpt?.busy)chatJob={id:state.content.chatgpt.id,kind:state.content.chatgpt.kind};for(const [engine,web] of [['gemini',state?.content?.web],['chatgpt',state?.content?.chatgpt]])if(web?.busy&&web.kind==='characters')charJob={id:web.id,engine};if(location.hash==='#content')showView('content');{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(m)openJob(m[1]);}setInterval(refresh,2000);
 
 document.addEventListener('click',e=>{const b=e.target.closest('[data-review],[data-close-review]');if(!b)return;action(async()=>{await api(b.dataset.review?'/api/review':'/api/review-close',{id:b.dataset.review||b.dataset.closeReview});b.blur();toast(b.dataset.review?'Đang mở đúng phiên tài khoản. Đóng phiên trong mục Tài khoản khi kiểm tra xong.':'Đang đóng phiên kiểm tra.');});});

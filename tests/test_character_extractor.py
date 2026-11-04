@@ -221,6 +221,12 @@ class CharacterHTTPTests(unittest.TestCase):
         self.assertTrue(full["scenes"][2]["manual"])
         self.assertEqual(full["characters"][0]["name"], "Dê đầu đàn")
         self.assertEqual(len(self.call("GET", "/api/projects")[1]["projects"]), 1)
+        self.assertEqual(self.call("POST", "/api/characters/lock", {"id": characters[0]["id"], "locked": True})[0], 400)  # chưa có ảnh Master
+        token = self.store.add_image(b"\x89PNG\r\n\x1a\nmaster")["token"]
+        self.store.characters.approve_asset(self.store.characters.add_asset(characters[0]["id"], token))
+        self.assertEqual(self.call("POST", "/api/characters/lock", {"id": characters[0]["id"], "locked": True})[0], 200)
+        self.assertEqual(self.call("POST", "/api/characters/update", {"id": characters[0]["id"], "name": "X"})[0], 400)  # đã khóa
+        self.assertEqual(self.call("POST", "/api/characters/lock", {"id": characters[0]["id"], "locked": False})[0], 200)
         self.assertEqual(self.call("POST", "/api/projects/create", {"scenes": []})[0], 400)
         self.assertEqual(self.call("GET", "/api/project/" + "b" * 32)[0], 404)
 

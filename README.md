@@ -56,7 +56,12 @@ Nếu AI đã viết xong trên cửa sổ Chrome mà tool vẫn hiện đang ch
 
 Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt khi chuyển trang hoặc tải lại. Tool dò ô nhập, nút Gửi và câu trả lời theo giao diện Gemini hiện tại; nếu Google đổi giao diện mà tool báo không điền/không đọc được, cần cập nhật tool. Việc điều khiển trình duyệt tự động có thể trái điều khoản sử dụng của Google; dùng ở mức vừa phải trên tài khoản của chính bạn.
 
-## Character Library: nhân vật của dự án (bước 5 trong Viết content)
+## Giao diện
+
+- Thanh bên trái: **Studio · Video Queue** (hàng đợi và tạo video), **Content Studio**, **Character Library** (mở thẳng bước Nhân vật), **Image Library**, **Tài khoản Muse**. Góc dưới hiện trạng thái kết nối, số luồng đang chạy và phiên bản.
+- **Content Studio** có thanh 5 bước: **1 Ý tưởng** (yêu cầu + link video, chạy Gemini) → **2 Kịch bản** (kịch bản và các cảnh; tự chuyển sang khi Gemini viết xong) → **3 Nhân vật** (Character Library) → **4 Prompt** (prompt tiếng Anh) → **5 Tổng quan**. Ô **Dự án** ở trên cùng để mở lại dự án đã lưu.
+
+## Character Library: nhân vật của dự án (bước 3 · Nhân vật trong Content Studio)
 
 Mục tiêu: mỗi nhân vật có **một ảnh Master** dùng lại cho mọi cảnh, không tạo ảnh riêng cho từng cảnh.
 
@@ -66,7 +71,7 @@ Mục tiêu: mỗi nhân vật có **một ảnh Master** dùng lại cho mọi 
    - nhân vật xuất hiện trong **từng cảnh**. Cảnh nào AI bỏ sót, tool tự hỏi lại riêng các cảnh đó (tối đa 3 lần, dừng nếu không có tiến triển).
 3. Sửa tên, mô tả, prompt ảnh của từng nhân vật rồi bấm **Lưu**; thêm nhân vật thủ công nếu thiếu; xóa nhân vật thừa.
 4. Ở **Nhân vật trong từng cảnh**, tick nhân vật rồi bấm **Lưu** để sửa tay. Cảnh đã chỉnh tay hiện "đã chỉnh tay" và **không bị AI ghi đè** khi bấm Tìm nhân vật lần nữa. Nhân vật đã duyệt ảnh hoặc đã khóa cũng không bị AI sửa.
-5. Mỗi cảnh hiện số nhân vật; mỗi nhân vật hiện số cảnh có mặt.
+5. Mỗi cảnh hiện số nhân vật; mỗi nhân vật hiện số cảnh có mặt. Danh sách nhân vật ở bên trái, bấm một nhân vật để xem và sửa chi tiết bên phải. Nút **Duyệt / Khóa** dùng được khi nhân vật đã có ảnh Master; **Tạo lại** và **Thay ảnh** sẽ hoạt động khi có bước tạo ảnh bằng Google Flow.
 
 Chưa có trong bản này: tự tạo ảnh Master bằng Google Flow (Nano Banana), duyệt/khóa ảnh trên giao diện, và tự gắn ảnh vào prompt video. Các bước đó làm ở giai đoạn tiếp theo.
 

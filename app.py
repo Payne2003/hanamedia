@@ -360,6 +360,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"ok": True, **made})
             elif path == "/api/characters/update":
                 store.characters.update_character(body["id"], body.get("name"), body.get("description"), body.get("image_prompt"))
+            elif path == "/api/characters/lock":
+                store.characters.set_locked(body["id"], body.get("locked") is True)
             elif path == "/api/characters/delete":
                 store.characters.delete_character(body["id"])
             elif path == "/api/scenes/characters":

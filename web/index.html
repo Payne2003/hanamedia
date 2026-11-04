@@ -6,18 +6,20 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header>
-    <a class="brand" href="/"><span class="logo">HM</span><span>HANA MEDIA<small>AI IMAGE & VIDEO</small></span></a>
-    <nav class="primary-nav" aria-label="Điều hướng chính">
-      <button type="button" class="active" data-nav="studio" id="navStudio">▦ Studio</button>
-      <button type="button" data-nav="content" id="openContent">✎ Viết content</button>
-      <button type="button" id="openLibrary">▧ Thư viện</button>
-      <button type="button" id="accountsButton">♙ Tài khoản <b id="accountCount">0</b></button>
-      <button type="button" data-coming>◉ Proxy</button>
-      <button type="button" data-coming>⚙ Cài đặt</button>
+  <div class="app-shell">
+  <aside class="sidebar" aria-label="Điều hướng chính">
+    <a class="brand" href="/"><span class="logo">HM</span><span>HANA MEDIA<small>AI Video Studio</small></span></a>
+    <nav class="primary-nav">
+      <button type="button" class="active" data-nav="studio" id="navStudio"><i>⌂</i>Studio · Video Queue<b id="sideRuns" class="nav-badge" hidden>0</b></button>
+      <button type="button" data-nav="content" id="openContent"><i>✎</i>Content Studio</button>
+      <button type="button" id="navCharacters"><i>☺</i>Character Library</button>
+      <button type="button" id="openLibrary"><i>▧</i>Image Library</button>
+      <button type="button" id="accountsButton"><i>♙</i>Tài khoản Muse <b id="accountCount" class="nav-badge">0</b></button>
+      <button type="button" data-coming><i>⚙</i>Cài đặt</button>
     </nav>
-    <div class="header-actions"><span id="connection" class="connection">Đang kết nối…</span><span class="running-pill"><i></i><b id="headerRuns">0</b> luồng đang chạy</span></div>
-  </header>
+    <div class="sidebar-foot"><span id="connection" class="connection">Đang kết nối…</span><span class="running-pill"><i></i><b id="headerRuns">0</b> luồng đang chạy</span><small id="appVersion">v1.0.0</small></div>
+  </aside>
+  <div class="app-main">
   <main>
     <div id="studioView">
     <section class="studio-toolbar">
@@ -80,10 +82,17 @@
       </div>
     </section>
     <section id="contentView" class="content-page" hidden>
-      <div class="content-page-heading"><div><div class="eyebrow">PROMPT + VIDEO GỐC → GEMINI PRO → HÀNG LOẠT PROMPT</div><h1>Viết content</h1><p>Gemini xem video gốc, viết lại kịch bản và chia cảnh: <b>bối cảnh, góc quay, hành vi nhân vật, nội dung hành động nhân vật</b>. Kiểm tra lại thiếu cảnh/lỗi rồi đưa hàng loạt prompt vào Studio.</p></div><button id="closeContent" type="button">← Về Studio</button></div>
+      <div class="content-topbar"><h1>Content Studio</h1><span class="crumb">/</span><label class="project-picker">Dự án<select id="projectSelect" aria-label="Chọn dự án"><option value="">— Chưa lưu dự án —</option></select></label><span class="bulk-spacer"></span><span class="tool-chip"><i class="dot green"></i>Flow (Nano Banana)</span><span class="tool-chip">▣ Muse Video</span><button id="closeContent" type="button">← Về Studio</button></div>
+      <nav class="stepper" aria-label="Các bước">
+        <button type="button" data-step="1"><span>1</span>Ý tưởng</button><i></i>
+        <button type="button" data-step="2"><span>2</span>Kịch bản</button><i></i>
+        <button type="button" data-step="3"><span>3</span>Nhân vật</button><i></i>
+        <button type="button" data-step="4"><span>4</span>Prompt</button><i></i>
+        <button type="button" data-step="5"><span>5</span>Tổng quan</button>
+      </nav>
       <div id="runnerOutdated" class="content-error" role="alert" hidden><b>Bộ chạy đang chạy bản cũ.</b> Đóng cửa sổ đen CHAY_WINDOWS.cmd (hoặc nhấn Ctrl+C trong đó), mở lại CHAY_WINDOWS.cmd rồi tải lại trang này bằng Ctrl+F5.</div>
       <div class="content-columns">
-        <div class="content-input card">
+        <div class="content-input card" data-step-panel="1">
           <section class="content-step first"><h3><span>1</span>Đầu vào · Gemini Pro</h3>
             <label for="contentBrief">Prompt · yêu cầu cho Gemini</label>
             <textarea id="contentBrief" rows="6" maxlength="20000"></textarea>
@@ -98,7 +107,7 @@
             </div>
           </section>
         </div>
-        <div class="content-output card">
+        <div class="content-output card" data-step-panel="2">
           <div id="contentEmpty" class="empty"><span>✎</span><h3>Chưa có kịch bản</h3><p>Nhập yêu cầu và link video gốc bên trái, rồi bấm Chạy tự động trên Gemini.</p></div>
           <section class="content-step first" id="contentResult" hidden><h3><span>2</span>Đầu ra</h3>
             <details class="original-script"><summary>Kịch bản video gốc</summary><textarea id="contentScript" rows="8"></textarea></details>
@@ -112,7 +121,7 @@
           </section>
         </div>
       </div>
-      <div class="english-card card">
+      <div class="english-card card" data-step-panel="4">
         <div class="english-heading"><h3><span>4</span>Prompt tiếng Anh · Gemini Pro / ChatGPT</h3><p>Mỗi “Bối cảnh N: …” thành 1 prompt tiếng Anh, mỗi dòng một prompt. Chọn Gemini Pro hoặc ChatGPT; kết quả mỗi bên lưu riêng để so sánh. Cảnh nào thiếu hoặc chưa phải tiếng Anh, tool tự hỏi lại riêng những cảnh đó.</p></div>
         <div class="english-columns">
           <div>
@@ -133,28 +142,44 @@
           </div>
         </div>
       </div>
-      <div class="character-card-panel card" id="characterPanel">
-        <div class="english-heading"><h3><span>5</span>Character Library · nhân vật của dự án</h3><p>AI đọc kịch bản và danh sách cảnh, liệt kê các nhân vật duy nhất (mỗi nhân vật một Character ID và một ảnh Master), rồi ghi nhân vật xuất hiện trong từng cảnh. Không tạo ảnh riêng cho từng cảnh.</p></div>
-        <div class="character-toolbar">
+      <div class="character-studio" id="characterPanel" data-step-panel="3">
+        <div class="character-toolbar card">
           <span id="projectInfo" class="detail">Chưa có dự án. Viết cảnh ở bước 2 rồi bấm Lưu thành dự án.</span>
           <span class="bulk-spacer"></span>
           <button id="saveProject" type="button">💾 Lưu danh sách cảnh thành dự án</button>
           <div class="english-engines" role="group" aria-label="AI tìm nhân vật"><button type="button" data-character-engine="gemini">Gemini Pro</button><button type="button" data-character-engine="chatgpt">ChatGPT</button></div>
-          <button id="extractCharacters" type="button" class="primary">✦ Tìm nhân vật</button>
         </div>
-        <div id="characterProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="characterStatus"></span><button id="takeCharacters" type="button" title="Bấm khi AI đã viết xong mà tool vẫn đang chờ">Lấy kết quả ngay</button><button id="stopCharacters" type="button">Dừng</button></div></div>
+        <div id="characterProgress" class="content-progress card" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="characterStatus"></span><button id="takeCharacters" type="button" title="Bấm khi AI đã viết xong mà tool vẫn đang chờ">Lấy kết quả ngay</button><button id="stopCharacters" type="button">Dừng</button></div></div>
         <div id="characterNotice" class="content-issues" hidden></div>
-        <div id="characterList" class="character-grid"></div>
-        <details class="character-add"><summary>+ Thêm nhân vật thủ công</summary>
-          <div class="content-grid"><label>Tên nhân vật<input id="newCharacterName" maxlength="200" placeholder="Ví dụ: Dê con"></label><label>Mô tả ngoại hình<input id="newCharacterDesc" maxlength="5000" placeholder="Lông nâu sáng, nhỏ, tai vểnh"></label></div>
-          <label>Prompt ảnh Master (tiếng Anh)<textarea id="newCharacterPrompt" rows="2" maxlength="5000" placeholder="full body photo of ..., front view, plain neutral background, studio lighting, photorealistic, no text"></textarea></label>
-          <button id="addCharacter" type="button">+ Thêm nhân vật</button>
-        </details>
-        <div class="english-label"><b>Nhân vật trong từng cảnh</b><small id="projectSceneHint" class="detail"></small></div>
-        <div id="projectScenes" class="project-scenes"></div>
+        <div class="character-master-detail">
+          <aside class="character-sidebar card">
+            <div class="cs-head"><h3>Nhân vật <small>(Character Master)</small></h3><span id="characterTotal" class="step-count">0</span></div>
+            <button id="extractCharacters" type="button" class="primary full">✦ Tìm nhân vật bằng AI</button>
+            <div id="characterList" class="character-list"></div>
+            <details class="character-add"><summary>＋ Thêm nhân vật thủ công</summary>
+              <label>Tên nhân vật<input id="newCharacterName" maxlength="200" placeholder="Ví dụ: Dê con"></label>
+              <label>Mô tả ngoại hình<input id="newCharacterDesc" maxlength="5000" placeholder="Lông nâu sáng, nhỏ, tai vểnh"></label>
+              <label>Prompt ảnh Master (tiếng Anh)<textarea id="newCharacterPrompt" rows="2" maxlength="5000" placeholder="full body photo of ..., front view, plain neutral background, studio lighting, photorealistic, no text"></textarea></label>
+              <button id="addCharacter" type="button" class="full">＋ Thêm nhân vật</button>
+            </details>
+          </aside>
+          <section id="characterDetail" class="character-detail card"></section>
+        </div>
+        <div class="scenes-card card">
+          <div class="english-label"><b>Nhân vật trong từng cảnh</b><small id="projectSceneHint" class="detail"></small></div>
+          <div id="projectScenes" class="project-scenes"></div>
+        </div>
+        <div class="character-summary card"><span class="summary-icon">☺</span><div><b>Tổng quan nhân vật</b><small id="characterSummary">0 nhân vật</small></div><span class="bulk-spacer"></span><button type="button" class="primary" data-goto-step="4">Tiếp tục: Tạo Prompt →</button></div>
+      </div>
+      <div class="overview card" data-step-panel="5">
+        <div class="english-heading"><h3><span>5</span>Tổng quan dự án</h3><p>Kiểm tra nhanh trước khi đưa prompt sang Studio để tạo video.</p></div>
+        <div id="overviewStats" class="overview-grid"></div>
+        <div class="content-actions"><button type="button" data-goto-step="2">Xem kịch bản &amp; cảnh</button><button type="button" data-goto-step="3">Nhân vật</button><button type="button" class="primary" data-goto-step="4">Prompt tiếng Anh → Studio</button></div>
       </div>
     </section>
   </main>
+  </div>
+  </div>
   <dialog id="accounts"><div class="dialog-heading"><div><div class="eyebrow">EMAIL + OTP · KHÔNG MẬT KHẨU</div><h2>Tài khoản Muse</h2></div><button id="closeAccounts" aria-label="Đóng">✕</button></div><p class="dialog-description">Mỗi tài khoản có phiên Chrome riêng. Tool thử lấy OTP mới từ link hộp thư; nếu hộp thư lỗi, nhập mã trực tiếp trên cửa sổ Muse.</p><div class="login-all"><label>Chrome đăng nhập cùng lúc<select id="loginParallel"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="5">5</option></select></label><button id="loginAll" type="button" class="primary">Đăng nhập tất cả tài khoản chưa sẵn sàng</button><span id="loginAllStatus" class="detail"></span></div><div id="accountList"></div><form id="accountForm"><h3>Thêm tài khoản</h3><div class="form-grid"><label>Email Muse <small>(mỗi dòng một email, thêm bao nhiêu cũng được)</small><textarea id="email" rows="4" autocomplete="off" required maxlength="200000" placeholder="email1@tuan89.site&#10;email2@tuan89.site"></textarea></label><label>Ngân sách credit dự kiến<input id="budget" type="number" required min="0" step="0.01" value="10"></label></div><label>Link hộp thư OTP <small>(chỉ khi thêm 1 email)</small><input id="mailbox" type="url" placeholder="Tự điền link Tuan89 theo email nếu để trống"></label><button class="primary" type="submit">+ Thêm tài khoản</button></form><p class="subtle-note">Phiên đăng nhập được giữ trên máy. Không chia sẻ thư mục data. Tài khoản hết ngân sách hoặc cần kiểm tra sẽ không nhận tác vụ mới.</p></dialog>
   <dialog id="player"><div class="dialog-heading"><h2 id="playerTitle">Video của cảnh</h2><button id="closePlayer" aria-label="Đóng video">✕</button></div><video id="videoPlayer" controls playsinline></video><p id="playerPrompt"></p></dialog>
   <dialog id="imageLibrary"><div class="dialog-heading"><div><div class="eyebrow">THƯ VIỆN CỤC BỘ</div><h2>Ảnh tham chiếu</h2></div><button id="closeImageLibrary" aria-label="Đóng thư viện">✕</button></div><p class="dialog-description">Chọn ảnh đã tạo từ Flow hoặc ảnh đã thêm trước đây để gắn vào prompt đang chọn.</p><div id="imageLibraryGrid" class="image-library-grid"></div></dialog>
