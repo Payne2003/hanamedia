@@ -628,15 +628,14 @@ class FlowTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_default_flow_profile_uses_installed_chrome_profile_2(self):
+    def test_default_flow_profile_is_the_tools_own_profile(self):
         local_app_data = self.root / "AppData"
-        profile = local_app_data / "Google" / "Chrome" / "User Data" / "Profile 2"
-        profile.mkdir(parents=True)
-        with patch.dict(os.environ, {
-            "LOCALAPPDATA": str(local_app_data),
-            "HUMY_FLOW_PROFILE_PATH": "",
-        }):
-            self.assertEqual(default_chrome_profile(self.root / "data"), profile)
+        (local_app_data / "Google" / "Chrome" / "User Data" / "Profile 2").mkdir(parents=True)
+        with patch.dict(os.environ, {"LOCALAPPDATA": str(local_app_data), "HUMY_FLOW_PROFILE_PATH": ""}):
+            # Không dùng hồ sơ Chrome cá nhân (Profile 2) dù máy có: luôn là hồ sơ riêng trong thư mục dữ liệu của tool.
+            self.assertEqual(default_chrome_profile(self.root / "data"), self.root / "data" / "profiles" / "google-flow" / "Default")
+        with patch.dict(os.environ, {"HUMY_FLOW_PROFILE_PATH": str(self.root / "custom" / "Profile 9")}):
+            self.assertEqual(default_chrome_profile(self.root / "data"), self.root / "custom" / "Profile 9")
 
     def test_flow_session_targets_existing_profile_directory(self):
         profile = self.root / "User Data" / "Profile 2"

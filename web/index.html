@@ -96,10 +96,10 @@
           <p class="detail">Lần đầu: bấm Đăng nhập ChatGPT, đăng nhập tài khoản ChatGPT của bạn trong Chrome vừa mở, thấy ô nhắn tin thì đóng hẳn cửa sổ đó. ChatGPT chạy trong Chrome riêng, tách khỏi Gemini.</p>
         </div>
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">F</span><div><h3>Google Flow · Nano Banana</h3><small>Tạo ảnh Master của nhân vật</small></div></div>
-          <p class="detail">Hồ sơ Chrome: <code id="flowProfile"></code></p>
+          <p class="detail">Hồ sơ Chrome riêng của tool (giống Gemini, ChatGPT; máy nào cũng dùng được): <code id="flowProfile"></code></p>
           <button id="loginFlow" type="button" class="full">Đăng nhập Google Flow (mở Chrome thường)</button>
           <p class="detail" id="settingsFlowStatus"></p>
-          <p class="detail"><b>Lần đầu:</b> bấm Đăng nhập, đăng nhập tài khoản Google có Flow, thấy trang Flow thì <b>đóng hẳn cửa sổ đó</b>. Tool dùng chung hồ sơ này khi mở Flow để điền prompt ảnh, nên không mở hai cửa sổ cùng lúc.</p>
+          <p class="detail"><b>Lần đầu:</b> bấm Đăng nhập, đăng nhập tài khoản Google có Flow, thấy trang Flow thì <b>đóng hẳn cửa sổ đó</b>. Phiên đăng nhập được lưu trong hồ sơ này; tool dùng nó khi mở Flow để điền prompt ảnh, nên không mở hai cửa sổ Flow cùng lúc.</p>
         </div>
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">M</span><div><h3>Tài khoản Muse</h3><small>Tạo video hàng loạt</small></div><span id="museBadge" class="status-chip">0 tài khoản</span></div>
           <p class="detail" id="museSummary"></p>
@@ -151,16 +151,16 @@
         </div>
       </div>
       <div class="english-card card" data-step-panel="4">
-        <div class="english-heading"><h3><span>4</span>Prompt tiếng Anh · Gemini Pro / ChatGPT</h3><p>Mỗi “Bối cảnh N: …” thành 1 prompt tiếng Anh, mỗi dòng một prompt. Chọn Gemini Pro hoặc ChatGPT; kết quả mỗi bên lưu riêng để so sánh. Cảnh nào thiếu hoặc chưa phải tiếng Anh, tool tự hỏi lại riêng những cảnh đó.</p></div>
+        <div class="english-heading"><h3><span>4</span>Prompt tiếng Anh · ChatGPT</h3><p>Mỗi “Bối cảnh N: …” thành 1 prompt tiếng Anh, mỗi dòng một prompt, viết bằng ChatGPT. Cảnh nào thiếu hoặc chưa phải tiếng Anh, tool tự hỏi lại riêng những cảnh đó.</p></div>
         <div class="english-columns">
           <div>
             <div class="english-label"><label for="englishInput">Đầu vào · danh sách cảnh</label><button id="englishFromScenes" type="button" class="text-button">↓ Lấy từ danh sách cảnh</button></div>
             <textarea id="englishInput" rows="9" maxlength="600000" placeholder="Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;&#10;Bối cảnh 2: ..."></textarea>
             <div class="content-grid english-options"><label>Phong cách chung <small>(không bắt buộc)</small><input id="englishStyle" maxlength="2000" placeholder="Ví dụ: cinematic, ánh sáng tự nhiên"></label><label>Thời lượng mỗi cảnh<select id="englishSeconds"><option value="15">15 giây</option><option value="10">10 giây</option><option value="8">8 giây</option><option value="5">5 giây</option></select></label><label>Tỷ lệ khung hình<select id="englishAspect"><option value="16:9">16:9 · ngang</option><option value="9:16">9:16 · dọc</option><option value="1:1">1:1 · vuông</option></select></label></div>
             <label class="check english-structured"><input id="englishStructured" type="checkbox" checked><span>Prompt chuẩn đủ trường<small>Mỗi prompt viết theo khung <code>Setting: …; Camera: …; Character behavior: …; Action: …; Style: …</code>. Tool tách trường ngay từ prompt và tự hỏi lại cảnh nào thiếu trường.</small></span></label>
-            <div class="english-engines" role="group" aria-label="Chọn AI viết prompt"><button type="button" data-english-engine="gemini">Gemini Pro</button><button type="button" data-english-engine="chatgpt">ChatGPT</button></div>
+            
             <div id="chatgptOptions" hidden><p class="detail account-line">ChatGPT dùng tài khoản và model trong <button type="button" class="text-button" data-open-settings>⚙ Cài đặt</button>.</p></div>
-            <button id="runEnglish" type="button" class="primary full">✦ Viết prompt tiếng Anh bằng Gemini</button>
+            <button id="runEnglish" type="button" class="primary full">✦ Viết prompt tiếng Anh bằng ChatGPT</button>
             <div id="englishProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="englishStatus"></span><button id="takeEnglish" type="button" title="Bấm khi AI đã viết xong mà tool vẫn đang chờ">Lấy kết quả ngay</button><button id="stopEnglish" type="button">Dừng</button></div></div>
           </div>
           <div>

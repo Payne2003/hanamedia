@@ -14,8 +14,7 @@ from .muse import MuseBrowser, MuseFailure
 class Engine:
     def __init__(self, store, data):
         self.store, self.data = store, Path(data)
-        self.flow_profile = Path(store.setting(
-            "flow_profile", str(default_chrome_profile(self.data))))
+        self.flow_profile = default_chrome_profile(self.data)
         self.lock = threading.RLock()
         self.changed = threading.Event()
         self.enabled = False
@@ -33,7 +32,8 @@ class Engine:
         self.flow_requests = queue.Queue()
         self.flow_launcher = subprocess.Popen
         self.flow_busy = False
-        self.flow_status = f"Sẵn sàng mở Flow · Chrome profile {self.flow_profile.name}"
+        self.flow_status = ("Sẵn sàng mở Flow · hồ sơ Chrome riêng của tool" if (self.flow_profile.parent / "Local State").exists()
+                            else "Chưa đăng nhập Google Flow: vào Cài đặt → Google Flow → Đăng nhập")
         self.flow_thread = threading.Thread(target=self.flow_worker, daemon=True)
         self.flow_thread.start()
         self.store.recover()

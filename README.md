@@ -16,7 +16,7 @@ Bản chạy cục bộ cho Windows, viết bằng **Python + Selenium + SQLite*
 | Gắn video vào đúng cảnh | Mã tác vụ trong prompt, kiểm tra video xuất hiện sau prompt đó, đối chiếu tên file mới, chờ tải hoàn tất rồi gắn đường dẫn vào cảnh. Có nút Xem và Tải MP4. |
 | Thư viện ảnh tham chiếu | Ảnh cục bộ được lưu trong thư viện và có thể gắn lại vào từng prompt. Ảnh tải xuống từ Flow có thể nhập vào thư viện. |
 | Ảnh → video | Chọn **Ảnh → video** trong khung tạo, gắn tối thiểu 1 và tối đa 10 ảnh cho từng prompt; ảnh được tải lên Muse trước khi gửi prompt và hiện ảnh thu nhỏ trong hàng đợi. |
-| Tạo ảnh | **Tạo ảnh · Google Flow** mở Flow bằng profile Chrome `Profile 2` hiện có, điền prompt, và lưu tải xuống Flow vào thư mục dữ liệu của tool. Trong Flow chọn **Hình ảnh**, tạo và tải kết quả; bấm **Nhập ảnh Flow đã tải** để thêm ảnh vào thư viện. |
+| Tạo ảnh | **Tạo ảnh · Google Flow** mở Flow bằng hồ sơ Chrome riêng của tool (`data/profiles/google-flow`, đăng nhập một lần trong **Cài đặt**), điền prompt, và lưu tải xuống Flow vào thư mục dữ liệu của tool. Trong Flow chọn **Hình ảnh**, tạo và tải kết quả; bấm **Nhập ảnh Flow đã tải** để thêm ảnh vào thư viện. |
 | Chọn và xóa prompt | Chọn từng prompt hoặc toàn bộ kết quả lọc rồi xóa khỏi hàng đợi. Không xóa tác vụ đang chạy; video đã tải được giữ nguyên trong thư mục lưu. |
 | Tự mở các tài khoản, prompt sẵn để dán | Chế độ hỗ trợ mở Chrome và điền sẵn prompt; bạn bấm Gửi và Tải xuống. Mỗi cảnh có thêm nút Chép prompt. |
 
@@ -81,7 +81,7 @@ Mục tiêu: mỗi nhân vật có **một ảnh Master** dùng lại cho mọi 
 5. Mỗi cảnh hiện số nhân vật; mỗi nhân vật hiện số cảnh có mặt. Danh sách nhân vật ở bên trái, bấm một nhân vật để xem và sửa chi tiết bên phải. Nút **Duyệt / Khóa** dùng được khi nhân vật đã có ảnh Master; **Tạo lại** và **Thay ảnh** sẽ hoạt động khi có bước tạo ảnh bằng Google Flow.
 
 **Ảnh Master của nhân vật (bán tự động, Google Flow · Nano Banana):**
-1. Chọn nhân vật, bấm **✦ Mở Flow & điền prompt**. Tool mở Google Flow (Chrome `Profile 2`) và điền prompt tạo ảnh của nhân vật. Trong Flow bạn chọn **Hình ảnh**, mô hình **Nano Banana**, bấm tạo rồi tải ảnh xuống. (Veo là mô hình tạo **video**; ảnh nhân vật tạo bằng Nano Banana/Imagen.)
+1. Chọn nhân vật, bấm **✦ Mở Flow & điền prompt**. Tool mở Google Flow (hồ sơ Chrome riêng của tool) và điền prompt tạo ảnh của nhân vật. Trong Flow bạn chọn **Hình ảnh**, mô hình **Nano Banana**, bấm tạo rồi tải ảnh xuống. (Veo là mô hình tạo **video**; ảnh nhân vật tạo bằng Nano Banana/Imagen.)
 2. Bấm **⇄ Thay ảnh → ⇩ Lấy ảnh mới tải từ Flow**, rồi bấm ảnh muốn dùng: ảnh đó thành **ảnh Master đã duyệt**. Cũng có thể **Tải ảnh lên** hoặc chọn ảnh có sẵn trong thư viện.
 3. Mỗi ảnh của nhân vật hiện thành ảnh nhỏ dưới ảnh lớn; bấm ảnh nhỏ để đổi ảnh Master. Bấm **🔒 Duyệt / Khóa** để khóa: không đổi ảnh, không sửa, AI không ghi đè.
 
@@ -94,7 +94,7 @@ Chưa có trong bản này: tự động hoàn toàn bước tạo và tải ả
 
 ## Mức độ đã xác minh — đọc trước khi chạy
 
-- Tạo ảnh dùng giao diện Google Flow trên Chrome profile `Profile 2` trong `%LOCALAPPDATA%\Google\Chrome\User Data`, không dùng API riêng/không công khai. Profile này phải được đóng trong các cửa sổ Chrome khác trước khi bấm **Mở Flow và điền prompt**; Chrome không cho hai tiến trình dùng chung profile cùng lúc. Tool điền prompt nhưng người dùng cần chọn **Hình ảnh**, bấm tạo và tải ảnh trong Flow; sau đó nhập ảnh tải xuống vào thư viện. Đăng nhập Google trực tiếp trên cửa sổ Flow; tool không đọc/lưu mật khẩu.
+- Tạo ảnh dùng giao diện Google Flow, không dùng API riêng/không công khai. Flow chạy trong hồ sơ Chrome riêng của tool `data/profiles/google-flow` (giống Gemini/ChatGPT), nên máy nào cũng dùng được: lần đầu vào **Cài đặt → Google Flow → Đăng nhập Google Flow (mở Chrome thường)**, đăng nhập rồi đóng hẳn cửa sổ đó. Tool điền prompt; bạn chọn **Hình ảnh**, bấm tạo và tải ảnh trong Flow, rồi nhập ảnh tải xuống vào thư viện. Muốn dùng một hồ sơ Chrome khác: đặt biến môi trường `HUMY_FLOW_PROFILE_PATH`.
 - Đã quan sát đăng nhập Muse bằng email + OTP, gửi một yêu cầu video 5 giây, nhận video thật có thời lượng 5 giây và menu Tải xuống trên tài khoản mẫu trong trình duyệt ngày 02/11/2026.
 - Luồng tải ảnh lên Muse phụ thuộc vào ô chọn ảnh của giao diện Muse hiện tại và chưa được xác minh bằng một video ảnh → video thật. Nếu Muse không cung cấp ô tải ảnh tương thích hoặc không nhận nhiều ảnh, tác vụ sẽ báo lỗi trước khi gửi prompt.
 - Mã Selenium bám theo các nhãn/DOM vừa quan sát. Đây là bản triển khai để thử trên Windows; **chưa kiểm thử trọn quy trình bằng chính gói này trên Windows và chưa thử nhiều tài khoản thật cùng lúc**. Phiên Chrome riêng, chế độ ẩn, thư mục tải và lấy OTP tự động cần kiểm tra trên máy cài đặt.
@@ -122,7 +122,7 @@ Ngoài cách chạy bằng mã nguồn (`CHAY_WINDOWS.cmd`), tool có bản **ap
 - Bộ cài cài vào `%LOCALAPPDATA%\Programs\HanaMedia`, không cần quyền quản trị. Lần đầu Windows có thể báo SmartScreen ("ứng dụng không rõ nguồn gốc") vì app chưa ký số: bấm **Thông tin thêm → Vẫn chạy**.
 - Dữ liệu của app nằm riêng ở `%LOCALAPPDATA%\HanaMedia\data`: tài khoản, hàng đợi, ảnh, và các **hồ sơ Chrome đã đăng nhập** (Muse, Gemini, ChatGPT).
 - **Lần đầu mở app**, app tự tìm dữ liệu của bản mã nguồn (ví dụ `D:\Huy-Muse-Runner\data`) và **chép** sang, nên các tài khoản và Chrome đã đăng nhập vẫn giữ nguyên, không phải đăng nhập lại. Đóng `CHAY_WINDOWS.cmd` trước khi mở app lần đầu (app không chép dữ liệu đang mở). Thư mục cũ không bị sửa hay xóa. Nếu dữ liệu cũ nằm chỗ khác: đóng app, chạy `set HANAMEDIA_IMPORT=E:\đường-dẫn\data` rồi mở `%LOCALAPPDATA%\Programs\HanaMedia\HanaMedia.exe` từ cùng cửa sổ đó.
-- Chrome profile `Profile 2` dùng cho Flow là Chrome thường của bạn, không nằm trong dữ liệu app nên không bị ảnh hưởng.
+- Hồ sơ Chrome dùng cho Flow nằm trong dữ liệu của tool (`profiles/google-flow`), nên được chép sang cùng các hồ sơ khác.
 
 **Cập nhật và sửa tính năng sau khi đã đóng gói**
 1. Sửa code trong repo như trước (hoặc nhờ Claude sửa), merge vào `main`.
