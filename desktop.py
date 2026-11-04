@@ -23,7 +23,42 @@ def message(text, title="HANA MEDIA", question=False):
         return False
 
 
+def self_check():
+    """HanaMedia.exe --self-check <file>: nạp mọi thư viện cần để điều khiển Chrome và mở cửa sổ app, ghi kết quả ra file.
+    Dùng sau khi đóng gói để bắt lỗi thiếu thư viện (chạy được giao diện nhưng không mở được Chrome)."""
+    import traceback
+    index = sys.argv.index("--self-check")
+    output = sys.argv[index + 1] if len(sys.argv) > index + 1 else None
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.chrome.service import Service
+        from selenium.webdriver.common.action_chains import ActionChains  # noqa: F401
+        from selenium.webdriver.common.keys import Keys  # noqa: F401
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless=new")
+        Service(log_output=None)
+        from selenium.webdriver.common.selenium_manager import SeleniumManager
+        manager = SeleniumManager()._get_binary()
+        if not manager.exists():
+            raise RuntimeError(f"Thiếu selenium-manager: {manager}")
+        import tkinter  # noqa: F401  hộp chọn thư mục
+        import webview  # noqa: F401  cửa sổ app
+        import app  # noqa: F401
+        from runner import characters, engine, gemini_web, muse  # noqa: F401
+        result, code = "ok", 0
+    except Exception:
+        result, code = traceback.format_exc(), 1
+    if output:
+        from pathlib import Path
+        Path(output).write_text(result, encoding="utf-8")
+    else:
+        print(result)
+    return code
+
+
 def main():
+    if "--self-check" in sys.argv:
+        return self_check()
     if "--pick-folder" in sys.argv:
         import app
         return app.main()

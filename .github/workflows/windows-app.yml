@@ -26,6 +26,13 @@ jobs:
         run: python -m unittest discover -s tests
       - name: Đóng gói app
         run: python -m PyInstaller --noconfirm --clean packaging/HanaMedia.spec
+      - name: Kiểm tra thư viện trong bản đóng gói (Selenium, Chrome, cửa sổ app)
+        shell: pwsh
+        run: |
+          $out = "$env:RUNNER_TEMP\self-check.txt"
+          $p = Start-Process dist\HanaMedia\HanaMedia.exe -ArgumentList "--self-check", $out -PassThru -Wait
+          Get-Content $out
+          if ($p.ExitCode -ne 0) { throw "HanaMedia.exe thiếu thư viện (xem lỗi phía trên)" }
       - name: Kiểm tra app khởi động
         shell: pwsh
         run: |

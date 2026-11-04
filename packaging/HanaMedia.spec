@@ -1,7 +1,7 @@
 # PyInstaller: đóng gói HANA MEDIA thành thư mục dist/HanaMedia (HanaMedia.exe + thư viện).
 # Dùng dạng thư mục (không phải một file .exe) để khởi động nhanh và ít bị phần mềm diệt virus báo nhầm.
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 root = Path(SPECPATH).parent
 icon = root / "packaging" / "hanamedia.ico"
@@ -11,7 +11,8 @@ a = Analysis(
     pathex=[str(root)],
     # web/: giao diện; selenium: gồm selenium-manager.exe để tự tải ChromeDriver khớp với Chrome trên máy.
     datas=[(str(root / "web"), "web")] + collect_data_files("selenium"),
-    hiddenimports=["app", "folder_picker", "webview"],
+    # Selenium nạp các phần con khi cần (lazy import) nên PyInstaller không tự thấy: gom hết để Chrome mở được trong bản .exe.
+    hiddenimports=["app", "folder_picker", "webview"] + collect_submodules("selenium"),
     excludes=["pytest", "unittest.mock"],
 )
 pyz = PYZ(a.pure)
