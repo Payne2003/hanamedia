@@ -115,6 +115,75 @@
           <button type="button" class="full" data-pick-folder>Chọn thư mục lưu</button>
         </div>
       </div>
+      <div class="card guide-card" id="userGuide">
+        <div class="settings-head"><span class="settings-icon">📖</span><div><h3>Hướng dẫn sử dụng</h3><small>Làm theo thứ tự từ trên xuống. Bấm từng mục để mở.</small></div></div>
+        <details open><summary><b>1</b> Chuẩn bị lần đầu (chỉ làm một lần trên mỗi máy)</summary>
+          <ol>
+            <li><b>Chọn thư mục lưu video</b> ở thẻ “Thư mục lưu video” phía trên.</li>
+            <li><b>Đăng nhập AI:</b>
+              <ul>
+                <li>Nếu một tài khoản Google có đủ Gemini, ChatGPT (đăng nhập bằng Google) và Google Flow: bật <b>★ Tài khoản chung</b>, bấm <b>Đăng nhập tài khoản chung</b>. Cửa sổ Chrome mở 3 tab: đăng nhập Google → ở tab ChatGPT bấm <b>Continue with Google</b> → kiểm tra tab Flow vào được → <b>đóng hẳn cửa sổ</b>.</li>
+                <li>Nếu dùng tài khoản khác nhau: bấm lần lượt nút <b>Đăng nhập</b> ở thẻ Gemini, ChatGPT, Google Flow. Mỗi lần đăng nhập xong thì đóng hẳn cửa sổ đó.</li>
+              </ul></li>
+            <li><b>Tài khoản Muse:</b> bấm <b>Quản lý &amp; đăng nhập tài khoản Muse</b>, thêm email (mỗi dòng một email), bấm <b>Đăng nhập</b> hoặc <b>Đăng nhập tất cả</b>. Tool mở Muse, điền email, mở hộp thư Tuan89 ở tab bên cạnh; bạn <b>Copy OTP</b> rồi dán vào Muse.</li>
+            <li>Nhãn ở mỗi thẻ cho biết trạng thái: <b>✓ Đã đăng nhập</b> là tool đã thấy trang hoạt động; màu vàng là đã mở đăng nhập nhưng chưa chạy lần nào để kiểm tra.</li>
+          </ol>
+        </details>
+        <details><summary><b>2</b> Viết kịch bản và chia cảnh (Content Studio · bước 1–2)</summary>
+          <ol>
+            <li>Mở <b>Content Studio</b> ở thanh bên trái. Bước <b>1 Ý tưởng</b>: nhập yêu cầu (prompt) và link YouTube video gốc nếu có.</li>
+            <li>Bấm <b>✦ Chạy tự động trên Gemini</b>. Tool dán yêu cầu vào Gemini, chờ viết xong, tự nhắn “viết tiếp” nếu bị cắt. Không gõ vào cửa sổ Gemini khi tool đang chạy.</li>
+            <li>Gemini viết xong, tool tự chuyển sang bước <b>2 Kịch bản</b>: xem, sửa, thêm/xóa/đổi thứ tự cảnh. Bấm <b>↻ Kiểm tra thiếu cảnh / lỗi</b> để Gemini rà lại.</li>
+            <li>Nếu Gemini đã trả lời mà tool vẫn chờ: bấm <b>Lấy kết quả ngay</b>.</li>
+          </ol>
+        </details>
+        <details><summary><b>3</b> Nhân vật và ảnh Master (bước 3 · Nhân vật)</summary>
+          <ol>
+            <li>Bấm <b>💾 Lưu danh sách cảnh thành dự án</b>, chọn Gemini Pro hoặc ChatGPT, bấm <b>✦ Tìm nhân vật</b>. AI liệt kê các nhân vật duy nhất (Character ID, mô tả, prompt ảnh) và nhân vật xuất hiện trong từng cảnh.</li>
+            <li>Bấm một nhân vật ở danh sách bên trái để xem/sửa chi tiết bên phải, rồi bấm <b>Lưu thay đổi</b>.</li>
+            <li><b>Tạo ảnh Master:</b> bấm <b>✦ Mở Flow &amp; điền prompt</b> → trong Flow chọn <b>Hình ảnh</b>, mô hình <b>Nano Banana</b>, bấm tạo, tải ảnh xuống → quay lại bấm <b>⇄ Thay ảnh → ⇩ Lấy ảnh mới tải từ Flow</b> → bấm ảnh muốn dùng. (Veo là mô hình tạo <b>video</b>; ảnh nhân vật tạo bằng Nano Banana.)</li>
+            <li>Có thể <b>Tải ảnh lên</b> hoặc chọn ảnh trong thư viện. Bấm ảnh nhỏ dưới ảnh lớn để đổi ảnh Master. Ưng ý thì bấm <b>🔒 Duyệt / Khóa</b>.</li>
+            <li>Ở <b>Nhân vật trong từng cảnh</b>: tick nhân vật rồi bấm <b>Lưu</b> để sửa tay. Cảnh đã chỉnh tay không bị AI ghi đè.</li>
+          </ol>
+        </details>
+        <details><summary><b>4</b> Prompt tiếng Anh và đưa sang Studio (bước 4)</summary>
+          <ol>
+            <li>Bấm <b>↓ Lấy từ danh sách cảnh</b>, chọn thời lượng, tỷ lệ khung hình, bật <b>Prompt chuẩn đủ trường</b> nếu muốn.</li>
+            <li>Bấm <b>✦ Viết prompt tiếng Anh bằng ChatGPT</b>. Cảnh nào thiếu hoặc còn tiếng Việt, tool tự hỏi lại.</li>
+            <li>Bấm <b>→ Đưa vào Studio</b>. Prompt giữ liên kết với cảnh gốc (khi dự án có cùng số cảnh) nên tự biết nhân vật của mình.</li>
+          </ol>
+        </details>
+        <details><summary><b>5</b> Gắn ảnh nhân vật cho từng prompt (Prompt Studio)</summary>
+          <ol>
+            <li>Ở <b>Studio · Video Queue</b>, bấm vào một prompt trong hàng đợi để mở <b>Prompt Studio</b>.</li>
+            <li>Mục <b>Nhân vật</b> hiện nhân vật của cảnh gốc (hoặc tick chọn rồi bấm <b>Lưu nhân vật</b>). Mục <b>Ảnh nhân vật tham chiếu</b> hiện ảnh Master tương ứng.</li>
+            <li>Bấm <b>🔗 Gắn ảnh nhân vật vào prompt</b>: tool đặt đúng ảnh Master của các nhân vật trong prompt (tối đa 10 ảnh) và hỏi trước khi chuyển sang chế độ <b>Ảnh → video</b>.</li>
+          </ol>
+        </details>
+        <details><summary><b>6</b> Tạo video hàng loạt trên Muse</summary>
+          <ol>
+            <li>Ở <b>Studio · Video Queue</b>: chọn số tài khoản chạy đồng thời (nên bắt đầu với 1–2), bỏ chọn <b>Chạy ẩn cửa sổ Chrome</b> nếu muốn xem cửa sổ Muse làm việc.</li>
+            <li>Bấm <b>▶ Chạy</b>. Tool chia prompt cho các tài khoản, tạo video và tải về thư mục lưu với tên <b>Prompt N.mp4</b>.</li>
+            <li>Prompt lỗi <b>sau khi đã gửi</b> lên Muse thì tool không tự gửi lại: mở Muse kiểm tra rồi mới bấm Chạy lại trong Prompt Studio.</li>
+          </ol>
+        </details>
+        <details><summary><b>7</b> Khi gặp lỗi</summary>
+          <ul>
+            <li><b>“Xác minh bạn là con người” (Cloudflare) trên ChatGPT:</b> tự bấm ô xác minh trong cửa sổ đó; tool chờ rồi chạy tiếp. Tool không tự vượt qua bước này. Bị hỏi liên tục thì dùng Gemini cho bước đó.</li>
+            <li><b>“Chưa đăng nhập …”:</b> đăng nhập lại ở thẻ tương ứng phía trên (hoặc nút Đăng nhập tài khoản chung).</li>
+            <li><b>“… đang dùng hồ sơ Google chung”:</b> một phần khác đang chạy; đợi xong rồi bấm lại.</li>
+            <li><b>Tool không đọc được câu trả lời:</b> tool dừng (không gửi lại) và ghi file chẩn đoán trong thư mục dữ liệu <code>profiles/</code> (ví dụ <code>gemini-debug.txt</code>, <code>chatgpt-debug.txt</code>, <code>&lt;mã tài khoản&gt;-login-debug.txt</code>). Gửi file đó cho người hỗ trợ.</li>
+            <li><b>Trang báo “Bộ chạy đang chạy bản cũ”:</b> tắt hẳn tool rồi mở lại, nhấn Ctrl+F5.</li>
+          </ul>
+        </details>
+        <details><summary><b>8</b> Cập nhật tool</summary>
+          <ul>
+            <li><b>App Windows:</b> tải bộ cài mới (HanaMedia-Setup), đóng app, cài đè lên. Tài khoản, dự án, nhân vật và các Chrome đã đăng nhập được giữ nguyên.</li>
+            <li><b>Chạy bằng mã nguồn:</b> đóng CHAY_WINDOWS.cmd, chạy <code>git pull origin main</code> trong thư mục tool, mở lại CHAY_WINDOWS.cmd và nhấn Ctrl+F5.</li>
+            <li>Dữ liệu (tài khoản, hàng đợi, hồ sơ Chrome) nằm trong thư mục dữ liệu của tool, chỉ ở trên máy này. Không gửi thư mục này cho người khác.</li>
+          </ul>
+        </details>
+      </div>
     </section>
     <section id="contentView" class="content-page" hidden>
       <div class="content-topbar"><h1>Content Studio</h1><span class="crumb">/</span><label class="project-picker">Dự án<select id="projectSelect" aria-label="Chọn dự án"><option value="">— Chưa lưu dự án —</option></select></label><span class="bulk-spacer"></span><span class="tool-chip"><i class="dot green"></i>Flow (Nano Banana)</span><span class="tool-chip">▣ Muse Video</span><button id="closeContent" type="button">← Về Studio</button></div>

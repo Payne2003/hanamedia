@@ -294,3 +294,15 @@ button.cd-thumb{padding:0;background:none;cursor:pointer}button.cd-thumb:disable
 .shared-card{grid-column:1/-1;border-color:#5b47a8;background:linear-gradient(110deg,#221a47,#15112c)}
 .shared-toggle{display:flex!important;flex-direction:row!important;gap:10px!important;align-items:flex-start;color:var(--text)!important;font-size:13px!important}
 .shared-toggle small{display:block;color:var(--muted);font-size:11px;margin-top:4px}
+
+.guide-card{margin-top:16px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.guide-card details{border:1px solid var(--border);border-radius:12px;background:#120f26;padding:0 14px}
+.guide-card details[open]{padding-bottom:10px}
+.guide-card summary{cursor:pointer;padding:12px 0;font-weight:600;color:#e3d8ff;list-style:none;display:flex;align-items:center;gap:10px}
+.guide-card summary::-webkit-details-marker{display:none}
+.guide-card summary b{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--violet-1),var(--violet-2));color:#fff;font-size:12px;flex:0 0 auto}
+.guide-card summary::after{content:"⌄";margin-left:auto;color:var(--muted)}
+.guide-card details[open] summary::after{content:"⌃"}
+.guide-card ol,.guide-card ul{margin:0;padding-left:22px;color:#d9d3f4;font-size:13px;line-height:1.65}
+.guide-card li{margin:4px 0}.guide-card li ul{margin-top:4px}
+.guide-card code{color:#d6c4ff;font-size:12px}
