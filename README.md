@@ -182,6 +182,7 @@ Mở thư mục này trong VS Code. Các phần chính:
 - `web/`: giao diện.
 - `runner/store.py`: hàng đợi và ngân sách dự kiến, lưu SQLite.
 - `runner/engine.py`: chia công việc và quản lý phiên.
+- `runner/characters.py`: Character Registry (Character Master) — dự án, cảnh (Scene ID), nhân vật (Character ID), ảnh Master đã duyệt/khóa, nhân vật của từng cảnh và hàng đợi tạo ảnh nhân vật. Lưu trong cùng `studio.sqlite3` (bảng `projects`, `scenes`, `characters`, `scene_characters`, `character_assets`, `image_tasks`; thêm `jobs.scene_id`, `jobs.images_origin`). Dữ liệu cũ tự nâng cấp khi mở, không mất job, tài khoản hay ảnh.
 - `runner/muse.py`: đăng nhập, điền/gửi prompt, chọn video mới và tải file.
 - `app.py`: máy chủ cục bộ và API nội bộ.
 - `folder_picker.py`: hộp thoại chọn thư mục Windows.

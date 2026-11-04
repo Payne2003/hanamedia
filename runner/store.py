@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .content import parse_structured
+from .characters import JOB_COLUMNS, SCHEMA as CHARACTER_SCHEMA, CharacterRegistry
 
 
 def number(value, minimum=0):
@@ -60,6 +61,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS image_library (
                 token TEXT PRIMARY KEY, name TEXT NOT NULL, created REAL NOT NULL);
             """)
+            db.executescript(CHARACTER_SCHEMA)  # dự án, cảnh, nhân vật, ảnh Master, hàng đợi ảnh nhân vật
             columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
             migrations = {
                 "images": "TEXT NOT NULL DEFAULT '[]'",
@@ -68,16 +70,19 @@ class Store:
                 "progress": "INTEGER NOT NULL DEFAULT 0",
                 # Ghi chú cảnh cho Prompt Studio: bối cảnh, góc quay, hành vi nhân vật, nội dung hành động (JSON).
                 "details": "TEXT NOT NULL DEFAULT '{}'",
+                **JOB_COLUMNS,  # scene_id, images_origin (Character Master)
             }
             for name, declaration in migrations.items():
                 if name not in columns:
                     db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {declaration}")
+        self.characters = CharacterRegistry(self)
         self.cleanup_images()
 
     @contextmanager
     def connect(self):
         db = sqlite3.connect(self.path, timeout=15)
         db.row_factory = sqlite3.Row
+        db.execute("PRAGMA foreign_keys=ON")
         try:
             with db:
                 yield db
@@ -95,6 +100,7 @@ class Store:
                 db.execute("UPDATE jobs SET status='error',phase='Bị gián đoạn',error=?,updated=? WHERE id=?",
                            (detail, time.time(), job["id"]))
             db.execute("UPDATE accounts SET state='new',detail='Cần kiểm tra lại phiên' WHERE state IN ('busy','authenticating','reviewing')")
+        self.characters.recover_image_tasks()
 
     def add_account(self, email, mailbox, budget):
         email, mailbox = mailbox_for(email, mailbox)
@@ -204,8 +210,9 @@ class Store:
             return {field: match.group(field).strip() for field in self.DETAIL_FIELDS}
         return {}
 
-    def enqueue(self, prompts, cost, batch, images=None, mode="text", sources=None):
-        """sources: (không bắt buộc) dòng cảnh tiếng Việt gốc của từng prompt, để Prompt Studio hiện đủ các trường."""
+    def enqueue(self, prompts, cost, batch, images=None, mode="text", sources=None, scene_ids=None):
+        """sources: (không bắt buộc) dòng cảnh tiếng Việt gốc của từng prompt, để Prompt Studio hiện đủ các trường.
+        scene_ids: (không bắt buộc) Scene ID của từng prompt (cảnh trong dự án Content Studio)."""
         if not isinstance(prompts, list) or not 1 <= len(prompts) <= 200:
             raise ValueError("Mỗi lần thêm từ 1 đến 200 prompt.")
         if not isinstance(batch, str) or not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", batch):
@@ -228,9 +235,18 @@ class Store:
         sources = sources if isinstance(sources, list) else []
         if len(sources) > len(prompts) or any(not isinstance(item, (str, type(None))) for item in sources):
             raise ValueError("Danh sách cảnh gốc không khớp prompt.")
+        scene_ids = scene_ids if isinstance(scene_ids, list) else []
+        if len(scene_ids) > len(prompts) or any(
+                item is not None and (not isinstance(item, str) or not re.fullmatch(r"[a-f0-9]{32}", item)) for item in scene_ids):
+            raise ValueError("Danh sách cảnh không khớp prompt.")
+        scene_ids = scene_ids + [None] * (len(prompts) - len(scene_ids))
         cost = number(cost, 0.01)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            wanted = {item for item in scene_ids if item}
+            if wanted and db.execute(f"SELECT count(*) FROM scenes WHERE id IN ({','.join('?' * len(wanted))})",
+                                     list(wanted)).fetchone()[0] != len(wanted):
+                raise ValueError("Có cảnh không còn tồn tại. Tải lại dự án rồi thử lại.")
             previous = db.execute("SELECT prompt,cost,images,generation_mode FROM jobs WHERE batch=? ORDER BY ordinal",
                                   (batch,)).fetchall()
             if previous:
@@ -249,9 +265,9 @@ class Store:
             # Ưu tiên trường có sẵn trong chính prompt (khung chuẩn); không có thì lấy từ dòng cảnh gốc.
             details = [self.prompt_details(p) or self.scene_details(sources[n] if n < len(sources) else "")
                        for n, p in enumerate(prompts)]
-            db.executemany("INSERT INTO jobs(id,prompt,cost,created,updated,batch,ordinal,images,generation_mode,details) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            db.executemany("INSERT INTO jobs(id,prompt,cost,created,updated,batch,ordinal,images,generation_mode,details,scene_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                            [(uuid.uuid4().hex, p.strip(), cost, now, now, batch, n, json.dumps(images[n]), mode,
-                             json.dumps(details[n], ensure_ascii=False))
+                             json.dumps(details[n], ensure_ascii=False), scene_ids[n])
                             for n, p in enumerate(prompts)])
         self.plan_waiting()
 
@@ -311,8 +327,9 @@ class Store:
                 f"SELECT token FROM image_library WHERE token IN ({','.join('?' for _ in tokens)})",
                 tokens).fetchall()
             db.executemany("DELETE FROM image_library WHERE token=?", [(row["token"],) for row in rows])
-            referenced = {row["token"] for row in db.execute("SELECT images FROM jobs")
-                          for row in json.loads(row["images"] or "[]")}
+            referenced = {token for row in db.execute("SELECT images FROM jobs")
+                          for token in json.loads(row["images"] or "[]")}
+            referenced.update(self.characters.referenced_tokens(db))
         for row in rows:
             token = row["token"]
             if token not in referenced:
@@ -380,6 +397,7 @@ class Store:
             referenced = {token for row in db.execute("SELECT images FROM jobs")
                           for token in json.loads(row["images"] or "[]")}
             referenced.update(row["token"] for row in db.execute("SELECT token FROM image_library"))
+            referenced.update(self.characters.referenced_tokens(db))
         for path in self.image_dir.iterdir():
             if path.is_file() and path.stem not in referenced and re.fullmatch(r"[a-f0-9]{32}", path.stem):
                 path.unlink()
@@ -586,18 +604,20 @@ class Store:
             raise ValueError("Loại Ảnh → video cần ít nhất một ảnh tham chiếu.")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+            row = db.execute("SELECT status,images,images_origin FROM jobs WHERE id=?", (job_id,)).fetchone()
             if not row:
                 raise ValueError("Không tìm thấy prompt này trong hàng đợi.")
             if row["status"] == "running":
                 raise ValueError("Prompt đang chạy, không sửa được. Đợi chạy xong rồi sửa và bấm Chạy lại.")
+            # Người dùng đổi ảnh: từ giờ là ảnh tự gắn, Auto Character Mapper không ghi đè nếu chưa xác nhận.
+            origin = "manual" if json.loads(row["images"] or "[]") != images else row["images_origin"]
             if account_id:
                 account = db.execute("SELECT enabled FROM accounts WHERE id=?", (account_id,)).fetchone()
                 if not account:
                     raise ValueError("Tài khoản đã chọn không còn trong danh sách.")
-            db.execute("UPDATE jobs SET prompt=?,details=?,images=?,generation_mode=?,assigned_account_id=?,updated=? WHERE id=?",
+            db.execute("UPDATE jobs SET prompt=?,details=?,images=?,generation_mode=?,assigned_account_id=?,images_origin=?,updated=? WHERE id=?",
                        (prompt.strip(), json.dumps(details, ensure_ascii=False), json.dumps(images), mode,
-                        account_id or None, time.time(), job_id))
+                        account_id or None, origin, time.time(), job_id))
         self.plan_waiting()
         self.cleanup_images()
         return self.job_detail(job_id)
