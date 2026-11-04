@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from app import AppServer
 from runner import content
@@ -762,3 +763,71 @@ class AccountStatusTests(unittest.TestCase):
         finally:
             runner.close()
             temp.cleanup()
+
+
+class ChallengeTests(unittest.TestCase):
+    def session(self, states, sends):
+        from runner import gemini_web
+
+        class Session(gemini_web.GeminiWebSession):
+            NAME = "ChatGPT"
+            def __init__(self):
+                self.states, self.composer_text = iter(states), ""
+                self.driver = self
+            def state(self):
+                try:
+                    self.current = next(self.states)
+                except StopIteration:
+                    pass
+                return self.current
+            def execute_script(self, script, *args):
+                if script is self.JS_FIND_INPUT:
+                    return None if self.current.get("challenge_no_field") else "field"
+                if script is self.JS_SEND:
+                    sends.append(self.composer_text)
+                    self.composer_text = ""
+                    return True
+                if "arguments[1]" in script or script is gemini_web.JS_CHECK:  # JS_CHECK
+                    return {"ok": self.composer_text == args[1]}
+                return None
+            def fill(self, field, text, before):
+                self.composer_text = text
+                return {"ok": True}
+            def report_account(self, *a):
+                pass
+        return Session()
+
+    def test_waits_while_captcha_shows_even_if_composer_exists(self):
+        sends = []
+        states = [{"challenge": True, "count": 0}] * 3 + [{"count": 0}, {"count": 0}, {"count": 1, "text": "Xong", "done": True}]
+        session = self.session(states, sends)
+        with patch("runner.gemini_web.time.sleep", lambda _: None):
+            field = session.wait_ready(lambda _: None, threading.Event())
+        self.assertEqual(field, "field")
+        self.assertEqual(sends, [])  # chưa dán/gửi gì khi ô xác minh còn hiện
+
+    def test_message_blocked_by_captcha_is_resent_once_after_verification(self):
+        from runner import gemini_web
+        sends, clock = [], [0.0]
+        states = ([{"count": 0}, {"count": 0}]  # wait_ready x2 + đếm trước khi gửi
+                  + [{"count": 0}] + [{"count": 0, "challenge": True}] * 3  # gửi xong thì bị chặn bởi CAPTCHA
+                  + [{"count": 0}] * 6  # đã xác minh, tin nhắn chưa đi
+                  + [{"count": 0}, {"count": 0}, {"count": 1, "text": "Prompt tiếng Anh", "done": True}] + [{"count": 1, "text": "Prompt tiếng Anh", "done": True}] * 10)
+        session = self.session(states, sends)
+
+        def tick(seconds):
+            clock[0] += max(seconds, 2)
+        with patch("runner.gemini_web.time.sleep", tick), patch("runner.gemini_web.time.monotonic", lambda: clock[0]):
+            answer = session.ask("YÊU CẦU", lambda _: None, threading.Event())
+        self.assertEqual(answer, "Prompt tiếng Anh")
+        self.assertEqual(sends, ["YÊU CẦU", "YÊU CẦU"])  # gửi lần đầu + đúng 1 lần gửi lại sau xác minh
+
+    def test_no_resend_when_message_went_through_during_captcha(self):
+        sends, clock = [], [0.0]
+        states = ([{"count": 0}, {"count": 0}, {"count": 0}] + [{"count": 0, "challenge": True}] * 2
+                  + [{"count": 0, "busy": True}] * 3 + [{"count": 1, "text": "Ok", "done": True}] * 10)
+        session = self.session(states, sends)
+        with patch("runner.gemini_web.time.sleep", lambda s: clock.__setitem__(0, clock[0] + max(s, 2))), \
+                patch("runner.gemini_web.time.monotonic", lambda: clock[0]):
+            self.assertEqual(session.ask("YÊU CẦU", lambda _: None, threading.Event()), "Ok")
+        self.assertEqual(sends, ["YÊU CẦU"])  # ChatGPT đang viết sau xác minh: không gửi trùng

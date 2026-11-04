@@ -297,17 +297,18 @@ class GeminiWebSession:
                 self.report_account(False, "")
                 # Google không cho nhập mật khẩu trong Chrome đang bị điều khiển tự động.
                 raise GeminiWebError(f"Chưa đăng nhập {self.NAME} trong hồ sơ của tool. {self.LOGIN_HINT}")
+            if page.get("challenge"):
+                status(f"{self.NAME} đang hiện ô xác minh (CAPTCHA). Bấm xác minh trong cửa sổ {self.NAME}; "
+                       "tool chờ, xác minh xong sẽ tự dán và gửi tiếp.")
+                time.sleep(2)
+                continue
             if field:
                 self.report_account(True, page.get("email") or "")
                 if email and page.get("email") and page["email"] != email.lower():
                     raise GeminiWebError(f"Cửa sổ {self.NAME} đang đăng nhập {page['email']}, không phải {email}. "
                                          "Đổi tài khoản trong cửa sổ đó rồi bấm lại.")
                 return field
-            if page.get("challenge"):
-                status(f"{self.NAME} đang hiện trang xác minh. Bấm ô “Xác minh bạn là con người” trong cửa sổ "
-                       f"{self.NAME}; tool chờ rồi tự chạy tiếp.")
-            else:
-                status(f"Đang chờ {self.NAME} tải xong…")
+            status(f"Đang chờ {self.NAME} tải xong…")
             time.sleep(2)
         raise GeminiWebError(f"Hết thời gian chờ {self.NAME} sẵn sàng.")
 
@@ -415,19 +416,29 @@ class GeminiWebSession:
         except Exception:
             return ""
 
+    def submit(self, field, text, before):
+        """Dán yêu cầu vào ô nhập (nếu ô chưa có đúng nội dung đó) rồi bấm Gửi."""
+        try:
+            already = (self.driver.execute_script(JS_CHECK, field, text) or {}).get("ok")
+        except Exception:
+            already = False
+        if not already:
+            written = self.fill(field, text, before)
+            if not written.get("ok"):
+                raise GeminiWebError(f"Không điền đủ yêu cầu vào ô nhập của {self.NAME} (mới vào {written.get('length', 0)} ký tự). "
+                                     f"Giao diện {self.NAME} có thể đã thay đổi.")
+        if not self.driver.execute_script(self.JS_SEND):
+            from selenium.webdriver.common.keys import Keys
+            field.send_keys(Keys.ENTER)
+
     def ask(self, text, status, stop, email="", timeout=1200, label="Gemini đang viết"):
         field = self.wait_ready(status, stop, email)
         self.wait_idle(status, stop)
         field = self.wait_ready(status, stop, email)
         before = int(self.state().get("count") or 0)
-        written = self.fill(field, text, before)
-        if not written.get("ok"):
-            raise GeminiWebError(f"Không điền đủ yêu cầu vào ô nhập của {self.NAME} (mới vào {written.get('length', 0)} ký tự). "
-                                 f"Giao diện {self.NAME} có thể đã thay đổi.")
-        if not self.driver.execute_script(self.JS_SEND):
-            from selenium.webdriver.common.keys import Keys
-            field.send_keys(Keys.ENTER)
+        self.submit(field, text, before)
         deadline, started = time.monotonic() + timeout, time.monotonic()
+        challenged, resent = False, 0
         last_text, stable_since, dumped = None, time.monotonic(), time.monotonic()
         take = getattr(self, "take_now", None)
         if take:
@@ -449,6 +460,27 @@ class GeminiWebSession:
             if time.monotonic() - dumped >= 60:  # Đang chờ lâu: lưu trạng thái trang để chẩn đoán nếu bị kẹt.
                 self.dump(f"Đang chờ {self.NAME} (đã {int(time.monotonic() - started)} giây)", current)
                 dumped = time.monotonic()
+            if page.get("challenge"):
+                # Ô xác minh hiện ra (thường ngay sau khi gửi): chờ người dùng tự xác minh, không tính thời gian chờ.
+                challenged, started = True, time.monotonic()
+                status(f"{self.NAME} đang hiện ô xác minh (CAPTCHA). Bấm xác minh trong cửa sổ {self.NAME}; "
+                       "xong tool sẽ tự gửi lại nếu tin nhắn chưa đi.")
+                continue
+            if challenged and (page.get("busy") or int(page.get("count") or 0) > before):
+                challenged = False  # tin nhắn đã đi, đang viết: không gửi lại
+            if challenged and time.monotonic() - started < 8:
+                status(f"Đã xác minh · kiểm tra {self.NAME} đã nhận yêu cầu chưa…")
+                continue  # chờ thêm vài giây cho chắc tin nhắn thật sự chưa đi rồi mới gửi lại (tránh gửi trùng)
+            if challenged and int(page.get("count") or 0) <= before:
+                challenged = False
+                if resent >= 3:
+                    raise GeminiWebError(f"{self.NAME} vẫn chưa nhận yêu cầu sau 3 lần gửi lại sau xác minh. Xem cửa sổ {self.NAME}.")
+                resent += 1
+                status(f"Đã xác minh xong · tool dán và gửi lại yêu cầu (lần {resent})")
+                field = self.wait_ready(status, stop, email)
+                self.submit(field, text, before)
+                started = time.monotonic()
+                continue
             if int(page.get("count") or 0) <= before:
                 if time.monotonic() - started > 120:
                     where = self.dump(f"{self.NAME} chưa nhận yêu cầu sau 2 phút (không thấy tin nhắn trả lời mới)")
