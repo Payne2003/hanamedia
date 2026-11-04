@@ -125,6 +125,10 @@ Ngoài cách chạy bằng mã nguồn (`CHAY_WINDOWS.cmd`), tool có bản **ap
 - **Lần đầu mở app**, app tự tìm dữ liệu của bản mã nguồn (ví dụ `D:\Huy-Muse-Runner\data`) và **chép** sang, nên các tài khoản và Chrome đã đăng nhập vẫn giữ nguyên, không phải đăng nhập lại. Đóng `CHAY_WINDOWS.cmd` trước khi mở app lần đầu (app không chép dữ liệu đang mở). Thư mục cũ không bị sửa hay xóa. Nếu dữ liệu cũ nằm chỗ khác: đóng app, chạy `set HANAMEDIA_IMPORT=E:\đường-dẫn\data` rồi mở `%LOCALAPPDATA%\Programs\HanaMedia\HanaMedia.exe` từ cùng cửa sổ đó.
 - Hồ sơ Chrome dùng cho Flow nằm trong dữ liệu của tool (`profiles/google-flow`), nên được chép sang cùng các hồ sơ khác.
 
+**Logo của app**
+- Logo nằm ở `web/logo.svg` (bản gốc), `web/logo.png` (thanh bên trái), `web/favicon.ico` (tab trình duyệt) và `packaging/hanamedia.ico` (file `HanaMedia.exe`, bộ cài, shortcut Desktop).
+- Đổi logo: chuẩn bị một ảnh PNG vuông (từ 256×256, nên bo góc hoặc nền trong suốt), chạy `python packaging\make_icons.py duong-dan\logo.png` (cần `pip install pillow`), rồi đóng gói lại. Script tạo lại cả 3 file trên.
+
 **Cập nhật và sửa tính năng sau khi đã đóng gói**
 1. Sửa code trong repo như trước (hoặc nhờ Claude sửa), merge vào `main`.
 2. GitHub tự build bộ cài mới (tab **Actions**, khoảng 5–10 phút). Muốn đánh số phiên bản: tăng `APP_VERSION` trong `runner/version.py`, rồi tạo tag `v1.0.1` để bộ cài được đăng ở mục **Releases**.

@@ -228,12 +228,14 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
             return
-        mapping = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
+        mapping = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css",
+                   "/logo.png": "logo.png", "/logo.svg": "logo.svg", "/favicon.ico": "favicon.ico"}
         if path not in mapping:
             return self.reply({"error": "Không tìm thấy."}, 404)
         file = ROOT / "web" / mapping[path]
         body = file.read_bytes()
-        self.headers_out(200, (mimetypes.guess_type(file.name)[0] or "text/plain") + "; charset=utf-8", len(body))
+        kind = {".ico": "image/x-icon", ".png": "image/png", ".svg": "image/svg+xml"}.get(file.suffix)
+        self.headers_out(200, kind or (mimetypes.guess_type(file.name)[0] or "text/plain") + "; charset=utf-8", len(body))
         self.end_headers()
         self.wfile.write(body)
 

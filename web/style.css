@@ -306,3 +306,5 @@ button.cd-thumb{padding:0;background:none;cursor:pointer}button.cd-thumb:disable
 .guide-card ol,.guide-card ul{margin:0;padding-left:22px;color:#d9d3f4;font-size:13px;line-height:1.65}
 .guide-card li{margin:4px 0}.guide-card li ul{margin-top:4px}
 .guide-card code{color:#d6c4ff;font-size:12px}
+
+.logo-img{width:40px;height:40px;border-radius:12px;display:block;background:none!important;box-shadow:0 0 22px #a855f744!important;object-fit:cover}
