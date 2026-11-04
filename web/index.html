@@ -171,7 +171,7 @@
         </details>
         <details><summary><b>7</b> Khi gặp lỗi</summary>
           <ul>
-            <li><b>“Xác minh bạn là con người” (Cloudflare) trên ChatGPT:</b> tự bấm ô xác minh trong cửa sổ đó; tool chờ rồi chạy tiếp. Tool không tự vượt qua bước này. Bị hỏi liên tục thì dùng Gemini cho bước đó.</li>
+            <li><b>Ô xác minh “tôi không phải người máy” (Cloudflare, reCAPTCHA…) trên ChatGPT:</b> tự bấm xác minh trong cửa sổ ChatGPT. Trong lúc đó tool đứng chờ, không dán, không gửi. Xác minh xong, nếu tin nhắn chưa đi thì tool tự dán và gửi lại (tối đa 3 lần, không gửi trùng khi ChatGPT đã nhận). Tool không tự vượt qua bước xác minh. Bị hỏi liên tục thì dùng Gemini cho bước đó.</li>
             <li><b>“Chưa đăng nhập …”:</b> đăng nhập lại ở thẻ tương ứng phía trên (hoặc nút Đăng nhập tài khoản chung).</li>
             <li><b>“… đang dùng hồ sơ Google chung”:</b> một phần khác đang chạy; đợi xong rồi bấm lại.</li>
             <li><b>Tool không đọc được câu trả lời:</b> tool dừng (không gửi lại) và ghi file chẩn đoán trong thư mục dữ liệu <code>profiles/</code> (ví dụ <code>gemini-debug.txt</code>, <code>chatgpt-debug.txt</code>, <code>&lt;mã tài khoản&gt;-login-debug.txt</code>). Gửi file đó cho người hỗ trợ.</li>

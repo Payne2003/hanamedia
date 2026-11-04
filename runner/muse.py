@@ -303,6 +303,11 @@ class MuseBrowser:
     def composer(self):
         return self.named("textarea,input,[role='textbox']", {"Nhắn tin"})
 
+    def new_chat(self):
+        """Mở cuộc trò chuyện Muse mới cho mỗi prompt: prompt sau không dùng ngữ cảnh/ảnh của prompt trước."""
+        self.driver.get("https://muse.ai")
+        self.wait(lambda: self.composer(), 60, "Không mở được cuộc trò chuyện Muse mới. Kiểm tra phiên Muse.")
+
     def session_ready(self):
         host = urlparse(self.driver.current_url).hostname or ""
         return (host == "muse.ai" or host.endswith(".muse.ai")) and self.composer() is not None
@@ -516,7 +521,54 @@ class MuseBrowser:
     def video_cards(self):
         return self.elements("[role='log'][aria-label='Tin nhắn chat'] [data-testid='hatch-chat-attachment-presentation-video']")
 
-    def attach_images(self, paths):
+    # Vùng ô nhập (khung chứa ô "Nhắn tin"): đếm ảnh xem trước đã đính kèm và dấu hiệu đang tải lên.
+    JS_ATTACHMENTS = r"""
+const box = arguments[0];
+let host = box.closest('form') || box.parentElement;
+for (let i = 0; i < 4 && host.parentElement && !host.querySelector('img,[data-testid*="attachment"]'); i++) host = host.parentElement;
+const visible = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+const previews = [...host.querySelectorAll('img')].filter(e => visible(e) && e.getBoundingClientRect().width >= 24);
+const busy = [...host.querySelectorAll('[role="progressbar"],[aria-busy="true"],[class*="spinner"],[class*="loading"],[class*="upload"] progress')]
+  .some(visible);
+const removers = [...host.querySelectorAll('button,[role="button"]')].filter(b => visible(b) &&
+  /xóa|xoá|bỏ|gỡ|remove|delete|clear/i.test((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')));
+return {count: previews.length, busy, removers: removers.length};
+"""
+    JS_REMOVE_ATTACHMENT = r"""
+const box = arguments[0];
+let host = box.closest('form') || box.parentElement;
+for (let i = 0; i < 4 && host.parentElement && !host.querySelector('img,[data-testid*="attachment"]'); i++) host = host.parentElement;
+const b = [...host.querySelectorAll('button,[role="button"]')].find(b => b.getBoundingClientRect().width > 0 &&
+  /xóa|xoá|bỏ|gỡ|remove|delete|clear/i.test((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')));
+if (b) { b.click(); return true; }
+return false;
+"""
+
+    def attachments(self, box=None):
+        box = box or self.composer()
+        if not box:
+            return {"count": 0, "busy": False, "removers": 0}
+        try:
+            return self.driver.execute_script(self.JS_ATTACHMENTS, box) or {"count": 0, "busy": False, "removers": 0}
+        except Exception:
+            return {"count": 0, "busy": False, "removers": 0}
+
+    def clear_attachments(self):
+        """Bỏ ảnh còn sót trong ô nhập (từ một lần chạy lỗi trước). Không bỏ được thì dừng trước khi gửi."""
+        for _ in range(12):
+            box = self.composer()
+            state = self.attachments(box)
+            if not state["count"]:
+                return
+            if not box or not self.driver.execute_script(self.JS_REMOVE_ATTACHMENT, box):
+                break
+            time.sleep(0.7)
+        if self.attachments()["count"]:
+            raise MuseFailure("Ô nhập Muse còn ảnh đính kèm từ lần trước và tool không gỡ được. "
+                              "Mở phiên Muse, xóa ảnh trong ô nhập rồi chạy lại. Chưa gửi prompt.")
+
+    def attach_images(self, paths, timeout=120):
+        """Đính kèm ảnh và CHỜ Muse tải lên xong (đủ ảnh xem trước, hết biểu tượng đang tải) rồi mới cho gửi prompt."""
         if not paths:
             return
 
@@ -533,20 +585,44 @@ class MuseBrowser:
 
         image_inputs = image_file_inputs()
         if not image_inputs:
+            # Chỉ bấm nút ĐÍNH KÈM / TẢI LÊN; tránh nút chuyển chế độ "Tạo ảnh".
             for button in self.elements("button,[role='button']"):
                 try:
                     label = " ".join((button.accessible_name or "", button.get_attribute("title") or "")).lower()
-                    if button.is_displayed() and re.search(
-                            r"attach|upload|image|photo|picture|đính kèm|tải ảnh|thêm ảnh", label):
+                    if (button.is_displayed() and re.search(r"đính kèm|attach|upload|tải lên|tải ảnh lên|thêm ảnh|thêm tệp|add (photo|image|file)", label)
+                            and not re.search(r"tạo ảnh|create image|generate|imagine", label)):
                         button.click()
                         break
                 except Exception:
                     continue
-            image_inputs = self.wait(image_file_inputs, 10, "Không tìm thấy nút tải ảnh hoặc ô chọn ảnh trên Muse.")
-        file_input = image_inputs[0]
-        if len(paths) > 1 and not file_input.get_attribute("multiple"):
-            raise MuseFailure("Ô tải ảnh trên Muse hiện không nhận nhiều ảnh cùng lúc. Hãy thử lại với một ảnh.")
-        file_input.send_keys("\n".join(str(Path(path).resolve()) for path in paths))
+            image_inputs = self.wait(image_file_inputs, 10, "Không tìm thấy nút tải ảnh hoặc ô chọn ảnh trên Muse. Chưa gửi prompt.")
+        box = self.composer()
+        before = self.attachments(box)["count"]
+        files = [str(Path(path).resolve()) for path in paths]
+        if len(files) == 1 or image_inputs[0].get_attribute("multiple"):
+            image_inputs[0].send_keys("\n".join(files))
+        else:  # ô chọn ảnh không nhận nhiều file cùng lúc: tải từng ảnh
+            for index, file in enumerate(files):
+                inputs = image_inputs if index == 0 else self.wait(image_file_inputs, 10, "Không tìm lại được ô chọn ảnh trên Muse.")
+                inputs[0].send_keys(file)
+                time.sleep(1.5)
+        self.phase(f"Đang chờ Muse tải lên {len(files)} ảnh")
+        deadline, settled_since = time.monotonic() + timeout, None
+        while time.monotonic() < deadline:
+            self.guard()
+            state = self.attachments(self.composer())
+            added = state["count"] - before
+            if added >= len(files) and not state["busy"]:
+                settled_since = settled_since or time.monotonic()
+                if time.monotonic() - settled_since >= 2:  # đứng yên 2 giây: đã tải lên xong
+                    return
+            else:
+                settled_since = None
+            time.sleep(1)
+        state = self.attachments(self.composer())
+        added = state["count"] - before
+        raise MuseFailure(f"Muse chưa tải lên xong ảnh nhân vật ({max(added, 0)}/{len(files)} ảnh sau {timeout} giây"
+                          f"{', vẫn đang tải' if state['busy'] else ''}). Chưa gửi prompt; có thể chạy lại.")
 
     @staticmethod
     def card_key(card):
@@ -562,6 +638,7 @@ class MuseBrowser:
         box = self.composer()
         if not box:
             raise MuseFailure("Phiên đăng nhập đã hết hạn hoặc ô prompt thay đổi.", state="attention")
+        self.clear_attachments()  # không gửi kèm ảnh còn sót của prompt trước
         if images:
             self.phase("Đang tải ảnh nhân vật lên Muse")
             self.attach_images(images)
@@ -580,8 +657,13 @@ class MuseBrowser:
                 box.send_keys(line)
         entered_text = self.driver.execute_script(
             "const e=arguments[0]; return [e.value,e.innerText,e.textContent].filter(Boolean).join('\\n')", box)
-        if marker not in entered_text or prompt not in entered_text:
+        flat = lambda text: re.sub(r"\s+", " ", str(text or "")).strip()  # ô nhập có thể đổi cách xuống dòng
+        if flat(marker) not in flat(entered_text) or flat(prompt) not in flat(entered_text):
             raise MuseFailure("Muse không hiển thị đầy đủ prompt trong ô nhập. Chưa gửi yêu cầu.")
+        attached = self.attachments(box)
+        if attached["count"] != len(images or []) or attached["busy"]:
+            raise MuseFailure(f"Ô nhập Muse có {attached['count']} ảnh đính kèm nhưng prompt cần {len(images or [])} ảnh"
+                              f"{' (ảnh vẫn đang tải)' if attached['busy'] else ''}. Chưa gửi yêu cầu.")
         # Record intent only after verifying the text is present, immediately before it can be submitted.
         before_submit()
         if automatic:

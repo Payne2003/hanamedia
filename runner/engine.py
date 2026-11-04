@@ -199,6 +199,11 @@ class Engine:
             ready = False
         if not ready:
             browser.login(account)  # mở lại muse.ai; nếu phiên hết hạn thì đi qua bước OTP như lần đầu
+        elif hasattr(browser, "new_chat"):
+            self.store.phase(job["id"], "Mở cuộc trò chuyện Muse mới")
+            browser.new_chat()  # mỗi prompt một cuộc trò chuyện riêng (đăng nhập ở trên cũng đã mở trang mới)
+            if not browser.session_ready():
+                browser.login(account)
         return browser
 
     def work(self, job, account, headless, folder, automatic):

@@ -98,9 +98,14 @@ const busy = (turnState !== '' && turnState !== 'complete') ||
   }) || Boolean(last && last.querySelector('.result-streaming'));
 const host = location.hostname;
 // Trang xác minh Cloudflare: tiêu đề "Just a moment…" / "Chờ một chút…"; ô xác minh nằm trong iframe riêng.
+// Xác minh "tôi không phải người máy": Cloudflare (trang riêng hoặc khung Turnstile), reCAPTCHA, hCaptcha, Arkose.
+// Chỉ tính khung ĐANG HIỆN; ô ẩn còn sót lại sau khi đã xác minh không tính.
+const shown = e => { const r = e.getBoundingClientRect(); const st = getComputedStyle(e);
+  return r.width > 30 && r.height > 30 && st.visibility !== 'hidden' && st.display !== 'none' && st.opacity !== '0'; };
 const challenge = /just a moment|chờ một chút|verify you are human|xác minh bạn là con người/i.test(document.title + ' ' +
   ((document.body && document.body.innerText) || '').slice(0, 600)) ||
-  Boolean(document.querySelector('iframe[src*="challenges.cloudflare"], #challenge-form, [name="cf-turnstile-response"]'));
+  [...document.querySelectorAll('iframe[src*="challenges.cloudflare"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"], ' +
+    'iframe[src*="arkoselabs"], iframe[src*="funcaptcha"], iframe[title*="challenge" i], iframe[title*="reCAPTCHA" i], #challenge-form')].some(shown);
 const signIn = /^auth\.|^auth0\./.test(host) || /\/auth\/login|\/log-in/.test(location.pathname);
 const loggedOut = Boolean(document.querySelector('[data-testid="login-button"]'));
 return {count: responses.length, busy, done, text, email: '', signIn, loggedOut, challenge, host, rejected: false};
