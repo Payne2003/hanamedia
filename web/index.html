@@ -133,6 +133,26 @@
           </div>
         </div>
       </div>
+      <div class="character-card-panel card" id="characterPanel">
+        <div class="english-heading"><h3><span>5</span>Character Library · nhân vật của dự án</h3><p>AI đọc kịch bản và danh sách cảnh, liệt kê các nhân vật duy nhất (mỗi nhân vật một Character ID và một ảnh Master), rồi ghi nhân vật xuất hiện trong từng cảnh. Không tạo ảnh riêng cho từng cảnh.</p></div>
+        <div class="character-toolbar">
+          <span id="projectInfo" class="detail">Chưa có dự án. Viết cảnh ở bước 2 rồi bấm Lưu thành dự án.</span>
+          <span class="bulk-spacer"></span>
+          <button id="saveProject" type="button">💾 Lưu danh sách cảnh thành dự án</button>
+          <div class="english-engines" role="group" aria-label="AI tìm nhân vật"><button type="button" data-character-engine="gemini">Gemini Pro</button><button type="button" data-character-engine="chatgpt">ChatGPT</button></div>
+          <button id="extractCharacters" type="button" class="primary">✦ Tìm nhân vật</button>
+        </div>
+        <div id="characterProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="characterStatus"></span><button id="takeCharacters" type="button" title="Bấm khi AI đã viết xong mà tool vẫn đang chờ">Lấy kết quả ngay</button><button id="stopCharacters" type="button">Dừng</button></div></div>
+        <div id="characterNotice" class="content-issues" hidden></div>
+        <div id="characterList" class="character-grid"></div>
+        <details class="character-add"><summary>+ Thêm nhân vật thủ công</summary>
+          <div class="content-grid"><label>Tên nhân vật<input id="newCharacterName" maxlength="200" placeholder="Ví dụ: Dê con"></label><label>Mô tả ngoại hình<input id="newCharacterDesc" maxlength="5000" placeholder="Lông nâu sáng, nhỏ, tai vểnh"></label></div>
+          <label>Prompt ảnh Master (tiếng Anh)<textarea id="newCharacterPrompt" rows="2" maxlength="5000" placeholder="full body photo of ..., front view, plain neutral background, studio lighting, photorealistic, no text"></textarea></label>
+          <button id="addCharacter" type="button">+ Thêm nhân vật</button>
+        </details>
+        <div class="english-label"><b>Nhân vật trong từng cảnh</b><small id="projectSceneHint" class="detail"></small></div>
+        <div id="projectScenes" class="project-scenes"></div>
+      </div>
     </section>
   </main>
   <dialog id="accounts"><div class="dialog-heading"><div><div class="eyebrow">EMAIL + OTP · KHÔNG MẬT KHẨU</div><h2>Tài khoản Muse</h2></div><button id="closeAccounts" aria-label="Đóng">✕</button></div><p class="dialog-description">Mỗi tài khoản có phiên Chrome riêng. Tool thử lấy OTP mới từ link hộp thư; nếu hộp thư lỗi, nhập mã trực tiếp trên cửa sổ Muse.</p><div class="login-all"><label>Chrome đăng nhập cùng lúc<select id="loginParallel"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="5">5</option></select></label><button id="loginAll" type="button" class="primary">Đăng nhập tất cả tài khoản chưa sẵn sàng</button><span id="loginAllStatus" class="detail"></span></div><div id="accountList"></div><form id="accountForm"><h3>Thêm tài khoản</h3><div class="form-grid"><label>Email Muse <small>(mỗi dòng một email, thêm bao nhiêu cũng được)</small><textarea id="email" rows="4" autocomplete="off" required maxlength="200000" placeholder="email1@tuan89.site&#10;email2@tuan89.site"></textarea></label><label>Ngân sách credit dự kiến<input id="budget" type="number" required min="0" step="0.01" value="10"></label></div><label>Link hộp thư OTP <small>(chỉ khi thêm 1 email)</small><input id="mailbox" type="url" placeholder="Tự điền link Tuan89 theo email nếu để trống"></label><button class="primary" type="submit">+ Thêm tài khoản</button></form><p class="subtle-note">Phiên đăng nhập được giữ trên máy. Không chia sẻ thư mục data. Tài khoản hết ngân sách hoặc cần kiểm tra sẽ không nhận tác vụ mới.</p></dialog>

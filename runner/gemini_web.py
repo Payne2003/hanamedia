@@ -509,6 +509,39 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
 MAX_MISSING_ROUNDS = 3
 
 
+def run_characters(session, script, scenes, status, stop, email="", model=""):
+    """Character Extractor: AI liệt kê nhân vật duy nhất + nhân vật của từng cảnh; hỏi lại riêng các cảnh còn thiếu."""
+    from . import characters as chars
+    total = len(scenes)
+    name = getattr(session, "NAME", "Gemini")
+    session.new_chat()
+    session.wait_ready(status, stop, email)
+    if model:
+        picked = session.choose_model(model)
+        status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
+    answer = session.ask(chars.extraction_request(script, scenes), status, stop, email,
+                         label=f"{name} đang tìm nhân vật trong {total} cảnh")
+    result = chars.parse_characters(answer, total)
+    if not result["characters"] and not result["scenes"]:
+        where = session.dump("Không đọc được nhân vật nào trong câu trả lời đầu tiên", answer) if hasattr(session, "dump") else ""
+        raise GeminiWebError(f"Tool không đọc được nhân vật nào trong câu trả lời của {name} nên đã dừng (không gửi lại). "
+                             + (f"Gửi file chẩn đoán {where} cho người hỗ trợ." if where else ""))
+    rounds = 1
+    for attempt in range(MAX_MISSING_ROUNDS):
+        missing = chars.missing_scenes(result["scenes"], total)
+        if not missing:
+            break
+        before = len(missing)
+        answer = session.ask(chars.extraction_request(script, scenes, missing, [c["code"] for c in result["characters"]]),
+                             status, stop, email, label=f"Thiếu {before} cảnh · {name} đang bổ sung (lần {attempt + 1})")
+        rounds += 1
+        result = chars.merge_extraction(result, chars.parse_characters(answer, total, [c["code"] for c in result["characters"]]))
+        if len(chars.missing_scenes(result["scenes"], total)) == before:
+            break  # hỏi lại mà không thêm được cảnh nào: dừng, không gửi lặp
+    result.update(missing=chars.missing_scenes(result["scenes"], total), total=total, rounds=rounds)
+    return result
+
+
 def run_english(session, lines, status, stop, email="", model="", style="", aspect="16:9", structured=True,
                 seconds=content.DEFAULT_SECONDS):
     """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
@@ -647,6 +680,12 @@ class GeminiWebRunner:
                         self.session.take_now = self.take
                     except Exception:
                         pass
+                if kind == "characters":
+                    result = run_characters(self.session, prompt, lines, status, self.stop, email, model)
+                    self.set(busy=False, result=result,
+                             status=f"Xong: {len(result['characters'])} nhân vật, {result['total'] - len(result['missing'])}/{result['total']} cảnh"
+                                    + (f" · còn thiếu {len(result['missing'])} cảnh" if result["missing"] else ""))
+                    continue
                 if kind == "english":
                     defaults = ("", "16:9", True, content.DEFAULT_SECONDS)
                     options = tuple(style) if isinstance(style, tuple) else (style,)

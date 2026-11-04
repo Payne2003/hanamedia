@@ -36,6 +36,7 @@ class AppServer(ThreadingHTTPServer):
         self.origin = f"http://127.0.0.1:{self.server_port}"
         self.secret = secrets.token_urlsafe(32)
         self.folder_lock = threading.Lock()
+        self.character_jobs = {}  # mã việc phân tích nhân vật -> (dự án, Scene ID theo thứ tự đã gửi)
         if store.setting("gemini_api_key"):  # Chế độ Gemini API đã bỏ: không giữ khóa API cũ trên máy.
             store.save_setting("gemini_api_key", "")
         self.gemini_web = GeminiWebRunner(Path(store.path).parent / "profiles" / "gemini-web")
@@ -104,6 +105,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"error": str(error)}, 404)
         if path == "/api/library":
             return self.reply({"images": self.server.store.library_images()})
+        if path == "/api/projects":
+            return self.reply({"projects": self.server.store.characters.projects()})
+        project_match = re.fullmatch(r"/api/project/([a-f0-9]{32})", path)
+        if project_match:
+            try:
+                return self.reply(self.server.store.characters.project(project_match.group(1)))
+            except ValueError as error:
+                return self.reply({"error": str(error)}, 404)
         library_image = re.fullmatch(r"/api/library/image/([a-f0-9]{32})", path)
         if library_image:
             image = self.server.store.image_file(library_image.group(1))
@@ -305,6 +314,56 @@ class Handler(BaseHTTPRequestHandler):
                                                     body.get("seconds") if body.get("seconds") in content.SECONDS_CHOICES
                                                     else content.DEFAULT_SECONDS))
                 return self.reply({"ok": True, "id": job, "total": len(lines), "engine": "chatgpt" if chatgpt else "gemini"})
+            elif path == "/api/projects/create":
+                registry = store.characters
+                scenes = body.get("scenes")
+                if not isinstance(scenes, list) or not scenes:
+                    raise ValueError("Chưa có danh sách cảnh để lưu thành dự án.")
+                project_id = registry.create_project(body.get("name", ""), body.get("brief", ""),
+                                                     body.get("video_url", ""), body.get("script", ""))
+                try:
+                    registry.add_scenes(project_id, scenes)
+                except ValueError:
+                    registry.delete_project(project_id)
+                    raise
+                return self.reply({"ok": True, "project": registry.project(project_id)})
+            elif path == "/api/projects/delete":
+                store.characters.delete_project(body["id"])
+            elif path == "/api/characters/extract":
+                project, scene_ids, scenes = store.characters.scene_inputs(body["project_id"])
+                if not scenes:
+                    raise ValueError("Dự án chưa có cảnh nào.")
+                chatgpt = body.get("engine") == "chatgpt"
+                runner = self.server.chatgpt_web if chatgpt else self.server.gemini_web
+                job = runner.start("characters", project["script"], "" if chatgpt else (store.setting("gemini_web_email") or ""),
+                                   store.setting("chatgpt_web_model" if chatgpt else "gemini_web_model") or "", scenes)
+                # Ghi nhớ Scene ID theo đúng thứ tự gửi cho AI: C1 = cảnh đầu tiên lúc gửi, kể cả nếu sau đó sắp xếp lại.
+                self.server.character_jobs[job] = (project["id"], scene_ids)
+                return self.reply({"ok": True, "id": job, "engine": "chatgpt" if chatgpt else "gemini", "total": len(scenes)})
+            elif path == "/api/characters/apply":
+                runner = self.server.chatgpt_web if body.get("engine") == "chatgpt" else self.server.gemini_web
+                job = runner.snapshot()
+                pending = self.server.character_jobs.get(str(body.get("job_id", "")))
+                if not pending or job.get("id") != body.get("job_id") or job.get("kind") != "characters":
+                    raise ValueError("Không tìm thấy kết quả phân tích nhân vật này (có thể đã lưu rồi).")
+                if job.get("busy"):
+                    raise ValueError("AI vẫn đang phân tích nhân vật. Đợi xong rồi lưu.")
+                if not job.get("result"):
+                    raise ValueError(job.get("error") or "Không có kết quả phân tích nhân vật.")
+                summary = store.characters.apply_extraction(pending[0], pending[1], job["result"])
+                self.server.character_jobs.pop(body["job_id"], None)
+                return self.reply({"ok": True, "summary": summary, "missing": job["result"].get("missing", []),
+                                   "unknown": job["result"].get("unknown", []), "project": store.characters.project(pending[0])})
+            elif path == "/api/characters/add":
+                made = store.characters.add_character(body["project_id"], body.get("name", ""), body.get("description", ""),
+                                                      body.get("image_prompt", ""))
+                return self.reply({"ok": True, **made})
+            elif path == "/api/characters/update":
+                store.characters.update_character(body["id"], body.get("name"), body.get("description"), body.get("image_prompt"))
+            elif path == "/api/characters/delete":
+                store.characters.delete_character(body["id"])
+            elif path == "/api/scenes/characters":
+                store.characters.set_scene_characters(body["scene_id"], body.get("character_ids", []), source="manual")
             elif path == "/api/content/web-login":
                 if body.get("engine") == "chatgpt":
                     self.server.chatgpt_web.open_login()

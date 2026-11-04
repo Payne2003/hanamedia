@@ -54,6 +54,13 @@ JOB_COLUMNS = {
     "images_origin": "TEXT NOT NULL DEFAULT 'manual'",
 }
 
+def migrate(db):
+    """Cột thêm sau khi bảng đã tạo (dữ liệu của bản trước giữ nguyên)."""
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(scenes)")}
+    if "manual_characters" not in columns:  # 1 = người dùng tự chọn nhân vật cho cảnh: AI không ghi đè
+        db.execute("ALTER TABLE scenes ADD COLUMN manual_characters INTEGER NOT NULL DEFAULT 0")
+
+
 CHARACTER_STATUSES = ("draft", "generating", "review", "approved")
 ASSET_ORIGINS = ("flow", "upload", "library")
 TASK_ACTIVE = ("waiting", "running")
@@ -195,6 +202,8 @@ class CharacterRegistry:
                 if found != len(character_ids):
                     raise ValueError("Có nhân vật không thuộc dự án của cảnh này.")
             db.execute("DELETE FROM scene_characters WHERE scene_id=?", (scene_id,))
+            db.execute("UPDATE scenes SET manual_characters=?,updated=? WHERE id=?",
+                       (int(source == "manual"), time.time(), scene_id))
             db.executemany("INSERT INTO scene_characters(scene_id,character_id,source) VALUES(?,?,?)",
                            [(scene_id, c, source) for c in character_ids])
 
@@ -324,7 +333,7 @@ class CharacterRegistry:
                 "SELECT * FROM scenes WHERE project_id=? ORDER BY ordinal, rowid", (project_id,))]
             links = {}
             for row in db.execute("""SELECT sc.scene_id, sc.character_id, sc.source FROM scene_characters sc
-                                     JOIN scenes s ON s.id=sc.scene_id WHERE s.project_id=?""", (project_id,)):
+                                     JOIN scenes s ON s.id=sc.scene_id WHERE s.project_id=? ORDER BY sc.rowid""", (project_id,)):
                 links.setdefault(row["scene_id"], []).append(row["character_id"])
             jobs = {}
             for row in db.execute("""SELECT j.id, j.scene_id, j.status FROM jobs j JOIN scenes s ON s.id=j.scene_id
@@ -336,5 +345,179 @@ class CharacterRegistry:
             character["locked"] = bool(character["locked"])
         for scene in scenes:
             scene["character_ids"] = links.get(scene["id"], [])
+            scene["manual"] = bool(scene.pop("manual_characters", 0))
             scene["jobs"] = jobs.get(scene["id"], [])
         return {**dict(project), "characters": characters, "scenes": scenes}
+
+
+# ================= Character Extractor (giai đoạn 2) =================
+# AI (Gemini/ChatGPT) đọc kịch bản + danh sách cảnh, liệt kê nhân vật DUY NHẤT với Character ID, mô tả ngoại hình cố định,
+# prompt ảnh Master tiếng Anh, và Character ID xuất hiện trong từng cảnh. Định dạng dòng văn bản để đọc chắc chắn.
+END_CHARACTERS = "HẾT DANH SÁCH NHÂN VẬT"
+NONE_WORDS = {"", "KHONG", "KHONG_CO", "NONE", "NO", "NULL", "N_A", "NA"}
+MAX_CHARACTERS = 60
+_LEAD = r"^\s*(?:\d+[.)]\s*)?[-*•–\s]*"
+NV_LINE = re.compile(_LEAD + r"NV\s*\|\s*(.+)$", re.IGNORECASE)
+SCENE_LINK = re.compile(_LEAD + r"C(?:[ảa]nh)?\s*(\d{1,4})\s*[|:：]\s*(.*)$", re.IGNORECASE)
+LABEL_DESC = re.compile(r"^\s*m[ôo]\s*t[ảa]\s*[:：]\s*", re.IGNORECASE)
+LABEL_PROMPT = re.compile(r"^\s*(?:prompt\s*[ảa]nh|image\s*prompt)\s*[:：]\s*", re.IGNORECASE)
+
+
+def scene_line(number, scene):
+    parts = [("Bối cảnh", scene.get("setting")), ("góc quay", scene.get("camera")),
+             ("hành vi nhân vật", scene.get("behavior")), ("hành động", scene.get("action"))]
+    body = ", ".join(f"{label}: {text(value, 1500)}" for label, value in parts if text(value))
+    return f"C{number}: {body or text(scene.get('source') or scene.get('prompt'), 3000)}"
+
+
+def extraction_request(script, scenes, numbers=None, known=None):
+    """Yêu cầu gửi AI. numbers: chỉ hỏi lại các cảnh này (đánh số 1..N theo thứ tự danh sách gửi đi)."""
+    total = len(scenes)
+    if numbers:
+        codes = ", ".join(known or []) or "(chưa có)"
+        wanted = ", ".join(f"C{n}" for n in numbers)
+        return ("Còn thiếu dòng nhân vật cho các cảnh: " + wanted + ".\n"
+                "Chỉ viết lại các dòng đó, mỗi dòng: C<số> | <Character ID>, <Character ID> (không có nhân vật thì ghi KHONG). "
+                "Chỉ dùng các Character ID đã liệt kê: " + codes + ". Nếu thật sự có nhân vật mới, thêm dòng NV như trước.\n"
+                + "\n".join(scene_line(n, scenes[n - 1]) for n in numbers)
+                + f"\nCuối cùng viết đúng một dòng: {END_CHARACTERS}")
+    return (
+        "Bạn là trợ lý tiền kỳ cho video. Đọc KỊCH BẢN và DANH SÁCH CẢNH bên dưới rồi làm 3 việc:\n"
+        "1. Liệt kê MỌI nhân vật DUY NHẤT (người, con vật, sinh vật có vai trò). Một nhân vật xuất hiện ở nhiều cảnh chỉ liệt kê "
+        "MỘT lần. Một nhóm giống hệt nhau không phân biệt từng cá thể (ví dụ “đàn sói”) có thể là một nhân vật nhóm. "
+        "Không liệt kê đồ vật, bối cảnh hay thời tiết.\n"
+        "2. Mỗi nhân vật: Character ID viết HOA, không dấu, nối bằng dấu _ (ví dụ DE_DUC, BAO_TUYET); tên tiếng Việt; "
+        "mô tả ngoại hình CỐ ĐỊNH để mọi cảnh giống nhau (loài/giới tính/tuổi, màu lông hoặc da, vóc dáng, đặc điểm nhận dạng, "
+        "trang phục nếu có); và một prompt ảnh tham chiếu TIẾNG ANH cho ảnh Master của nhân vật: chỉ một nhân vật, toàn thân, "
+        "nhìn chính diện, đứng yên, nền trơn trung tính, ánh sáng studio đều, ảnh chân thực, không chữ, không logo, "
+        "KHÔNG có bối cảnh của cảnh quay.\n"
+        "3. Với TỪNG cảnh C1 đến C" + str(total) + ", ghi các Character ID xuất hiện trong cảnh đó; cảnh không có nhân vật ghi KHONG.\n\n"
+        "ĐỊNH DẠNG BẮT BUỘC (mỗi mục một dòng, không bảng, không markdown, không giải thích thêm):\n"
+        "NV | DE_DUC | Dê đực đầu đàn | Mô tả: dê núi ibex đực trưởng thành, lông xám nâu, cặp sừng cong lớn | "
+        "Prompt ảnh: full body photo of an adult male alpine ibex with large curved horns, grey-brown coat, front view, "
+        "standing still, plain neutral grey background, even studio lighting, photorealistic, no text\n"
+        "C1 | DE_DUC, DE_CON\n"
+        "C2 | KHONG\n"
+        f"Viết đủ các dòng C1 đến C{total}. Cuối cùng viết đúng một dòng: {END_CHARACTERS}\n\n"
+        "KỊCH BẢN:\n" + (str(script or "").strip()[:30000] or "(không có, chỉ dựa vào danh sách cảnh)") + "\n\n"
+        "DANH SÁCH CẢNH:\n" + "\n".join(scene_line(n, scene) for n, scene in enumerate(scenes, 1)))
+
+
+def parse_characters(answer, total, known=()):
+    """Đọc câu trả lời: {"characters": [{code,name,description,image_prompt}], "scenes": {n: [code]}, "unknown": [code]}.
+    known: Character ID đã có từ lượt trước (lượt hỏi lại thường chỉ có dòng C…)."""
+    characters, scenes, order = {}, {}, []
+    for raw in str(answer or "").replace("\r", "").split("\n"):
+        line = re.sub(r"[*`#>]+", "", raw).strip()  # giữ dấu _ của Character ID
+        match = NV_LINE.match(line)
+        if match:
+            parts = [part.strip() for part in match.group(1).split("|")]
+            code = character_code(parts[0]) if parts and parts[0] else ""
+            if not parts or not parts[0].strip():
+                continue
+            name, description, prompt = (parts[1] if len(parts) > 1 else "") or code.replace("_", " ").title(), "", ""
+            for part in parts[2:]:
+                if LABEL_PROMPT.match(part):
+                    prompt = LABEL_PROMPT.sub("", part)
+                elif LABEL_DESC.match(part):
+                    description = LABEL_DESC.sub("", part)
+                elif not description:
+                    description = part
+                elif not prompt:
+                    prompt = part
+            if code not in characters and len(characters) < MAX_CHARACTERS:
+                order.append(code)
+            if len(characters) < MAX_CHARACTERS or code in characters:
+                characters[code] = {"code": code, "name": text(name, 200), "description": text(description, 5000),
+                                    "image_prompt": text(prompt, 5000)}
+            continue
+        match = SCENE_LINK.match(line)
+        if match and 1 <= int(match.group(1)) <= total:
+            codes = []
+            for item in re.split(r"[,;、]+", match.group(2)):
+                code = character_code(item) if item.strip() else ""
+                if code and code not in NONE_WORDS and code != "NHAN_VAT" and code not in codes:
+                    codes.append(code)
+            scenes[int(match.group(1))] = codes
+    valid = set(characters) | set(known)
+    unknown = sorted({code for codes in scenes.values() for code in codes if code not in valid})
+    scenes = {n: [code for code in codes if code in valid] for n, codes in scenes.items()}
+    return {"characters": [characters[code] for code in order], "scenes": scenes, "unknown": unknown}
+
+
+def missing_scenes(scenes, total):
+    return [n for n in range(1, total + 1) if n not in scenes]
+
+
+def merge_extraction(result, extra):
+    """Gộp lượt hỏi lại: nhân vật mới thêm vào cuối, dòng cảnh mới bổ sung (không ghi đè cảnh đã có)."""
+    known = {c["code"] for c in result["characters"]}
+    result["characters"] += [c for c in extra["characters"] if c["code"] not in known]
+    known = {c["code"] for c in result["characters"]}
+    for n, codes in extra["scenes"].items():
+        result["scenes"].setdefault(n, [code for code in codes if code in known])
+    result["unknown"] = sorted(set(result["unknown"]) | {c for c in extra["unknown"] if c not in known})
+    return result
+
+
+def _apply_extraction(registry, project_id, scene_ids, result):
+    """Lưu kết quả phân tích vào dự án. scene_ids: Scene ID theo đúng thứ tự đã gửi cho AI (C1 = scene_ids[0]).
+    Nhân vật đã có (cùng Character ID): chỉ cập nhật khi còn bản nháp và chưa khóa. Cảnh người dùng đã tự gán thì giữ nguyên."""
+    check_id(project_id, "Dự án")
+    with registry.store.connect() as db:
+        existing = {row["code"]: dict(row) for row in db.execute("SELECT * FROM characters WHERE project_id=?", (project_id,))}
+        manual = {row["id"] for row in db.execute(
+            "SELECT id FROM scenes WHERE project_id=? AND manual_characters=1", (project_id,))}
+        valid = {row["id"] for row in db.execute("SELECT id FROM scenes WHERE project_id=?", (project_id,))}
+    ids, added, updated = {}, 0, 0
+    for character in result.get("characters", []):
+        old = existing.get(character["code"])
+        if old:
+            ids[character["code"]] = old["id"]
+            if old["status"] == "draft" and not old["locked"]:
+                registry.update_character(old["id"], character["name"], character["description"] or old["description"],
+                                          character["image_prompt"] or old["image_prompt"])
+                updated += 1
+        else:
+            made = registry.add_character(project_id, character["name"], character["description"],
+                                          character["image_prompt"], code=character["code"])
+            ids[character["code"]] = made["id"]
+            added += 1
+    linked = kept = 0
+    for number, codes in sorted(result.get("scenes", {}).items(), key=lambda item: int(item[0])):
+        number = int(number)
+        if not 1 <= number <= len(scene_ids) or scene_ids[number - 1] not in valid:
+            continue
+        scene_id = scene_ids[number - 1]
+        if scene_id in manual:
+            kept += 1
+            continue
+        registry.set_scene_characters(scene_id, [ids[code] for code in codes if code in ids], source="ai")
+        linked += 1
+    return {"added": added, "updated": updated, "linked": linked, "kept_manual": kept}
+
+
+def _delete_character(registry, character_id):
+    check_id(character_id, "Nhân vật")
+    with registry.store.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT locked FROM characters WHERE id=?", (character_id,)).fetchone()
+        if not row:
+            raise ValueError("Không tìm thấy nhân vật.")
+        if row["locked"]:
+            raise ValueError("Nhân vật đã khóa. Mở khóa trước khi xóa.")
+        if db.execute("SELECT 1 FROM image_tasks WHERE character_id=? AND status='running'", (character_id,)).fetchone():
+            raise ValueError("Nhân vật đang được tạo ảnh. Đợi xong rồi xóa.")
+        db.execute("DELETE FROM characters WHERE id=?", (character_id,))
+    registry.store.cleanup_images()
+
+
+def _scene_inputs(registry, project_id):
+    """Danh sách cảnh (thứ tự hiển thị) và Scene ID tương ứng để gửi cho AI."""
+    project = registry.project(project_id)
+    return project, [scene["id"] for scene in project["scenes"]], project["scenes"]
+
+
+CharacterRegistry.apply_extraction = _apply_extraction
+CharacterRegistry.delete_character = _delete_character
+CharacterRegistry.scene_inputs = _scene_inputs

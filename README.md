@@ -56,6 +56,20 @@ Nếu AI đã viết xong trên cửa sổ Chrome mà tool vẫn hiện đang ch
 
 Bản nháp (yêu cầu, link, các cảnh) được giữ trên trình duyệt khi chuyển trang hoặc tải lại. Tool dò ô nhập, nút Gửi và câu trả lời theo giao diện Gemini hiện tại; nếu Google đổi giao diện mà tool báo không điền/không đọc được, cần cập nhật tool. Việc điều khiển trình duyệt tự động có thể trái điều khoản sử dụng của Google; dùng ở mức vừa phải trên tài khoản của chính bạn.
 
+## Character Library: nhân vật của dự án (bước 5 trong Viết content)
+
+Mục tiêu: mỗi nhân vật có **một ảnh Master** dùng lại cho mọi cảnh, không tạo ảnh riêng cho từng cảnh.
+
+1. Viết cảnh ở bước 2 như trước, rồi bấm **💾 Lưu danh sách cảnh thành dự án**. Mỗi cảnh được cấp một Scene ID riêng (không dùng số thứ tự cảnh làm khóa).
+2. Chọn **Gemini Pro** hoặc **ChatGPT**, bấm **✦ Tìm nhân vật**. AI đọc kịch bản và các cảnh, trả về:
+   - danh sách nhân vật **duy nhất**, mỗi nhân vật một **Character ID** (ví dụ `DE_DUC`, `BAO_TUYET`), mô tả ngoại hình cố định và **prompt ảnh Master** tiếng Anh (toàn thân, nhìn chính diện, nền trơn, không có bối cảnh cảnh quay);
+   - nhân vật xuất hiện trong **từng cảnh**. Cảnh nào AI bỏ sót, tool tự hỏi lại riêng các cảnh đó (tối đa 3 lần, dừng nếu không có tiến triển).
+3. Sửa tên, mô tả, prompt ảnh của từng nhân vật rồi bấm **Lưu**; thêm nhân vật thủ công nếu thiếu; xóa nhân vật thừa.
+4. Ở **Nhân vật trong từng cảnh**, tick nhân vật rồi bấm **Lưu** để sửa tay. Cảnh đã chỉnh tay hiện "đã chỉnh tay" và **không bị AI ghi đè** khi bấm Tìm nhân vật lần nữa. Nhân vật đã duyệt ảnh hoặc đã khóa cũng không bị AI sửa.
+5. Mỗi cảnh hiện số nhân vật; mỗi nhân vật hiện số cảnh có mặt.
+
+Chưa có trong bản này: tự tạo ảnh Master bằng Google Flow (Nano Banana), duyệt/khóa ảnh trên giao diện, và tự gắn ảnh vào prompt video. Các bước đó làm ở giai đoạn tiếp theo.
+
 ## Mức độ đã xác minh — đọc trước khi chạy
 
 - Tạo ảnh dùng giao diện Google Flow trên Chrome profile `Profile 2` trong `%LOCALAPPDATA%\Google\Chrome\User Data`, không dùng API riêng/không công khai. Profile này phải được đóng trong các cửa sổ Chrome khác trước khi bấm **Mở Flow và điền prompt**; Chrome không cho hai tiến trình dùng chung profile cùng lúc. Tool điền prompt nhưng người dùng cần chọn **Hình ảnh**, bấm tạo và tải ảnh trong Flow; sau đó nhập ảnh tải xuống vào thư viện. Đăng nhập Google trực tiếp trên cửa sổ Flow; tool không đọc/lưu mật khẩu.

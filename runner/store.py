@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .content import parse_structured
-from .characters import JOB_COLUMNS, SCHEMA as CHARACTER_SCHEMA, CharacterRegistry
+from .characters import JOB_COLUMNS, SCHEMA as CHARACTER_SCHEMA, CharacterRegistry, migrate as migrate_characters
 
 
 def number(value, minimum=0):
@@ -62,6 +62,7 @@ class Store:
                 token TEXT PRIMARY KEY, name TEXT NOT NULL, created REAL NOT NULL);
             """)
             db.executescript(CHARACTER_SCHEMA)  # dự án, cảnh, nhân vật, ảnh Master, hàng đợi ảnh nhân vật
+            migrate_characters(db)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
             migrations = {
                 "images": "TEXT NOT NULL DEFAULT '[]'",
