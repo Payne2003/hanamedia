@@ -20,7 +20,7 @@ class FakeBrowser:
     """Chrome giả cho kiểm tra phiên: ghi lại số Chrome mở cùng lúc."""
     lock = threading.Lock()
 
-    def __init__(self, world, account_id, result=("READY", "")):
+    def __init__(self, world, account_id, result=("LIVE", "")):
         self.world, self.account_id, self.result, self.closed = world, account_id, result, False
         self.driver = type("D", (), {"window_handles": ["main"]})()
 
@@ -90,7 +90,7 @@ class HealthStoreTests(unittest.TestCase):
         self.assertEqual(self.store.account(a["id"])["state"], "busy")
         self.store.finish(job["id"], output="x.mp4")
         account = self.store.snapshot()["accounts"][0]
-        self.assertEqual((account["state"], account["health"], account["jobs_completed"]), ("ready", "READY", 1))
+        self.assertEqual((account["state"], account["health"], account["jobs_completed"]), ("ready", "LIVE", 1))
         self.assertGreater(account["last_checked"], 0)
 
     def test_checking_account_gets_no_job_login_or_delete_but_keeps_assignment(self):
@@ -106,7 +106,7 @@ class HealthStoreTests(unittest.TestCase):
             self.store.delete_account(a["id"])
         with self.assertRaises(ValueError):
             self.store.configure_account(a["id"], True, 5)
-        self.store.end_check(a["id"], "new", "READY")
+        self.store.end_check(a["id"], "new", "LIVE")
         self.assertIsNotNone(self.store.claim(2))
 
     def test_network_rate_limit_and_unknown_do_not_mark_account_dead(self):
@@ -126,9 +126,9 @@ class HealthStoreTests(unittest.TestCase):
         row = self.store.account(a["id"])
         self.assertEqual((row["state"], row["health"], row["detail"]), ("attention", "LOGIN_REQUIRED", "Phiên Muse đã đăng xuất."))
         before = self.store.begin_check(a["id"])
-        self.store.end_check(a["id"], before["state"], "READY")
+        self.store.end_check(a["id"], before["state"], "LIVE")
         row = self.store.account(a["id"])
-        self.assertEqual((row["state"], row["health"], row["last_error"], row["check_failures"]), ("ready", "READY", "", 0))
+        self.assertEqual((row["state"], row["health"], row["last_error"], row["check_failures"]), ("ready", "LIVE", "", 0))
 
     def test_restart_during_check_restores_account(self):
         a = self.account()
@@ -137,7 +137,7 @@ class HealthStoreTests(unittest.TestCase):
         restarted = Store(self.root / "test.db")
         restarted.recover()
         row = restarted.account(a["id"])
-        self.assertEqual((row["state"], row["health"]), ("new", "READY"))
+        self.assertEqual((row["state"], row["health"]), ("new", "LIVE"))
 
 
 class HealthMonitorTests(unittest.TestCase):
@@ -188,7 +188,7 @@ class HealthMonitorTests(unittest.TestCase):
                 self.assertLessEqual(self.world["peak"], parallel)
                 self.assertGreater(self.world["peak"], 1)
                 self.assertEqual(sorted(self.world["closed"]), sorted(ids))  # Chrome ẩn tự mở đều được đóng
-                self.assertTrue(all(a["state"] == "ready" and a["health"] == "READY"
+                self.assertTrue(all(a["state"] == "ready" and a["health"] == "LIVE"
                                     for a in self.store.snapshot()["accounts"]))
 
     def test_running_account_is_skipped_and_its_browser_untouched(self):
@@ -212,7 +212,7 @@ class HealthMonitorTests(unittest.TestCase):
         kept = FakeBrowser(self.world, account_id)
         self.engine.browsers[account_id] = kept
         monitor = self.monitor(1, factory=lambda *a: self.fail("Không được mở Chrome thứ hai cho cùng hồ sơ"))
-        self.assertEqual(monitor.check(account_id), "READY")
+        self.assertEqual(monitor.check(account_id), "LIVE")
         self.assertFalse(kept.closed)
         self.assertIs(self.engine.browsers[account_id], kept)
 
@@ -222,7 +222,7 @@ class HealthMonitorTests(unittest.TestCase):
         dead.driver = type("D", (), {"window_handles": property(lambda self: (_ for _ in ()).throw(RuntimeError()))})()
         self.engine.browsers[account_id] = dead
         monitor = self.monitor(1)
-        self.assertEqual(monitor.check(account_id), "READY")
+        self.assertEqual(monitor.check(account_id), "LIVE")
         self.assertTrue(dead.closed)
         self.assertNotIn(account_id, self.engine.browsers)
 
@@ -280,7 +280,7 @@ class CheckSessionTests(unittest.TestCase):
 
     def test_page_states(self):
         cases = [
-            (Driver(elements=[Element("Nhắn tin")]), "READY"),
+            (Driver(elements=[Element("Nhắn tin")]), "LIVE"),
             (Driver(elements=[Element("Số di động hoặc email")]), "LOGIN_REQUIRED"),
             (Driver(elements=[Element(text="Too Many Requests")]), "RATE_LIMITED"),
             (Driver(elements=[Element(text="Verify you are human")]), "LOGIN_REQUIRED"),

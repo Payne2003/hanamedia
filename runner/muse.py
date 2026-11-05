@@ -315,7 +315,7 @@ class MuseBrowser:
     def check_session(self, timeout=45):
         """Kiểm tra phiên cho Account Health Monitor: chỉ mở trang chủ muse.ai và nhìn trang (không gọi API nội bộ,
         không gửi prompt, không bấm gì, không tốn credit). Trả về (health, thông báo).
-        READY: thấy ô soạn tin. LOGIN_REQUIRED: thấy ô email đăng nhập hoặc yêu cầu xác minh (người dùng tự xử lý).
+        LIVE: thấy ô soạn tin. LOGIN_REQUIRED: thấy ô email đăng nhập hoặc yêu cầu xác minh (người dùng tự xử lý).
         RATE_LIMITED: Muse báo quá nhiều yêu cầu. NETWORK_ERROR: Chrome không tải được trang. UNKNOWN: còn lại."""
         try:
             self.driver.get("https://muse.ai")
@@ -333,7 +333,7 @@ class MuseBrowser:
                 if url.startswith("chrome-error://"):
                     return "NETWORK_ERROR", "Không tải được muse.ai (lỗi mạng). Chưa đổi trạng thái tài khoản."
                 if self.session_ready():
-                    return "READY", ""
+                    return "LIVE", ""
                 text = " ".join(e.text for e in self.elements("[role='alert'],[role='status'],h1,h2") if e.is_displayed()).lower()
                 if any(t in text for t in ("too many requests", "rate limit", "quá nhiều yêu cầu", "429")):
                     return "RATE_LIMITED", "Muse báo quá nhiều yêu cầu (429). Sẽ kiểm tra lại sau."

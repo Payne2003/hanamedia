@@ -14,7 +14,7 @@ import time
 
 from . import muse
 
-HEALTH_STATES = ("READY", "CHECKING", "LOGIN_REQUIRED", "EXPIRED", "BUSY", "NETWORK_ERROR", "RATE_LIMITED", "UNKNOWN")
+HEALTH_STATES = ("LIVE", "CHECKING", "LOGIN_REQUIRED", "EXPIRED", "BUSY", "NETWORK_ERROR", "RATE_LIMITED", "UNKNOWN")
 
 
 def open_check_browser(profile, downloads):
@@ -124,7 +124,7 @@ class HealthMonitor:
                         self.owned.add(browser)
             if browser is not None:
                 health, message = browser.check_session()
-                if health == "LOGIN_REQUIRED" and before["health"] == "READY":
+                if health == "LOGIN_REQUIRED" and before["health"] == "LIVE":
                     health, message = "EXPIRED", "Phiên Muse đã hết hạn. Bấm Đăng nhập để nhập OTP."
         except Exception:
             health, message = "UNKNOWN", "Không kiểm tra được phiên. Thử lại sau."

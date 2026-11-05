@@ -95,6 +95,7 @@ class Store:
             for name, declaration in ACCOUNT_COLUMNS.items():
                 if name not in account_columns:
                     db.execute(f"ALTER TABLE accounts ADD COLUMN {name} {declaration}")
+            db.execute("UPDATE accounts SET health='LIVE' WHERE health='READY'")  # tên cũ của bản thử đầu
         self.characters = CharacterRegistry(self)
         self.cleanup_images()
 
@@ -176,7 +177,7 @@ class Store:
         with self.connect() as db:
             db.execute("UPDATE accounts SET state=?,detail=? WHERE id=?", (state, detail, account_id))
             if state == "ready":  # chỉ gọi 'ready' sau khi đã thấy ô soạn tin Muse: đó là bằng chứng phiên còn sống
-                db.execute("UPDATE accounts SET health='READY',last_checked=?,last_error='',check_failures=0 WHERE id=?",
+                db.execute("UPDATE accounts SET health='LIVE',last_checked=?,last_error='',check_failures=0 WHERE id=?",
                            (time.time(), account_id))
 
     def begin_check(self, account_id):
@@ -191,7 +192,7 @@ class Store:
             return dict(row)
 
     def end_check(self, account_id, previous, health, error=""):
-        """Ghi kết quả kiểm tra. Chỉ READY / LOGIN_REQUIRED / EXPIRED đổi state điều phối; lỗi mạng, 429 và lỗi chưa rõ
+        """Ghi kết quả kiểm tra. Chỉ LIVE / LOGIN_REQUIRED / EXPIRED đổi state điều phối; lỗi mạng, 429 và lỗi chưa rõ
         giữ nguyên state cũ (không đánh dấu tài khoản hỏng) và tăng bộ đếm lỗi để lịch kiểm tra giãn ra."""
         now = time.time()
         with self.connect() as db:
@@ -199,7 +200,7 @@ class Store:
             row = db.execute("SELECT * FROM accounts WHERE id=? AND state='checking'", (account_id,)).fetchone()
             if not row:
                 return
-            if health == "READY":
+            if health == "LIVE":
                 state, detail, failures = "ready", "Đã kiểm tra: phiên Muse còn đăng nhập", 0
             elif health in ("LOGIN_REQUIRED", "EXPIRED"):
                 state, detail, failures = "attention", error, 0
@@ -207,7 +208,7 @@ class Store:
                 state, detail, failures = previous, row["detail"], row["check_failures"] + 1
             db.execute("""UPDATE accounts SET state=?,detail=?,health=?,last_checked=?,last_error=?,check_failures=?,
                           health_before='' WHERE id=?""",
-                       (state, detail, health, now, "" if health == "READY" else error, failures, account_id))
+                       (state, detail, health, now, "" if health == "LIVE" else error, failures, account_id))
 
     def configure_account(self, account_id, enabled, budget):
         with self.connect() as db:
@@ -643,7 +644,7 @@ class Store:
                         job["progress"] if error else 100, output, error, time.time(), job_id))
             db.execute("UPDATE accounts SET state=?,detail=? WHERE id=?", (account_state, error, job["account_id"]))
             if not error:  # vừa tải được video: phiên chắc chắn còn sống
-                db.execute("UPDATE accounts SET health='READY',last_checked=?,last_error='',check_failures=0 WHERE id=?",
+                db.execute("UPDATE accounts SET health='LIVE',last_checked=?,last_error='',check_failures=0 WHERE id=?",
                            (time.time(), job["account_id"]))
 
     DETAIL_FIELDS = ("setting", "camera", "behavior", "action")
