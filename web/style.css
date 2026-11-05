@@ -398,3 +398,16 @@ button.cd-thumb{padding:0;background:none;cursor:pointer}button.cd-thumb:disable
 .stitch-row button,.stitch-row .button-link{padding:4px 9px;font-size:11px}
 .stitch-state{padding:2px 8px;border-radius:12px;background:#24243a}.stitch-state.done{background:#12372d;color:var(--green)}.stitch-state.error{background:#3b202b;color:var(--red)}.stitch-state.running{background:#2b2150;color:#cdb5ff}
 @media(max-width:560px){.vs-grid,.job-video-spec{grid-template-columns:1fr}}
+/* ===== Thanh hỗ trợ trên cùng ===== */
+.support-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 36px;border-bottom:1px solid #3b2d63;background:linear-gradient(90deg,#2a1a4f,#1a1430 60%,#141225);font-size:13px;color:#e6dcff}
+.support-text{flex:1 1 280px;min-width:0}.support-text b{color:#ffd166}.support-sep{color:#8d7fb8;margin:0 4px}
+.support-qr{width:40px;height:40px;padding:0;border-radius:8px;border:1px dashed #6d5aa6;background:#120f22;display:grid;place-items:center;overflow:hidden;flex:0 0 auto;font-size:10px;color:#a89bd0}
+.support-qr img{width:100%;height:100%;object-fit:contain;background:#fff}
+.support-copy{padding:6px 12px;font-size:12px;border-color:#8a6b2b;background:#3a2b10;color:#ffd166}
+.support-settings{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.support-qr-preview{width:140px;height:140px;border:1px dashed #4b456a;border-radius:12px;display:grid;place-items:center;overflow:hidden;background:#0e1019;color:var(--muted);font-size:12px;text-align:center;flex:0 0 auto}
+.support-qr-preview img{width:100%;height:100%;object-fit:contain;background:#fff}
+.support-fields{flex:1 1 220px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.support-fields label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.support-actions{display:flex;flex-wrap:wrap;gap:8px}
+@media(max-width:780px){.support-bar{padding:8px 14px;font-size:12px}}

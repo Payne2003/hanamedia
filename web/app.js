@@ -1025,3 +1025,31 @@ $('vCharacters').onclick=()=>openPicker('characters');
 $('vClearCharacters').onclick=()=>{fixedCharacters=[];saveVideoSettings();renderFixedCharacters();};
 $('vCharacterChips').onclick=e=>{const b=e.target.closest('[data-remove-fixed]');if(!b)return;fixedCharacters.splice(Number(b.dataset.removeFixed),1);saveVideoSettings();renderFixedCharacters();};
 loadVideoSettings();renderFixedCharacters();if(state){renderNickOptions();renderStitchPanel();}
+
+// ===== Thanh hỗ trợ trên cùng (lời nhắn, SĐT, ảnh QR do người dùng tải lên; không có popup) =====
+let supportDraftQr;  // undefined = chưa sửa; null = bỏ ảnh; token = ảnh mới
+function renderSupport(){
+  const sp=state?.support;if(!sp)return;
+  $('supportMessage').textContent=sp.message;$('supportPhone').textContent=sp.phone;
+  $('supportQr').hidden=!sp.qr;$('supportQrEmpty').hidden=Boolean(sp.qr);
+  if(sp.qr&&$('supportQr').dataset.token!==sp.qr){$('supportQr').src='/api/library/image/'+sp.qr;$('supportQr').dataset.token=sp.qr;}
+  if(document.activeElement!==$('supportMessageInput')&&!$('supportMessageInput').dataset.dirty)$('supportMessageInput').value=sp.message;
+  if(document.activeElement!==$('supportPhoneInput')&&!$('supportPhoneInput').dataset.dirty)$('supportPhoneInput').value=sp.phone;
+  const qr=supportDraftQr===undefined?sp.qr:supportDraftQr;
+  $('supportQrPreview').hidden=!qr;$('supportQrPreviewEmpty').hidden=Boolean(qr);
+  if(qr&&$('supportQrPreview').dataset.token!==qr){$('supportQrPreview').src='/api/library/image/'+qr;$('supportQrPreview').dataset.token=qr;}
+  $('supportQrRemove').disabled=!qr;
+}
+setInterval(renderSupport,1000);renderSupport();
+$('copySupportPhone').onclick=()=>{const phone=$('supportPhone').textContent.replace(/\s|\./g,'');
+  navigator.clipboard.writeText(phone).then(()=>toast(`Đã sao chép số ${phone}.`)).catch(()=>toast('Không sao chép được. Chọn và sao chép số trên thanh.',true));};
+$('supportQrSlot').onclick=()=>showView('settings');
+for(const id of ['supportMessageInput','supportPhoneInput'])$(id).addEventListener('input',()=>{$(id).dataset.dirty='1';});
+$('supportQrUpload').onclick=()=>$('supportQrFile').click();
+$('supportQrFile').onchange=async()=>{const file=$('supportQrFile').files[0];$('supportQrFile').value='';if(!file)return;
+  try{const data=await sendMedia(file,null,'other');supportDraftQr=data.token;renderSupport();toast('Đã tải ảnh QR. Bấm Lưu để hiện trên thanh.');}catch(error){toast(error.message,true);}};
+$('supportQrRemove').onclick=()=>{supportDraftQr=null;renderSupport();toast('Bấm Lưu để bỏ ảnh QR khỏi thanh.');};
+$('supportSave').onclick=()=>action(async()=>{
+  const qr=supportDraftQr===undefined?(state?.support?.qr||null):supportDraftQr;
+  await api('/api/settings/support',{message:$('supportMessageInput').value,phone:$('supportPhoneInput').value,qr});
+  supportDraftQr=undefined;delete $('supportMessageInput').dataset.dirty;delete $('supportPhoneInput').dataset.dirty;toast('Đã lưu thanh hỗ trợ.');});
