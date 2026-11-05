@@ -442,41 +442,8 @@ function fillJob(){
   $('jobStatus').innerHTML=`<option value="${job.status}">${statusLabel[job.status]}${job.status==='error'&&job.error?' – '+esc(job.error.slice(0,80)):''}</option>`+(canRerun?'<option value="rerun">Chờ (chạy lại prompt này)</option>':'');
   $('jobStatus').disabled=!canRerun;
   $('jobInfo').textContent=job.status==='running'?'Prompt đang chạy: chỉ xem, chưa sửa được.':job.status==='done'?'Đã có video. Sửa rồi bấm Chạy lại để tạo video mới; video cũ vẫn giữ trong thư mục lưu.':job.status==='error'?(job.submitted?'Lỗi sau khi đã gửi lên Muse: kiểm tra Muse trước khi chạy lại.':'Lỗi trước khi gửi: sửa rồi bấm Chạy lại.'):'Đang chờ chạy: sửa xong bấm Lưu.';
-  $('jobNotice').hidden=true;renderJobImages();renderJobEditing();renderJobCharacters();
+  $('jobNotice').hidden=true;renderJobImages();renderJobEditing();
 }
-const jobCharStates={attached:'✓ Đã gắn ảnh nhân vật vào prompt',not_attached:'Chưa gắn ảnh nhân vật vào prompt',missing_master:'Thiếu ảnh Master đã duyệt',none:'Prompt chưa có nhân vật'};
-function renderJobCharacters(){
-  const info=studioJob?.characters;if(!info){$('jobCharacters').innerHTML='';return;}
-  const running=studioJob.status==='running',selected=new Set(info.selected.map(c=>c.id));
-  const where=info.source==='prompt'?'chọn riêng cho prompt này':info.source==='scene'?`theo Cảnh ${info.scene_number} của dự án`:'chưa liên kết cảnh nào';
-  const options=info.options.length?info.options:info.selected;
-  const chips=options.map(c=>`<label class="chip"><input type="checkbox" value="${c.id}" ${selected.has(c.id)?'checked':''} ${running?'disabled':''}> ${esc(c.code)}</label>`).join('');
-  const refs=info.selected.map(c=>`<figure class="job-ref${c.master_token?'':' missing'}">${c.master_token?`<img src="/api/library/image/${c.master_token}" alt="Ảnh Master ${esc(c.name)}">`:`<span>${esc(initials(c.name))}</span>`}<figcaption><b>${esc(c.code)}</b><small>${c.master_token?'Ảnh Master đã duyệt':'Chưa có ảnh Master'}</small></figcaption></figure>`).join('');
-  const manual=studioJob.images.length&&info.images_origin==='manual'&&info.state!=='attached';
-  $('jobCharacters').innerHTML=`<div class="job-char-head"><label>Nhân vật <small>(${esc(where)}${info.project?' · '+esc(info.project.name):''})</small></label></div>
-${options.length?`<div class="chips">${chips}</div>`:'<p class="detail">Chưa có nhân vật để chọn. Mở dự án ở Content Studio → bước Nhân vật, rồi mở lại prompt này.</p>'}
-<label>Ảnh nhân vật tham chiếu</label>
-<div class="job-refs">${refs||'<p class="detail">Chọn nhân vật để xem ảnh Master tương ứng.</p>'}</div>
-<p class="job-char-state ${info.state}">${esc(jobCharStates[info.state])}${info.state==='attached'?` · ${info.attached} ảnh · chế độ Ảnh → video`:''}${manual?' · ảnh hiện tại do bạn tự gắn':''}</p>
-<div class="cd-actions"><button type="button" id="jobCharSave" ${running||!options.length?'disabled':''}>Lưu nhân vật</button><button type="button" id="jobCharAttach" class="primary" ${running||info.state==='none'||info.state==='missing_master'?'disabled':''}>🔗 Gắn ảnh nhân vật vào prompt</button></div>
-<p class="detail">Muse nhận tối đa ${info.limit} ảnh tham chiếu mỗi prompt. Chỉ gắn ảnh của nhân vật có trong prompt; không tạo ảnh mới cho từng cảnh.</p>`;
-}
-$('jobCharacters').addEventListener('click',async e=>{
-  if(!studioJob)return;
-  if(e.target.id==='jobCharSave'){
-    const ids=[...$('jobCharacters').querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);
-    try{const {job}=await api('/api/jobs/characters',{id:studioJob.id,character_ids:ids});studioJob.characters=job.characters;renderJobCharacters();toast(`Đã lưu ${ids.length} nhân vật cho ${studioJob.name}.`);}catch(error){toast(error.message,true);}
-  }
-  if(e.target.id==='jobCharAttach'){
-    if(jobChanged()&&!(await saveJob()))return;
-    try{
-      let result=await api('/api/jobs/attach-characters',{id:studioJob.id});
-      if(result.confirm){if(!confirm(result.confirm))return;result=await api('/api/jobs/attach-characters',{id:studioJob.id,confirm:true});}
-      const job=result.job;studioJob=job;studioImages=[...job.images];studioMode=job.generation_mode==='image'?'image':'text';fillJob();refresh();
-      toast(`Đã gắn ${job.images.length} ảnh nhân vật vào ${job.name}.`);
-    }catch(error){toast(error.message,true);}
-  }
-});
 function renderJobImages(){
   $('jobImages').innerHTML=studioImages.map((token,i)=>`<figure><img src="/api/library/image/${token}" alt="Ảnh tham chiếu ${i+1}"><button type="button" data-remove-job-image="${i}" ${studioEditing?'':'hidden'} aria-label="Bỏ ảnh ${i+1}">✕</button></figure>`).join('')||'<p class="detail">Chưa có ảnh tham chiếu.</p>';
 }
