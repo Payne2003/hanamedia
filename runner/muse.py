@@ -120,10 +120,11 @@ return false;
 """
 
 
-def compose_request(prompt, job_id, use_images=False):
+def compose_request(prompt, job_id, use_images=False, spec=""):
+    """spec: dòng thông số (tỉ lệ khung, thời lượng, độ phân giải) — xem video_tools.request_spec."""
     instruction = ("Tạo video dựa trên các ảnh tham chiếu đã đính kèm theo yêu cầu sau và trả về file video để tải xuống:"
                    if use_images else "Tạo video theo yêu cầu sau và trả về file video để tải xuống:")
-    return instruction + "\n\n" + prompt + "\n\nMã tác vụ: " + job_id
+    return instruction + "\n\n" + prompt + ("\n\n" + spec if spec else "") + "\n\nMã tác vụ: " + job_id
 
 
 def valid_mp4(path):
@@ -664,7 +665,7 @@ return false;
         buttons = card.find_elements("css selector", "[role='button'][aria-label]")
         return buttons[0].get_attribute("aria-label") if buttons else ""
 
-    def generate(self, prompt, job_id, before_submit, automatic=True, timeout=1200, images=None):
+    def generate(self, prompt, job_id, before_submit, automatic=True, timeout=1200, images=None, spec=""):
         from selenium.webdriver.common.keys import Keys
         from selenium.webdriver.common.action_chains import ActionChains
         self.guard()
@@ -681,7 +682,7 @@ return false;
         before = {self.card_key(c) for c in self.video_cards()}
         files_before = set(self.downloads.iterdir())
         marker = "Mã tác vụ: " + job_id
-        request = compose_request(prompt, job_id, bool(images))
+        request = compose_request(prompt, job_id, bool(images), spec)
         box.clear()
         box.click()
         for index, line in enumerate(request.split("\n")):

@@ -14,6 +14,31 @@ from .media import SOURCES as MEDIA_SOURCES, MediaLibrary
 from .characters import JOB_COLUMNS, SCHEMA as CHARACTER_SCHEMA, CharacterRegistry, migrate as migrate_characters
 
 
+def video_options(options):
+    """Kiểm tra thiết lập video: tỉ lệ khung, thời lượng (tối đa 10 giây), độ phân giải, tự ghép, ảnh nhân vật cố định,
+    nick xử lý. Thiếu trường nào thì để trống (Muse tự quyết)."""
+    from .video_tools import ASPECTS, DURATIONS, RESOLUTIONS
+    options = options if isinstance(options, dict) else {}
+    aspect = options.get("aspect") or ""
+    duration = options.get("duration") or 0
+    resolution = options.get("resolution") or ""
+    if aspect and aspect not in ASPECTS:
+        raise ValueError("Tỉ lệ khung không hợp lệ.")
+    if duration and (type(duration) is not int or duration not in DURATIONS):
+        raise ValueError("Thời lượng mỗi cảnh phải là 4, 5, 6, 8 hoặc 10 giây (Muse tối đa 10 giây).")
+    if resolution and resolution not in RESOLUTIONS:
+        raise ValueError("Độ phân giải không hợp lệ.")
+    characters = options.get("characters") or []
+    if (not isinstance(characters, list) or len(characters) > 10 or
+            any(not isinstance(t, str) or not re.fullmatch(r"[a-f0-9]{32}", t) for t in characters)):
+        raise ValueError("Ảnh nhân vật cố định không hợp lệ (tối đa 10 ảnh).")
+    account = options.get("account_id") or None
+    if account is not None and not re.fullmatch(r"[a-f0-9]{32}", str(account)):
+        raise ValueError("Nick Muse không hợp lệ.")
+    return {"aspect": aspect, "duration": duration, "resolution": resolution, "stitch": bool(options.get("stitch")),
+            "characters": list(dict.fromkeys(characters)), "account_id": account}
+
+
 def number(value, minimum=0):
     value = float(value)
     if not math.isfinite(value) or value < minimum or value > 1_000_000:
@@ -88,6 +113,12 @@ class Store:
                 "assigned_manual": "INTEGER NOT NULL DEFAULT 0",
                 # Ghi chú cảnh cho Prompt Studio: bối cảnh, góc quay, hành vi nhân vật, nội dung hành động (JSON).
                 "details": "TEXT NOT NULL DEFAULT '{}'",
+                # Thiết lập video của từng prompt (gửi kèm yêu cầu cho Muse) và hậu kỳ trên máy (nâng độ phân giải).
+                "aspect": "TEXT NOT NULL DEFAULT ''",
+                "duration": "INTEGER NOT NULL DEFAULT 0",
+                "resolution": "TEXT NOT NULL DEFAULT ''",
+                "post_status": "TEXT NOT NULL DEFAULT ''",
+                "upscaled_output": "TEXT",
                 **JOB_COLUMNS,  # scene_id, images_origin (Character Master)
             }
             for name, declaration in migrations.items():
@@ -99,6 +130,11 @@ class Store:
                 if name not in account_columns:
                     db.execute(f"ALTER TABLE accounts ADD COLUMN {name} {declaration}")
             db.execute("UPDATE accounts SET health='LIVE' WHERE health='READY'")  # tên cũ của bản thử đầu
+        with self.connect() as db:
+            # Tùy chọn của mỗi lượt thêm prompt: ghép tất cả cảnh thành một video khi xong.
+            db.execute("""CREATE TABLE IF NOT EXISTS batch_options (
+                batch TEXT PRIMARY KEY, stitch INTEGER NOT NULL DEFAULT 0, stitch_status TEXT NOT NULL DEFAULT '',
+                stitch_output TEXT, stitch_error TEXT NOT NULL DEFAULT '', created REAL NOT NULL)""")
         self.characters = CharacterRegistry(self)
         self.media = MediaLibrary(self)
         self.cleanup_images()
@@ -271,7 +307,7 @@ class Store:
             return {field: match.group(field).strip() for field in self.DETAIL_FIELDS}
         return {}
 
-    def enqueue(self, prompts, cost, batch, images=None, mode="text", sources=None, scene_ids=None):
+    def enqueue(self, prompts, cost, batch, images=None, mode="text", sources=None, scene_ids=None, options=None):
         """sources: (không bắt buộc) dòng cảnh tiếng Việt gốc của từng prompt, để Prompt Studio hiện đủ các trường.
         scene_ids: (không bắt buộc) Scene ID của từng prompt (cảnh trong dự án Content Studio)."""
         if not isinstance(prompts, list) or not 1 <= len(prompts) <= 200:
@@ -291,6 +327,16 @@ class Store:
             if any(not isinstance(token, str) or not re.fullmatch(r"[a-f0-9]{32}", token)
                    or not self.image_file(token) for token in group):
                 raise ValueError("Ảnh đầu vào không còn tồn tại hoặc không hợp lệ.")
+        options = video_options(options)
+        if options["characters"]:
+            # Ảnh nhân vật cố định: gắn vào MỌI cảnh (trước ảnh riêng của cảnh), không lặp ảnh.
+            images = [list(dict.fromkeys(options["characters"] + group)) for group in images]
+            if any(len(group) > 10 for group in images):
+                raise ValueError("Ảnh nhân vật cố định cộng ảnh riêng của một prompt vượt quá 10 ảnh.")
+            for token in options["characters"]:
+                if not self.image_file(token):
+                    raise ValueError("Ảnh nhân vật cố định không còn trong thư viện.")
+            mode = "image"
         if mode == "image" and any(not group for group in images):
             raise ValueError("Chế độ ảnh → video yêu cầu ít nhất một ảnh cho mỗi prompt.")
         sources = sources if isinstance(sources, list) else []
@@ -308,6 +354,9 @@ class Store:
             existing = {row["id"] for row in db.execute(
                 f"SELECT id FROM scenes WHERE id IN ({','.join('?' * len(wanted))})", wanted)} if wanted else set()
             scene_ids = [item if item in existing else None for item in scene_ids]  # cảnh đã xóa: bỏ liên kết, vẫn thêm prompt
+            account = options["account_id"]
+            if account and not db.execute("SELECT 1 FROM accounts WHERE id=?", (account,)).fetchone():
+                raise ValueError("Nick Muse đã chọn không còn trong danh sách.")
             previous = db.execute("SELECT prompt,cost,images,generation_mode FROM jobs WHERE batch=? ORDER BY ordinal",
                                   (batch,)).fetchall()
             if previous:
@@ -326,10 +375,15 @@ class Store:
             # Ưu tiên trường có sẵn trong chính prompt (khung chuẩn); không có thì lấy từ dòng cảnh gốc.
             details = [self.prompt_details(p) or self.scene_details(sources[n] if n < len(sources) else "")
                        for n, p in enumerate(prompts)]
-            db.executemany("INSERT INTO jobs(id,prompt,cost,created,updated,batch,ordinal,images,generation_mode,details,scene_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            db.executemany("""INSERT INTO jobs(id,prompt,cost,created,updated,batch,ordinal,images,generation_mode,details,
+                              scene_id,aspect,duration,resolution,assigned_account_id,assigned_manual)
+                              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                            [(uuid.uuid4().hex, p.strip(), cost, now, now, batch, n, json.dumps(images[n]), mode,
-                             json.dumps(details[n], ensure_ascii=False), scene_ids[n])
+                             json.dumps(details[n], ensure_ascii=False), scene_ids[n], options["aspect"],
+                             options["duration"], options["resolution"], account, int(bool(account)))
                             for n, p in enumerate(prompts)])
+            db.execute("INSERT OR IGNORE INTO batch_options(batch,stitch,created) VALUES(?,?,?)",
+                       (batch, int(options["stitch"]), now))
         self.plan_waiting()
 
     @staticmethod
@@ -667,8 +721,10 @@ class Store:
         job["editable"] = job["status"] != "running"
         return job
 
-    def update_job(self, job_id, prompt, details=None, images=None, mode="text", account_id=None):
-        """Lưu chỉnh sửa từ Prompt Studio. Không sửa được tác vụ đang chạy."""
+    def update_job(self, job_id, prompt, details=None, images=None, mode="text", account_id=None, video=None):
+        """Lưu chỉnh sửa từ Prompt Studio. Không sửa được tác vụ đang chạy.
+        video: {aspect, duration, resolution} riêng của prompt này (không truyền = giữ nguyên)."""
+        video = video_options(video) if isinstance(video, dict) else None
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20000:
             raise ValueError("Prompt trống hoặc dài quá 20.000 ký tự.")
         if mode not in ("text", "image"):
@@ -697,6 +753,9 @@ class Store:
             db.execute("UPDATE jobs SET prompt=?,details=?,images=?,generation_mode=?,assigned_account_id=?,assigned_manual=?,images_origin=?,updated=? WHERE id=?",
                        (prompt.strip(), json.dumps(details, ensure_ascii=False), json.dumps(images), mode,
                         account_id or None, int(bool(account_id)), origin, time.time(), job_id))
+            if video:
+                db.execute("UPDATE jobs SET aspect=?,duration=?,resolution=? WHERE id=?",
+                           (video["aspect"], video["duration"], video["resolution"], job_id))
         self.plan_waiting()
         self.cleanup_images()
         return self.job_detail(job_id)
@@ -715,7 +774,11 @@ class Store:
             if row["status"] == "error" and row["submitted"] and not confirmed:
                 raise ValueError("Prompt này có thể đã được gửi lên Muse. Kiểm tra Muse trước; xác nhận để vẫn chạy lại.")
             db.execute("""UPDATE jobs SET status='waiting',phase='Đợi tài khoản',progress=0,error='',account_id=NULL,
-                          submitted=0,output=NULL,source_url='',updated=? WHERE id=?""", (time.time(), job_id))
+                          submitted=0,output=NULL,source_url='',post_status='',upscaled_output=NULL,updated=? WHERE id=?""",
+                       (time.time(), job_id))
+            # Cảnh chạy lại: video ghép (nếu có) sẽ được ghép lại khi lượt đó xong hết.
+            db.execute("""UPDATE batch_options SET stitch_status='',stitch_error='' WHERE stitch=1
+                          AND batch=(SELECT batch FROM jobs WHERE id=?)""", (job_id,))
         self.plan_waiting()
 
     def retry(self, job_id):
@@ -724,6 +787,47 @@ class Store:
                                 (time.time(), job_id))
             if cursor.rowcount != 1:
                 raise ValueError("Chỉ thử lại tác vụ chắc chắn chưa gửi. Tác vụ đã gửi cần kiểm tra trên Muse trước.")
+
+    # ---- hậu kỳ: nâng độ phân giải, ghép video --------------------------------------------------------------------
+    def post_pending(self):
+        """Tác vụ đã tải xong video nhưng chưa qua bước nâng độ phân giải (cả khi app bị tắt giữa chừng)."""
+        with self.connect() as db:
+            return [row[0] for row in db.execute("""SELECT id FROM jobs WHERE status='done' AND resolution!=''
+                    AND post_status IN ('','queued','running') ORDER BY updated""")]
+
+    def batch_stitch(self, batch):
+        with self.connect() as db:
+            row = db.execute("SELECT stitch FROM batch_options WHERE batch=?", (batch,)).fetchone()
+        return bool(row and row["stitch"])
+
+    def job_post_info(self, job_id):
+        with self.connect() as db:
+            row = db.execute("SELECT id,status,output,aspect,resolution FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return dict(row) if row else None
+
+    def set_post(self, job_id, status, upscaled=None):
+        with self.connect() as db:
+            db.execute("UPDATE jobs SET post_status=?,upscaled_output=COALESCE(?,upscaled_output) WHERE id=?",
+                       (status, upscaled, job_id))
+
+    def stitch_candidates(self):
+        """Các lượt bật Tự ghép mà tất cả cảnh đã xong (và đã qua nâng độ phân giải) nhưng chưa ghép."""
+        with self.connect() as db:
+            return [row[0] for row in db.execute("""SELECT b.batch FROM batch_options b WHERE b.stitch=1
+                    AND b.stitch_status IN ('','running')
+                    AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.batch=b.batch AND (j.status!='done'
+                        OR (j.resolution!='' AND j.post_status IN ('','queued','running'))))
+                    AND EXISTS (SELECT 1 FROM jobs j WHERE j.batch=b.batch)""")]
+
+    def batch_scenes(self, batch):
+        with self.connect() as db:
+            return [dict(row) for row in db.execute("""SELECT id,ordinal,status,output,upscaled_output,aspect,resolution
+                    FROM jobs WHERE batch=? ORDER BY ordinal""", (batch,))]
+
+    def set_stitch(self, batch, status, output=None, error=""):
+        with self.connect() as db:
+            db.execute("""UPDATE batch_options SET stitch_status=?,stitch_output=COALESCE(?,stitch_output),stitch_error=?
+                          WHERE batch=?""", (status, output, error, batch))
 
     def snapshot(self):
         with self.connect() as db:
@@ -739,9 +843,14 @@ class Store:
                 job["image_count"] = len(json.loads(job.pop("images") or "[]"))
                 job["name"] = f"Prompt {job['ordinal'] + 1}"
                 jobs.append(job)
+            batches = [dict(row) for row in db.execute("""SELECT b.*,
+                (SELECT count(*) FROM jobs j WHERE j.batch=b.batch) AS scenes,
+                (SELECT count(*) FROM jobs j WHERE j.batch=b.batch AND j.status='done') AS done,
+                (SELECT count(*) FROM jobs j WHERE j.batch=b.batch AND j.status='error') AS failed
+                FROM batch_options b WHERE b.stitch=1 ORDER BY b.created DESC LIMIT 20""")]
             totals = {s: 0 for s in ("waiting", "running", "done", "error")}
             totals.update({r[0]: r[1] for r in db.execute("SELECT status,count(*) FROM jobs GROUP BY status")})
-            return {"accounts": accounts, "jobs": jobs, "totals": totals}
+            return {"accounts": accounts, "jobs": jobs, "totals": totals, "batches": batches}
 
     def setting(self, key, default=None):
         with self.connect() as db:

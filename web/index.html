@@ -33,23 +33,33 @@
         <div class="queue-heading"><div><h1>Hàng đợi <span id="total" class="count">0</span></h1><p id="queueHint">Sẵn sàng nhận ý tưởng mới</p></div><div class="queue-heading-actions"><button id="run" class="primary">▶ Chạy</button><button id="pause">■ Dừng</button></div></div>
         <div class="toolbar"><div class="tabs" role="group" aria-label="Lọc trạng thái"><button data-filter="all" class="active">Tất cả <b id="n-all">0</b></button><button data-filter="waiting">Chờ <b id="n-waiting">0</b></button><button data-filter="running">Đang chạy <b id="n-running">0</b></button><button data-filter="done">Xong <b id="n-done">0</b></button><button data-filter="error">Lỗi <b id="n-error">0</b></button></div><label class="queue-search"><span>⌕</span><input id="search" type="search" placeholder="Tìm tên, prompt…" aria-label="Tìm prompt"></label></div>
         <div class="bulk-toolbar"><label class="select-all"><input id="selectVisible" type="checkbox"> Chọn tất cả</label><button type="button" class="quick-menu" data-coming>Chọn nhanh…</button><button id="deleteSelected" class="danger-outline" disabled>▤ Xóa <span id="selectedCount">0</span></button><span class="bulk-spacer"></span><button type="button" class="quick-menu" data-coming>↕ Đánh lại STT</button></div>
-        <div class="table-scroll"><table><thead><tr><th class="select-col"></th><th>STT</th><th class="thumb-col"></th><th>TÊN & PROMPT</th><th>LOẠI</th><th>TÀI KHOẢN</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty"><span>✧</span><h3>Một ý tưởng, một video</h3><p>Nhập prompt ở khung tạo bên phải để bắt đầu.</p></div></div>
+        <div id="stitchPanel" class="stitch-panel" hidden></div>
+        <div class="table-scroll"><table><thead><tr><th class="select-col"></th><th>STT</th><th class="thumb-col"></th><th>TÊN & PROMPT</th><th>LOẠI · ẢNH NV</th><th>TỈ LỆ · GIÂY · CL</th><th>NICK</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty"><span>✧</span><h3>Một ý tưởng, một video</h3><p>Nhập prompt ở khung tạo bên phải để bắt đầu.</p></div></div>
         <footer><span id="shown">0 tác vụ</span><span>Tự lưu hàng đợi trên máy</span></footer>
       </section>
       <aside class="composer card">
         <div class="composer-heading"><h2 id="composerTitle">Tạo video</h2><button id="importButton" class="text-button">↑ .txt</button><input id="importFile" type="file" accept=".txt,.json" hidden></div>
-        <div class="creation-tabs" aria-label="Chọn loại nội dung"><button type="button" class="active" data-mode="text">▣ Video</button><button type="button" data-mode="image_generate">▧ Ảnh</button></div>
         <div class="video-submodes video-only"><button type="button" class="active" data-mode="text">Prompt → video</button><button type="button" data-mode="image_video">Ảnh → video</button></div>
         <div class="prompt-label"><label for="prompts">Prompt</label><span id="promptCount">0 tác vụ</span></div>
         <textarea id="prompts" rows="7" maxlength="1000000" placeholder="Mỗi dòng là một prompt. Viết mô tả video bạn muốn tạo…"></textarea>
         <div class="prompt-hint video-only">Mỗi dòng là 1 prompt. Dùng <code>---</code> nếu muốn tách đoạn.</div>
         <div class="field video-only prompt-split"><label for="separator">Ký tự ngăn cách</label><select id="separator"><option value="line">Mỗi dòng một prompt</option><option value="blank">Dòng trống</option><option value="custom">---</option></select></div>
         <div class="field image-assignment" hidden><label for="imagePromptIndex">Ảnh tham chiếu <span>(theo prompt)</span></label><div class="image-assignment-controls"><select id="imagePromptIndex" aria-label="Chọn prompt cần gắn ảnh"></select><button id="chooseLibrary" type="button">▧ Thư mục</button><button id="chooseImages" type="button">+ Ảnh</button><input id="characterImages" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></div><button type="button" class="image-dropzone" id="chooseImagesDrop"><span>⇧</span>Kéo thả ảnh hoặc chọn từ thư viện</button><div id="imageHint" class="detail">Gắn ảnh tham chiếu đúng prompt. Tối đa 10 ảnh mỗi prompt.</div><div id="assignedImages" class="image-chips"></div></div>
-        <section id="flowPanel" class="flow-panel" hidden><p>Prompt ảnh sẽ được điền trong Google Flow. Chọn <b>Hình ảnh</b>, tạo và tải kết quả xuống.</p><div class="flow-actions"><button id="createFlowImage" type="button" class="primary">Mở Flow và điền prompt</button><button id="importFlowImages" type="button">Nhập ảnh đã tải</button></div><div id="flowStatus" class="detail">Ảnh tải xuống sẽ được lưu vào thư viện của tool.</div></section>
+        <section class="video-settings video-only" aria-label="Thiết lập video">
+          <div class="vs-grid">
+            <label>Tỉ lệ khung<select id="vAspect"><option value="16:9">16:9 (Ngang YT)</option><option value="9:16">9:16 (Dọc TikTok/Shorts)</option><option value="1:1">1:1 (Vuông)</option><option value="4:3">4:3</option><option value="3:4">3:4</option><option value="">Để Muse tự chọn</option></select></label>
+            <label>Thời lượng mỗi cảnh<select id="vDuration"><option value="10">10 giây (tối đa)</option><option value="8">8 giây</option><option value="6">6 giây</option><option value="5">5 giây</option><option value="4">4 giây</option><option value="">Để Muse tự chọn</option></select></label>
+            <label>Độ phân giải<select id="vResolution"><option value="4K">4K (Ultra HD)</option><option value="1080p">1080p (Full HD)</option><option value="720p">720p (HD)</option><option value="">Giữ nguyên của Muse</option></select></label>
+            <label>Nick Muse xử lý<select id="vAccount"><option value="">🔄 Xoay vòng các nick sẵn sàng</option></select></label>
+          </div>
+          <label class="check vs-stitch"><input id="vStitch" type="checkbox"><span>🔗 Tự ghép thành một video dài<small>Xong hết các cảnh thì ghép theo thứ tự prompt (dùng bản đã nâng độ phân giải nếu có). Video từng cảnh vẫn giữ.</small></span></label>
+          <div class="fixed-chars"><div class="fc-head"><span><b>Ảnh nhân vật cố định</b><small>gắn vào mọi cảnh</small></span><button id="vCharacters" type="button">👤 + Nhân vật</button><button id="vClearCharacters" type="button" class="danger-outline" hidden>Xóa hết</button></div><div id="vCharacterChips" class="image-chips"></div></div>
+          <p class="detail vs-note">Thông số được ghi vào yêu cầu gửi Muse (Muse tối đa 10 giây/cảnh). Video tải về nhỏ hơn độ phân giải đã chọn sẽ được tool phóng lên trên máy (giữ file gốc; phóng to không thêm chi tiết như AI).</p>
+        </section>
         <div class="video-only">
-          <div class="field"><label for="parallel">Số tài khoản chạy đồng thời</label><select id="parallel"><option value="1">1 tài khoản</option><option value="2" selected>2 tài khoản</option><option value="3">3 tài khoản</option><option value="4">4 tài khoản</option><option value="5">5 tài khoản</option><option value="6">6 tài khoản</option><option value="7">7 tài khoản</option><option value="8">8 tài khoản</option><option value="9">9 tài khoản</option><option value="10">10 tài khoản</option><option value="12">12 tài khoản</option><option value="15">15 tài khoản</option><option value="20">20 tài khoản</option></select></div>
+          <div class="field"><label for="parallel">Số luồng (tài khoản chạy cùng lúc)</label><select id="parallel"><option value="1">1 tài khoản</option><option value="2" selected>2 tài khoản</option><option value="3">3 tài khoản</option><option value="4">4 tài khoản</option><option value="5">5 tài khoản</option><option value="6">6 tài khoản</option><option value="7">7 tài khoản</option><option value="8">8 tài khoản</option><option value="9">9 tài khoản</option><option value="10">10 tài khoản</option><option value="12">12 tài khoản</option><option value="15">15 tài khoản</option><option value="20">20 tài khoản</option></select></div>
           <details class="advanced-settings"><summary>Thiết lập nâng cao</summary><div class="field"><label for="cost">Credit dự kiến / video</label><input id="cost" type="number" min="0.01" step="0.01" value="1"></div><div class="field"><label for="operation">Cách chạy</label><select id="operation"><option value="auto">Tự gửi prompt & tải video</option><option value="assisted">Điền sẵn prompt để tôi gửi & tải</option></select></div><label class="check"><input id="headless" type="checkbox"><span>Chạy ẩn cửa sổ Chrome</span></label><p class="detail">Một tài khoản xử lý một video tại một thời điểm. Credit là ngân sách dự kiến do bạn nhập.</p></details>
-          <button id="create" class="primary full">✦ Tạo & chạy</button><button id="add" class="full">Chỉ thêm vào hàng đợi</button>
+          <button id="create" class="primary full">🚀 Chạy ngay các luồng</button><button id="add" class="full">Chỉ thêm vào hàng đợi</button>
         </div>
       </aside>
     </div>
@@ -77,6 +87,7 @@
           <input id="jobCamera" list="jobCameras" maxlength="5000" data-job-field placeholder="Ví dụ: Góc quay ngang, cận cảnh, theo chân (tracking)"><datalist id="jobCameras"><option value="Góc quay ngang, cận cảnh, theo chân (tracking)"><option value="Toàn cảnh, máy quay cố định"><option value="Trung cảnh, lia máy chậm"><option value="Cận cảnh khuôn mặt, máy quay đứng yên"><option value="Góc thấp nhìn lên, máy quay theo dõi"><option value="Góc cao nhìn xuống (high angle)"><option value="Flycam bao quát từ xa"></datalist>
           <div class="job-grid"><div><label>Loại <b class="required">*</b></label><div class="job-type" role="group"><button type="button" data-job-type="text" data-job-field>▣ Video</button><button type="button" data-job-type="image" data-job-field>▧ Ảnh → video</button></div></div>
           <div><label for="jobAccount">Tài khoản <b class="required">*</b></label><select id="jobAccount" data-job-field></select></div></div>
+          <div class="job-video-spec"><div><label for="jobAspect">Tỉ lệ khung</label><select id="jobAspect" data-job-field><option value="">Để Muse tự chọn</option><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select></div><div><label for="jobDuration">Thời lượng</label><select id="jobDuration" data-job-field><option value="">Để Muse tự chọn</option><option value="10">10 giây</option><option value="8">8 giây</option><option value="6">6 giây</option><option value="5">5 giây</option><option value="4">4 giây</option></select></div><div><label for="jobResolution">Độ phân giải</label><select id="jobResolution" data-job-field><option value="">Giữ nguyên của Muse</option><option value="4K">4K</option><option value="1080p">1080p</option><option value="720p">720p</option></select></div></div>
           <label for="jobStatus">Trạng thái <b class="required">*</b></label>
           <select id="jobStatus"></select>
           <p id="jobInfo" class="detail"></p>
@@ -85,7 +96,7 @@
     </section>
     <section id="mediaView" class="media-page" hidden aria-labelledby="mediaTitle">
       <div class="media-head">
-        <div><div class="eyebrow">MEDIA LIBRARY · LƯU TRÊN MÁY</div><h1 id="mediaTitle">Thư viện Video &amp; Ảnh</h1><p>Ảnh bạn tải lên, ảnh Flow/nhân vật và video Muse do tool tạo. Chọn ảnh ở đây để gắn vào prompt Ảnh → Video.</p></div>
+        <div><div class="eyebrow">MEDIA LIBRARY · LƯU TRÊN MÁY</div><h1 id="mediaTitle">Thư viện Video &amp; Ảnh</h1><p>Ảnh bạn tải lên, ảnh nhân vật và video Muse do tool tạo. Chọn ảnh ở đây để gắn vào prompt Ảnh → Video.</p></div>
         <div class="media-head-actions"><button id="mediaOpenFolder" type="button" title="Mở thư mục chứa file của thư viện">▱ Mở thư mục</button><button id="mediaRefresh" type="button">↻ Làm mới</button><button id="mediaUpload" type="button" class="primary">+ Tải ảnh lên</button><input id="mediaFiles" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple hidden></div>
       </div>
       <div class="media-toolbar">
@@ -102,10 +113,10 @@
     <section id="settingsView" class="settings-page" hidden>
       <div class="content-topbar"><h1>Cài đặt</h1><span class="crumb">/</span><span class="detail">Đăng nhập các tài khoản tool cần dùng. Tool không đọc hay lưu mật khẩu.</span></div>
       <div class="settings-grid-v2">
-        <div class="card settings-card shared-card"><div class="settings-head"><span class="settings-icon">★</span><div><h3>Tài khoản chung</h3><small>Một tài khoản Google có đủ Gemini, ChatGPT (đăng nhập bằng Google) và Google Flow</small></div><span id="sharedBadge" class="status-chip">Đang tắt</span></div>
-          <label class="check shared-toggle"><input id="sharedAccount" type="checkbox"><span>Dùng một tài khoản cho Gemini, ChatGPT và Google Flow<small>Cả ba dùng chung một hồ sơ Chrome của tool, nên chỉ đăng nhập một lần. Mỗi lúc chỉ một phần mở Chrome: phần đang rảnh sẽ được đóng để phần khác dùng. Muse vẫn đăng nhập riêng bằng email + OTP.</small></span></label>
+        <div class="card settings-card shared-card"><div class="settings-head"><span class="settings-icon">★</span><div><h3>Tài khoản chung</h3><small>Một tài khoản Google có đủ Gemini và ChatGPT (đăng nhập bằng Google)</small></div><span id="sharedBadge" class="status-chip">Đang tắt</span></div>
+          <label class="check shared-toggle"><input id="sharedAccount" type="checkbox"><span>Dùng một tài khoản cho Gemini và ChatGPT<small>Hai phần dùng chung một hồ sơ Chrome của tool, nên chỉ đăng nhập một lần. Mỗi lúc chỉ một phần mở Chrome: phần đang rảnh sẽ được đóng để phần khác dùng. Muse vẫn đăng nhập riêng bằng email + OTP.</small></span></label>
           <button id="sharedLogin" type="button" class="full primary" hidden>Đăng nhập tài khoản chung (mở Chrome thường)</button>
-          <p class="detail" id="sharedHint" hidden><b>Cách đăng nhập:</b> cửa sổ mở 3 tab. Tab 1 đăng nhập Google; tab 2 ChatGPT bấm <b>Continue with Google</b> và chọn đúng tài khoản; tab 3 kiểm tra Flow đã vào được. Xong thì <b>đóng hẳn cửa sổ đó</b>. Đổi sang tài khoản chung lần đầu cần đăng nhập lại một lần; hồ sơ riêng cũ vẫn giữ để tắt chế độ này là dùng lại được.</p>
+          <p class="detail" id="sharedHint" hidden><b>Cách đăng nhập:</b> cửa sổ mở 3 tab. Tab 1 đăng nhập Google; tab 2 ChatGPT bấm <b>Continue with Google</b> và chọn đúng tài khoản. Xong thì <b>đóng hẳn cửa sổ đó</b>. Đổi sang tài khoản chung lần đầu cần đăng nhập lại một lần; hồ sơ riêng cũ vẫn giữ để tắt chế độ này là dùng lại được.</p>
         </div>
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">G</span><div><h3>Gemini Pro</h3><small>Viết kịch bản, chia cảnh, tìm nhân vật, prompt tiếng Anh</small></div><span id="geminiBadge" class="status-chip">Chưa đặt tài khoản</span></div>
           <div class="content-grid"><label>Tài khoản Google <small>(không bắt buộc · để tool kiểm tra đúng tài khoản)</small><input id="autoEmail" type="email" maxlength="254" placeholder="ten@gmail.com"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40" placeholder="Pro"><datalist id="autoModels"><option value="Pro"><option value="Argon"><option value="Flash"></datalist></label></div>
@@ -116,12 +127,6 @@
           <label>Model ChatGPT <small>(để trống: model đang chọn)</small><input id="chatgptModel" list="chatgptModels" maxlength="40" placeholder="Ví dụ: GPT-5"><datalist id="chatgptModels"><option value="Auto"><option value="Instant"><option value="Thinking"></datalist></label>
           <button id="loginChatgpt" type="button" class="full">Đăng nhập ChatGPT (mở Chrome thường)</button>
           <p class="detail">Lần đầu: bấm Đăng nhập ChatGPT, đăng nhập tài khoản ChatGPT của bạn trong Chrome vừa mở, thấy ô nhắn tin thì đóng hẳn cửa sổ đó. ChatGPT chạy trong Chrome riêng, tách khỏi Gemini.</p>
-        </div>
-        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">F</span><div><h3>Google Flow · Nano Banana</h3><small>Tạo ảnh Master của nhân vật</small></div><span id="flowBadge" class="status-chip">Chưa đăng nhập</span></div>
-          <p class="detail">Hồ sơ Chrome riêng của tool (giống Gemini, ChatGPT; máy nào cũng dùng được): <code id="flowProfile"></code></p>
-          <button id="loginFlow" type="button" class="full">Đăng nhập Google Flow (mở Chrome thường)</button>
-          <p class="detail" id="settingsFlowStatus"></p>
-          <p class="detail"><b>Lần đầu:</b> bấm Đăng nhập, đăng nhập tài khoản Google có Flow, thấy trang Flow thì <b>đóng hẳn cửa sổ đó</b>. Phiên đăng nhập được lưu trong hồ sơ này; tool dùng nó khi mở Flow để điền prompt ảnh, nên không mở hai cửa sổ Flow cùng lúc.</p>
         </div>
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">M</span><div><h3>Tài khoản Muse</h3><small>Tạo video hàng loạt</small></div><span id="museBadge" class="status-chip">0 tài khoản</span></div>
           <p class="detail" id="museSummary"></p>
@@ -139,8 +144,8 @@
             <li><b>Chọn thư mục lưu video</b> ở thẻ “Thư mục lưu video” phía trên.</li>
             <li><b>Đăng nhập AI:</b>
               <ul>
-                <li>Nếu một tài khoản Google có đủ Gemini, ChatGPT (đăng nhập bằng Google) và Google Flow: bật <b>★ Tài khoản chung</b>, bấm <b>Đăng nhập tài khoản chung</b>. Cửa sổ Chrome mở 3 tab: đăng nhập Google → ở tab ChatGPT bấm <b>Continue with Google</b> → kiểm tra tab Flow vào được → <b>đóng hẳn cửa sổ</b>.</li>
-                <li>Nếu dùng tài khoản khác nhau: bấm lần lượt nút <b>Đăng nhập</b> ở thẻ Gemini, ChatGPT, Google Flow. Mỗi lần đăng nhập xong thì đóng hẳn cửa sổ đó.</li>
+                <li>Nếu một tài khoản Google có đủ Gemini và ChatGPT (đăng nhập bằng Google): bật <b>★ Tài khoản chung</b>, bấm <b>Đăng nhập tài khoản chung</b>. Cửa sổ Chrome mở 3 tab: đăng nhập Google → ở tab ChatGPT bấm <b>Continue with Google</b> → <b>đóng hẳn cửa sổ</b>.</li>
+                <li>Nếu dùng tài khoản khác nhau: bấm lần lượt nút <b>Đăng nhập</b> ở thẻ Gemini, ChatGPT. Mỗi lần đăng nhập xong thì đóng hẳn cửa sổ đó.</li>
               </ul></li>
             <li><b>Tài khoản Muse:</b> bấm <b>Quản lý &amp; đăng nhập tài khoản Muse</b>, thêm email (mỗi dòng một email), bấm <b>Đăng nhập</b> hoặc <b>Đăng nhập tất cả</b>. Tool mở Muse, điền email, mở hộp thư Tuan89 ở tab bên cạnh; bạn <b>Copy OTP</b> rồi dán vào Muse.</li>
             <li>Nhãn ở mỗi thẻ cho biết trạng thái: <b>✓ Đã đăng nhập</b> là tool đã thấy trang hoạt động; màu vàng là đã mở đăng nhập nhưng chưa chạy lần nào để kiểm tra.</li>
