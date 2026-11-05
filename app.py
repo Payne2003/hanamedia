@@ -268,6 +268,7 @@ class Handler(BaseHTTPRequestHandler):
             data["key"] = self.server.secret
             data["app_version"] = APP_VERSION
             data["support"] = self.server.store.support_bar()
+            data["community"] = self.server.store.community()
             shared = self.server.shared
             data["shared_account"] = {"enabled": shared.enabled, "profile": str(shared.dir), "login_open": shared.login_open(),
                                       "profile_used": (shared.dir / "Local State").exists()}
@@ -475,6 +476,13 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/library/import-flow":
                 imported = store.import_flow_downloads(engine.flow_downloads)
                 return self.reply({"ok": True, "imported": imported})
+            elif path == "/api/settings/community":
+                return self.reply({"ok": True, "community": store.save_community(body.get("groups"), body.get("videos"))})
+            elif path == "/api/open-link":
+                url = str(body.get("url") or "")
+                if not store.community_link(url):
+                    raise ValueError("Link không có trong trang Cộng đồng.")
+                webbrowser.open(url)  # mở bằng trình duyệt mặc định của máy
             elif path == "/api/settings/support":
                 return self.reply({"ok": True, "support": store.save_support_bar(body.get("message"), body.get("phone"),
                                                                                   body.get("qr"))})
