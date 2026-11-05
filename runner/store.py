@@ -875,6 +875,37 @@ class Store:
         self.save_setting("support_bar", {"message": message or self.SUPPORT_DEFAULT["message"], "phone": phone, "qr": qr})
         return self.support_bar()
 
+    def community(self):
+        """Trang Cộng đồng: nhóm (Zalo, Facebook…) và video demo do người dùng tự thêm."""
+        saved = self.setting("community", {}) or {}
+        return {"groups": list(saved.get("groups") or []), "videos": list(saved.get("videos") or [])}
+
+    def save_community(self, groups, videos):
+        def clean(items, label):
+            if not isinstance(items, list) or len(items) > 50:
+                raise ValueError(f"Tối đa 50 {label}.")
+            result = []
+            for item in items:
+                if not isinstance(item, dict):
+                    raise ValueError(f"{label.capitalize()} không hợp lệ.")
+                name = re.sub(r"\s+", " ", str(item.get("name") or "")).strip()[:80]
+                url = str(item.get("url") or "").strip()
+                if not name:
+                    raise ValueError(f"Nhập tên cho {label}.")
+                parsed = urlparse(url)
+                if parsed.scheme != "https" or not parsed.hostname or len(url) > 500 or any(c in url for c in " <>\"'"):
+                    raise ValueError(f"Link của \"{name}\" phải bắt đầu bằng https:// (ví dụ https://zalo.me/g/...).")
+                result.append({"name": name, "url": url})
+            return result
+        data = {"groups": clean(groups, "nhóm"), "videos": clean(videos, "video")}
+        self.save_setting("community", data)
+        return data
+
+    def community_link(self, url):
+        """Chỉ mở link đã lưu trong trang Cộng đồng."""
+        data = self.community()
+        return any(item["url"] == url for item in data["groups"] + data["videos"])
+
     def setting(self, key, default=None):
         with self.connect() as db:
             row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()

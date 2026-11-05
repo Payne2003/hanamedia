@@ -16,13 +16,14 @@
       <button type="button" data-nav="content" id="openContent"><i>✎</i>Content Studio</button>
       <button type="button" data-nav="media" id="openLibrary"><i>▧</i>Thư viện Video &amp; Ảnh</button>
       <button type="button" id="accountsButton"><i>♙</i>Tài khoản Muse <b id="accountCount" class="nav-badge">0</b></button>
+      <button type="button" data-nav="community" id="navCommunity"><i>👥</i>Cộng đồng</button>
       <button type="button" data-nav="settings" id="navSettings"><i>⚙</i>Cài đặt</button>
     </nav>
     <div class="sidebar-foot"><span id="connection" class="connection">Đang kết nối…</span><span class="running-pill"><i></i><b id="headerRuns">0</b> luồng đang chạy</span><small id="appVersion">v1.0.0</small></div>
   </aside>
   <div class="app-main">
   <div class="support-bar" role="region" aria-label="Hỗ trợ">
-    <button type="button" id="supportQrSlot" class="support-qr" title="Ảnh QR (sửa trong Cài đặt)"><img id="supportQr" alt="Mã QR" hidden><span id="supportQrEmpty">QR</span></button>
+    <span id="supportQrSlot" class="support-qr" title="Mã QR"><img id="supportQr" alt="Mã QR" hidden><span id="supportQrEmpty">QR</span></span>
     <span class="support-text">☕ <b id="supportMessage">Mời cafe HANA MEDIA</b> <span class="support-sep">·</span> Hỗ trợ: <b id="supportPhone">0983105651</b></span>
     <button type="button" id="copySupportPhone" class="support-copy">📋 Sao chép SĐT</button>
   </div>
@@ -114,15 +115,29 @@
       <div id="mediaSelection" class="media-selection" hidden><span><b id="mediaSelectedCount">0</b> đã chọn</span><button id="mediaSelectAll" type="button">Chọn tất cả đang hiện</button><button id="mediaClearSelection" type="button">Bỏ chọn</button><button id="mediaDeleteSelected" type="button" class="danger-outline">✕ Xóa đã chọn</button></div>
       <div id="mediaGrid" class="media-grid" aria-live="polite"></div>
     </section>
+    <section id="communityView" class="community-page" hidden aria-labelledby="communityTitle">
+      <div class="content-topbar"><h1 id="communityTitle">Cộng đồng</h1><span class="crumb">/</span><span class="detail">Nhóm trải nghiệm, video demo và hỗ trợ trực tiếp.</span></div>
+      <div class="community-grid">
+        <div class="community-main">
+          <section class="card community-card"><h2>💬 Nhóm cộng đồng</h2><p class="detail">Bấm “Tham gia” để mở nhóm trong trình duyệt.</p>
+            <div id="communityGroups" class="community-list"></div>
+            <form id="communityGroupForm" class="community-form"><input name="name" maxlength="80" required placeholder="Tên nhóm, ví dụ: Nhóm 1 (Zalo trải nghiệm)"><input name="url" type="url" maxlength="500" required placeholder="https://zalo.me/g/..."><button type="submit">+ Thêm nhóm</button></form>
+          </section>
+          <section class="card community-card"><h2>🎬 Video demo</h2>
+            <div id="communityVideos" class="community-list"></div>
+            <form id="communityVideoForm" class="community-form"><input name="name" maxlength="80" required placeholder="Tên video demo"><input name="url" type="url" maxlength="500" required placeholder="https://..."><button type="submit">+ Thêm video</button></form>
+          </section>
+        </div>
+        <aside class="card community-donate"><div class="community-donate-head">☕ <span id="communityMessage">Mời cafe HANA MEDIA</span></div>
+          <div class="community-qr"><img id="communityQr" alt="Mã QR" hidden><span id="communityQrEmpty">Ảnh QR sẽ được cập nhật sau</span></div>
+          <div class="community-contact">Hỗ trợ trực tiếp: <b id="communityPhone">0983105651</b></div>
+          <div class="community-actions"><button id="communityCopyPhone" type="button" class="primary">📋 Sao chép SĐT</button></div>
+        </aside>
+      </div>
+    </section>
     <section id="settingsView" class="settings-page" hidden>
       <div class="content-topbar"><h1>Cài đặt</h1><span class="crumb">/</span><span class="detail">Đăng nhập các tài khoản tool cần dùng. Tool không đọc hay lưu mật khẩu.</span></div>
       <div class="settings-grid-v2">
-        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">☕</span><div><h3>Thanh hỗ trợ &amp; QR</h3><small>Hiện ở trên cùng của tool</small></div></div>
-          <div class="support-settings"><div class="support-qr-preview"><img id="supportQrPreview" alt="Ảnh QR" hidden><span id="supportQrPreviewEmpty">Chưa có ảnh QR</span></div>
-            <div class="support-fields"><label>Lời nhắn<input id="supportMessageInput" maxlength="120" placeholder="Mời cafe HANA MEDIA"></label><label>Số điện thoại hỗ trợ<input id="supportPhoneInput" maxlength="20" inputmode="tel" placeholder="0983105651"></label>
-            <div class="support-actions"><button id="supportQrUpload" type="button">⇪ Tải ảnh QR lên</button><button id="supportQrRemove" type="button" class="danger-outline">✕ Bỏ ảnh QR</button><input id="supportQrFile" type="file" accept="image/png,image/jpeg,image/webp" hidden><button id="supportSave" type="button" class="primary">Lưu</button></div></div></div>
-          <p class="detail">Ảnh QR lưu trong Thư viện Video &amp; Ảnh của máy này. Bấm ô QR trên thanh để mở trang này.</p>
-        </div>
         <div class="card settings-card shared-card"><div class="settings-head"><span class="settings-icon">★</span><div><h3>Tài khoản chung</h3><small>Một tài khoản Google có đủ Gemini và ChatGPT (đăng nhập bằng Google)</small></div><span id="sharedBadge" class="status-chip">Đang tắt</span></div>
           <label class="check shared-toggle"><input id="sharedAccount" type="checkbox"><span>Dùng một tài khoản cho Gemini và ChatGPT<small>Hai phần dùng chung một hồ sơ Chrome của tool, nên chỉ đăng nhập một lần. Mỗi lúc chỉ một phần mở Chrome: phần đang rảnh sẽ được đóng để phần khác dùng. Muse vẫn đăng nhập riêng bằng email + OTP.</small></span></label>
           <button id="sharedLogin" type="button" class="full primary" hidden>Đăng nhập tài khoản chung (mở Chrome thường)</button>

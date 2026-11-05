@@ -401,10 +401,27 @@ button.cd-thumb{padding:0;background:none;cursor:pointer}button.cd-thumb:disable
 .support-qr{width:40px;height:40px;padding:0;border-radius:8px;border:1px dashed #6d5aa6;background:#120f22;display:grid;place-items:center;overflow:hidden;flex:0 0 auto;font-size:10px;color:#a89bd0}
 .support-qr img{width:100%;height:100%;object-fit:contain;background:#fff}
 .support-copy{padding:6px 12px;font-size:12px;border-color:#8a6b2b;background:#3a2b10;color:#ffd166}
-.support-settings{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
-.support-qr-preview{width:140px;height:140px;border:1px dashed #4b456a;border-radius:12px;display:grid;place-items:center;overflow:hidden;background:#0e1019;color:var(--muted);font-size:12px;text-align:center;flex:0 0 auto}
-.support-qr-preview img{width:100%;height:100%;object-fit:contain;background:#fff}
-.support-fields{flex:1 1 220px;display:flex;flex-direction:column;gap:8px;min-width:0}
-.support-fields label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
-.support-actions{display:flex;flex-wrap:wrap;gap:8px}
 @media(max-width:780px){.support-bar{padding:8px 14px;font-size:12px}}
+/* ===== Trang Cộng đồng ===== */
+.community-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;align-items:start;margin-top:14px}
+.community-main{display:flex;flex-direction:column;gap:18px;min-width:0}
+.community-card{padding:18px;display:flex;flex-direction:column;gap:10px}
+.community-card h2{font-size:16px}
+.community-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
+.community-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--purple);border-radius:10px;background:#171925;min-width:0}
+.community-icon{font-size:18px}
+.community-info{flex:1;min-width:0;display:flex;flex-direction:column}
+.community-info b{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.community-info small{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.community-open{padding:5px 10px;font-size:12px;white-space:nowrap}
+.community-remove{padding:4px 8px}
+.community-empty{grid-column:1/-1;color:var(--muted);font-size:13px;margin:0}
+.community-form{display:flex;flex-wrap:wrap;gap:8px;border-top:1px dashed var(--border);padding-top:10px;margin-top:4px}
+.community-form input{flex:1 1 200px}
+.community-donate{padding:18px;display:flex;flex-direction:column;align-items:center;gap:12px;border-color:#5b4a2a}
+.community-donate-head{width:100%;text-align:center;font-weight:700;padding:10px;border-radius:10px;background:linear-gradient(90deg,#c97a1a,#e0a43a);color:#1b1206}
+.community-qr{width:240px;max-width:100%;aspect-ratio:1;border:1px dashed #6d5aa6;border-radius:14px;display:grid;place-items:center;overflow:hidden;background:#0e1019;text-align:center;color:var(--muted);font-size:13px}
+.community-qr img{width:100%;height:100%;object-fit:contain;background:#fff}
+.community-contact{font-size:14px}.community-contact b{color:#ffd166}
+.community-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+@media(max-width:1000px){.community-grid{grid-template-columns:1fr}}
