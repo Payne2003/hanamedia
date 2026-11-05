@@ -330,6 +330,15 @@ class MuseBrowser:
             raise MuseFailure("Chrome không nhận cookie nào. Cookie có thể sai định dạng hoặc đã hết hạn.")
         return accepted
 
+    DISCONNECTED = ("đã ngắt kết nối muse", "gửi phiếu yêu cầu hỗ trợ để kết nối lại", "disconnected muse",
+                    "submit a support ticket to reconnect")
+
+    def disconnected(self):
+        """Muse đã chủ động ngắt kết nối tài khoản (trang "Đã ngắt kết nối Muse ... Gửi phiếu yêu cầu hỗ trợ").
+        Tool không vượt qua được: chỉ báo để người dùng liên hệ hỗ trợ Muse."""
+        text = " ".join(e.text for e in self.elements("h1,h2,p,[role='alert']") if e.is_displayed()).lower()
+        return any(t in text for t in self.DISCONNECTED)
+
     def check_session(self, timeout=45):
         """Kiểm tra phiên cho Account Health Monitor: chỉ mở trang chủ muse.ai và nhìn trang (không gọi API nội bộ,
         không gửi prompt, không bấm gì, không tốn credit). Trả về (health, thông báo).
@@ -355,6 +364,9 @@ class MuseBrowser:
                 text = " ".join(e.text for e in self.elements("[role='alert'],[role='status'],h1,h2") if e.is_displayed()).lower()
                 if any(t in text for t in ("too many requests", "rate limit", "quá nhiều yêu cầu", "429")):
                     return "RATE_LIMITED", "Muse báo quá nhiều yêu cầu (429). Sẽ kiểm tra lại sau."
+                if self.disconnected():
+                    return "SUSPENDED", ("Muse đã ngắt kết nối tài khoản này để bảo vệ thông tin. Gửi phiếu hỗ trợ cho Muse; "
+                                         "tool không giao tác vụ cho tài khoản này.")
                 if any(t in text for t in ("captcha", "verify you are human", "xác minh bạn là con người")):
                     return "LOGIN_REQUIRED", "Muse yêu cầu xác minh. Bấm Mở phiên Muse và tự xử lý trên cửa sổ."
                 if self.named("input", {"Số di động hoặc email"}):
@@ -379,6 +391,9 @@ class MuseBrowser:
         text = " ".join(e.text for e in self.elements("[role='alert'],[role='status']") if e.is_displayed()).lower()
         if any(t in text for t in ("captcha", "verify you are human", "xác minh bạn là con người")):
             raise MuseFailure("Muse yêu cầu xác minh. Mở phiên Muse để xử lý.", state="attention")
+        if self.disconnected():
+            raise MuseFailure("Muse đã ngắt kết nối tài khoản này. Gửi phiếu hỗ trợ cho Muse; không giao thêm tác vụ.",
+                              state="attention")
         if any(t in text for t in ("too many requests", "rate limit", "quá nhiều yêu cầu", "hết credit", "không đủ credit")):
             raise MuseFailure("Muse báo giới hạn hoặc hết credit. Tài khoản đã tạm dừng; kiểm tra trên Muse.")
 
@@ -441,8 +456,11 @@ class MuseBrowser:
         phase("Kiểm tra phiên Muse")
         self.driver.get("https://muse.ai")
         main = self.driver.current_window_handle
-        self.wait(lambda: self.composer() or self.named("input", {"Số di động hoặc email"}), 60,
+        self.wait(lambda: self.composer() or self.named("input", {"Số di động hoặc email"}) or self.disconnected(), 60,
                   "Không nhận diện được trang đăng nhập Muse. Giao diện có thể đã thay đổi.")
+        if not self.composer() and self.disconnected():
+            raise MuseFailure("Muse đã ngắt kết nối tài khoản này để bảo vệ thông tin. Gửi phiếu hỗ trợ cho Muse rồi mới "
+                              "đăng nhập lại.", state="attention")
         if self.composer():
             return
         email = account["email"]

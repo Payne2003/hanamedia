@@ -119,6 +119,16 @@ class HealthStoreTests(unittest.TestCase):
             self.assertEqual((row["state"], row["health"], row["last_error"]), ("ready", health, "lỗi tạm"))
         self.assertEqual(self.store.account(a["id"])["check_failures"], 3)
 
+    def test_suspended_moves_to_attention_and_gets_no_jobs(self):
+        a = self.account()
+        self.store.set_account(a["id"], "ready")
+        self.store.enqueue(["Cảnh"], 1, uuid.uuid4().hex)
+        before = self.store.begin_check(a["id"])
+        self.store.end_check(a["id"], before["state"], "SUSPENDED", "Muse đã ngắt kết nối")
+        row = self.store.account(a["id"])
+        self.assertEqual((row["state"], row["health"]), ("attention", "SUSPENDED"))
+        self.assertIsNone(self.store.claim(2))
+
     def test_login_required_moves_to_attention_and_ready_recovers(self):
         a = self.account()
         before = self.store.begin_check(a["id"])
@@ -284,6 +294,8 @@ class CheckSessionTests(unittest.TestCase):
             (Driver(elements=[Element("Số di động hoặc email")]), "LOGIN_REQUIRED"),
             (Driver(elements=[Element(text="Too Many Requests")]), "RATE_LIMITED"),
             (Driver(elements=[Element(text="Verify you are human")]), "LOGIN_REQUIRED"),
+            (Driver(elements=[Element(text="Đã ngắt kết nối Muse"),
+                              Element(text="Hãy gửi phiếu yêu cầu hỗ trợ để kết nối lại.")]), "SUSPENDED"),
             (Driver(url="chrome-error://chromewebdata/"), "NETWORK_ERROR"),
             (Driver(error=RuntimeError("unknown error: net::ERR_INTERNET_DISCONNECTED")), "NETWORK_ERROR"),
             (Driver(error=RuntimeError("timeout: Timed out receiving message from renderer")), "NETWORK_ERROR"),
@@ -295,6 +307,20 @@ class CheckSessionTests(unittest.TestCase):
                 self.assertEqual(health, expected)
                 self.assertNotRegex(message, r"\d{6}")
         self.assertEqual(cases[0][0].visited, ["https://muse.ai"])  # chỉ trang chủ, không gọi API nội bộ
+
+    def test_disconnected_page_stops_login_and_jobs(self):
+        from runner.muse import MuseFailure
+        driver = Driver(elements=[Element(text="Đã ngắt kết nối Muse")])
+        driver.current_window_handle = "main"
+        browser = self.browser(driver)
+        browser.phase = lambda text: None
+        browser.headless = True
+        with self.assertRaises(MuseFailure) as caught:
+            browser.login({"email": "a@tuan89.site", "mailbox": ""})
+        self.assertEqual(caught.exception.state, "attention")
+        self.assertIn("ngắt kết nối", str(caught.exception))
+        with self.assertRaises(MuseFailure):
+            browser.guard()
 
 
 class HealthHTTPTests(unittest.TestCase):

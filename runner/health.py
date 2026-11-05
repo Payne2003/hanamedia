@@ -15,7 +15,7 @@ import time
 from . import muse
 from .cookies import CookieError
 
-HEALTH_STATES = ("LIVE", "CHECKING", "LOGIN_REQUIRED", "EXPIRED", "BUSY", "NETWORK_ERROR", "RATE_LIMITED", "UNKNOWN")
+HEALTH_STATES = ("LIVE", "CHECKING", "LOGIN_REQUIRED", "EXPIRED", "BUSY", "NETWORK_ERROR", "RATE_LIMITED", "SUSPENDED", "UNKNOWN")
 
 
 def open_check_browser(profile, downloads):

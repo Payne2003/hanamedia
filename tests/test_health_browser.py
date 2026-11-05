@@ -26,6 +26,8 @@ PAGES = {
     "expired": '<input aria-label="Số di động hoặc email"><button>Tiếp tục</button>',
     "rate": '<div role="alert">Too Many Requests</div>',
     "captcha": '<div role="alert">Verify you are human</div>',
+    "disconnected": '<h1>Đã ngắt kết nối Muse</h1><p>Chúng tôi đã ngắt kết nối Muse để bảo vệ thông tin của bạn. Hãy gửi '
+                    'phiếu yêu cầu hỗ trợ để kết nối lại.</p><button>Gửi phiếu yêu cầu hỗ trợ</button>',
     "slow": '<div id="app">…</div><script>setTimeout(()=>{document.getElementById("app").innerHTML='
             '\'<textarea aria-label="Nhắn tin"></textarea>\'},2000)</script>',
 }
@@ -67,7 +69,7 @@ class HealthBrowserTests(unittest.TestCase):
     def test_real_chromium_pages(self):
         root = Path(tempfile.mkdtemp())
         store = Store(root / "t.db")
-        names = ["live", "login", "expired", "rate", "captcha", "slow", "offline"]
+        names = ["live", "login", "expired", "rate", "captcha", "disconnected", "slow", "offline"]
         store.add_accounts("\n".join(f"{n}@tuan89.site" for n in names), 10)
         ids = {a["email"].split("@")[0]: a["id"] for a in store.snapshot()["accounts"]}
         for name in ("expired", "offline"):
@@ -97,10 +99,12 @@ class HealthBrowserTests(unittest.TestCase):
         finally:
             engine.shutdown()
         self.assertEqual(results, {"live": "LIVE", "login": "LOGIN_REQUIRED", "expired": "EXPIRED", "rate": "RATE_LIMITED",
-                                   "captcha": "LOGIN_REQUIRED", "slow": "LIVE", "offline": "NETWORK_ERROR"})
+                                   "captcha": "LOGIN_REQUIRED", "disconnected": "SUSPENDED", "slow": "LIVE",
+                                   "offline": "NETWORK_ERROR"})
         states = {name: store.account(ids[name])["state"] for name in names}
         self.assertEqual(states, {"live": "ready", "login": "attention", "expired": "attention", "rate": "new",
-                                  "captcha": "attention", "slow": "ready", "offline": "ready"})  # mất mạng: không "chết"
+                                  "captcha": "attention", "disconnected": "attention", "slow": "ready",
+                                  "offline": "ready"})  # mất mạng: không "chết"
 
 
     def test_cookies_set_through_real_cdp_reach_muse(self):

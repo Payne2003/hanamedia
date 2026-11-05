@@ -209,7 +209,7 @@ class Store:
                 return
             if health == "LIVE":
                 state, detail, failures = "ready", "Đã kiểm tra: phiên Muse còn đăng nhập", 0
-            elif health in ("LOGIN_REQUIRED", "EXPIRED"):
+            elif health in ("LOGIN_REQUIRED", "EXPIRED", "SUSPENDED"):
                 state, detail, failures = "attention", error, 0
             else:
                 state, detail, failures = previous, row["detail"], row["check_failures"] + 1
