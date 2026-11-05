@@ -689,8 +689,10 @@ $('projectScenes').onclick=e=>{
 setInterval(()=>{if(!$('contentView').hidden)renderCharacterRun();},1000);
 // ---------- Thanh 5 bước của Content Studio ----------
 let currentStep=1;try{currentStep=Math.min(5,Math.max(1,Number(localStorage.getItem('hana-step'))||1));}catch{}
+if(currentStep===3)currentStep=4; // bước Nhân vật đã bỏ khỏi Content Studio
 function stepDone(n){return n===1?Boolean(content.brief.trim()):n===2?content.scenes.length>0:n===3?Boolean(project?.characters.length):n===4?Boolean((content.english||content.englishChatgpt||'').trim()):false;}
 function setStep(n,scroll=true){
+  if(n===3)n=4;  // bước Nhân vật đã bỏ: chuyển sang bước Prompt
   currentStep=n;try{localStorage.setItem('hana-step',String(n));}catch{}
   document.querySelectorAll('[data-step-panel]').forEach(el=>el.hidden=Number(el.dataset.stepPanel)!==n);
   document.querySelectorAll('.stepper [data-step]').forEach(b=>{const k=Number(b.dataset.step);b.classList.toggle('active',k===n);b.classList.toggle('done',k!==n&&stepDone(k));});
@@ -699,17 +701,15 @@ function setStep(n,scroll=true){
 }
 function renderOverview(){
   const english=(content.english||'').split('\n').filter(x=>x.trim()).length,chat=(content.englishChatgpt||'').split('\n').filter(x=>x.trim()).length;
-  const chars=project?.characters||[],approved=chars.filter(c=>c.approved_asset_id).length;
-  const tiles=[['Cảnh',content.scenes.length,'bước 2'],['Dự án',project?project.name:'Chưa lưu','bước 3'],['Nhân vật',chars.length,`${approved} đã duyệt · ${chars.length-approved} cần tạo ảnh`],['Prompt tiếng Anh · ChatGPT',chat,'bước 4']];
+  const tiles=[['Cảnh',content.scenes.length,'bước 2'],['Prompt tiếng Anh · ChatGPT',chat,'bước 3']];
   $('overviewStats').innerHTML=tiles.map(([label,value,note])=>`<div class="overview-tile"><small>${esc(label)}</small><b>${esc(String(value))}</b><span>${esc(note)}</span></div>`).join('');
 }
 function markSidebar(){
   const content=!$('contentView').hidden,settings=!$('settingsView').hidden;
-  $('navStudio').classList.toggle('active',!content&&!settings);$('navSettings').classList.toggle('active',settings);$('openContent').classList.toggle('active',content&&currentStep!==3);$('navCharacters').classList.toggle('active',content&&currentStep===3);
+  $('navStudio').classList.toggle('active',!content&&!settings);$('navSettings').classList.toggle('active',settings);$('openContent').classList.toggle('active',content);
 }
 document.querySelectorAll('.stepper [data-step]').forEach(b=>b.onclick=()=>setStep(Number(b.dataset.step)));
 document.addEventListener('click',e=>{const go=e.target.closest('[data-goto-step]');if(go)setStep(Number(go.dataset.gotoStep));});
-$('navCharacters').onclick=()=>{showView('content');setStep(3);};
 setInterval(()=>{if(state?.app_version)$('appVersion').textContent='v'+state.app_version;const runs=$('headerRuns').textContent;$('sideRuns').hidden=!Number(runs);$('sideRuns').textContent=runs;},1000);
 // ---------- Cài đặt: đăng nhập các tài khoản tool cần ----------
 function renderSettings(force){
