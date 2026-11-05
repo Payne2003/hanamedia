@@ -36,6 +36,18 @@ def mailbox_for(email, value):
     return email, value
 
 
+# Trạng thái tài khoản đang giữ Chrome của nó: không cấu hình, xóa, đăng nhập hay kiểm tra chồng lên.
+LOCKED_STATES = ("busy", "authenticating", "reviewing", "checking")
+ACCOUNT_COLUMNS = {
+    "health": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+    "last_checked": "REAL NOT NULL DEFAULT 0",
+    "last_error": "TEXT NOT NULL DEFAULT ''",
+    "check_failures": "INTEGER NOT NULL DEFAULT 0",
+    "next_check": "REAL NOT NULL DEFAULT 0",
+    "health_before": "TEXT NOT NULL DEFAULT ''",
+}
+
+
 class Store:
     def __init__(self, path):
         self.path = str(path)
@@ -78,6 +90,11 @@ class Store:
             for name, declaration in migrations.items():
                 if name not in columns:
                     db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {declaration}")
+            # Account Health Monitor: tình trạng phiên Muse đo được, tách khỏi state (state vẫn điều phối tác vụ).
+            account_columns = {row["name"] for row in db.execute("PRAGMA table_info(accounts)")}
+            for name, declaration in ACCOUNT_COLUMNS.items():
+                if name not in account_columns:
+                    db.execute(f"ALTER TABLE accounts ADD COLUMN {name} {declaration}")
         self.characters = CharacterRegistry(self)
         self.cleanup_images()
 
@@ -102,7 +119,9 @@ class Store:
                           if job["submitted"] else "Bộ chạy bị tắt trước khi gửi. Có thể thử lại.")
                 db.execute("UPDATE jobs SET status='error',phase='Bị gián đoạn',error=?,updated=? WHERE id=?",
                            (detail, time.time(), job["id"]))
-            db.execute("UPDATE accounts SET state='new',detail='Cần kiểm tra lại phiên' WHERE state IN ('busy','authenticating','reviewing')")
+            db.execute("UPDATE accounts SET state='new',detail='Cần kiểm tra lại phiên' WHERE state IN ('busy','authenticating','reviewing','checking')")
+            db.execute("UPDATE accounts SET health=CASE WHEN health_before!='' THEN health_before ELSE 'UNKNOWN' END,"
+                       "health_before='' WHERE health='CHECKING'")
         self.characters.recover_image_tasks()
 
     def add_account(self, email, mailbox, budget):
@@ -156,12 +175,45 @@ class Store:
     def set_account(self, account_id, state, detail=""):
         with self.connect() as db:
             db.execute("UPDATE accounts SET state=?,detail=? WHERE id=?", (state, detail, account_id))
+            if state == "ready":  # chỉ gọi 'ready' sau khi đã thấy ô soạn tin Muse: đó là bằng chứng phiên còn sống
+                db.execute("UPDATE accounts SET health='READY',last_checked=?,last_error='',check_failures=0 WHERE id=?",
+                           (time.time(), account_id))
+
+    def begin_check(self, account_id):
+        """Giữ chỗ tài khoản để kiểm tra phiên. Trả về {state, health} trước đó, hoặc None nếu tài khoản đang chạy/đăng nhập/
+        đang mở phiên/đang được kiểm tra (không bao giờ chen vào tác vụ đang chạy)."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT state,health FROM accounts WHERE id=?", (account_id,)).fetchone()
+            if not row or row["state"] in LOCKED_STATES:
+                return None
+            db.execute("UPDATE accounts SET state='checking',health_before=health,health='CHECKING' WHERE id=?", (account_id,))
+            return dict(row)
+
+    def end_check(self, account_id, previous, health, error=""):
+        """Ghi kết quả kiểm tra. Chỉ READY / LOGIN_REQUIRED / EXPIRED đổi state điều phối; lỗi mạng, 429 và lỗi chưa rõ
+        giữ nguyên state cũ (không đánh dấu tài khoản hỏng) và tăng bộ đếm lỗi để lịch kiểm tra giãn ra."""
+        now = time.time()
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM accounts WHERE id=? AND state='checking'", (account_id,)).fetchone()
+            if not row:
+                return
+            if health == "READY":
+                state, detail, failures = "ready", "Đã kiểm tra: phiên Muse còn đăng nhập", 0
+            elif health in ("LOGIN_REQUIRED", "EXPIRED"):
+                state, detail, failures = "attention", error, 0
+            else:
+                state, detail, failures = previous, row["detail"], row["check_failures"] + 1
+            db.execute("""UPDATE accounts SET state=?,detail=?,health=?,last_checked=?,last_error=?,check_failures=?,
+                          health_before='' WHERE id=?""",
+                       (state, detail, health, now, "" if health == "READY" else error, failures, account_id))
 
     def configure_account(self, account_id, enabled, budget):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
-            if not row or row["state"] in ("busy", "authenticating", "reviewing"):
+            if not row or row["state"] in LOCKED_STATES:
                 raise ValueError("Tài khoản đang bận hoặc không tồn tại.")
             db.execute("UPDATE accounts SET enabled=?,budget=? WHERE id=?", (int(bool(enabled)), number(budget), account_id))
         self.plan_waiting()
@@ -173,7 +225,7 @@ class Store:
             row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
             if not row:
                 raise ValueError("Không tìm thấy tài khoản.")
-            if row["state"] in ("busy", "authenticating", "reviewing") or db.execute(
+            if row["state"] in LOCKED_STATES or db.execute(
                     "SELECT 1 FROM jobs WHERE status='running' AND account_id=?", (account_id,)).fetchone():
                 raise ValueError("Tài khoản đang chạy, đăng nhập hoặc đang mở phiên. Đợi xong hoặc đóng phiên rồi xóa.")
             db.execute("UPDATE jobs SET assigned_account_id=NULL WHERE status='waiting' AND assigned_account_id=?",
@@ -187,7 +239,7 @@ class Store:
         """Giữ chỗ tài khoản cho đăng nhập/mở phiên. Từ chối nếu tài khoản đang chạy tác vụ hoặc đang đăng nhập."""
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            cursor = db.execute("UPDATE accounts SET state=?,detail=? WHERE id=? AND state NOT IN ('busy','authenticating','reviewing')",
+            cursor = db.execute("UPDATE accounts SET state=?,detail=? WHERE id=? AND state NOT IN ('busy','authenticating','reviewing','checking')",
                                 (state, detail, account_id))
             if cursor.rowcount != 1:
                 raise ValueError("Tài khoản đang bận hoặc không tồn tại.")
@@ -491,12 +543,12 @@ class Store:
             db.execute("BEGIN IMMEDIATE")
             accounts = [dict(row) for row in db.execute(
                 """SELECT id,budget,rowid FROM accounts
-                   WHERE enabled=1 AND state IN ('new','ready','busy') ORDER BY rowid""")]
+                   WHERE enabled=1 AND state IN ('new','ready','busy','checking') ORDER BY rowid""")]
             eligible = {account["id"] for account in accounts}
             stale = db.execute(
                 """SELECT j.id FROM jobs j LEFT JOIN accounts a ON a.id=j.assigned_account_id
                    WHERE j.status='waiting' AND j.assigned_account_id IS NOT NULL
-                   AND (a.id IS NULL OR a.enabled!=1 OR a.state NOT IN ('new','ready','busy'))"""
+                   AND (a.id IS NULL OR a.enabled!=1 OR a.state NOT IN ('new','ready','busy','checking'))"""
             ).fetchall()
             stale_ids = [row["id"] for row in stale]
             if stale_ids:
@@ -590,6 +642,9 @@ class Store:
                        ("error" if error else "done", "Cần kiểm tra" if error else "Đã tải MP4",
                         job["progress"] if error else 100, output, error, time.time(), job_id))
             db.execute("UPDATE accounts SET state=?,detail=? WHERE id=?", (account_state, error, job["account_id"]))
+            if not error:  # vừa tải được video: phiên chắc chắn còn sống
+                db.execute("UPDATE accounts SET health='READY',last_checked=?,last_error='',check_failures=0 WHERE id=?",
+                           (time.time(), job["account_id"]))
 
     DETAIL_FIELDS = ("setting", "camera", "behavior", "action")
     SCENE_PROMPT = re.compile(
@@ -676,7 +731,12 @@ class Store:
 
     def snapshot(self):
         with self.connect() as db:
-            accounts = [dict(r) for r in db.execute("SELECT id,email,enabled,budget,state,detail FROM accounts ORDER BY rowid")]
+            accounts = [dict(r) for r in db.execute(
+                """SELECT a.id,a.email,a.enabled,a.budget,a.state,a.detail,a.health,a.last_checked,a.last_error,
+                   (SELECT count(*) FROM jobs j WHERE j.status='waiting' AND j.assigned_account_id=a.id) AS jobs_assigned,
+                   (SELECT count(*) FROM jobs j WHERE j.status='done' AND j.account_id=a.id) AS jobs_completed,
+                   (SELECT count(*) FROM jobs j WHERE j.status='error' AND j.account_id=a.id) AS jobs_failed
+                   FROM accounts a ORDER BY a.rowid""")]
             jobs = []
             for row in db.execute("SELECT * FROM jobs ORDER BY created DESC,rowid DESC LIMIT 2000"):
                 job = dict(row)

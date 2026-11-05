@@ -312,6 +312,41 @@ class MuseBrowser:
         host = urlparse(self.driver.current_url).hostname or ""
         return (host == "muse.ai" or host.endswith(".muse.ai")) and self.composer() is not None
 
+    def check_session(self, timeout=45):
+        """Kiểm tra phiên cho Account Health Monitor: chỉ mở trang chủ muse.ai và nhìn trang (không gọi API nội bộ,
+        không gửi prompt, không bấm gì, không tốn credit). Trả về (health, thông báo).
+        READY: thấy ô soạn tin. LOGIN_REQUIRED: thấy ô email đăng nhập hoặc yêu cầu xác minh (người dùng tự xử lý).
+        RATE_LIMITED: Muse báo quá nhiều yêu cầu. NETWORK_ERROR: Chrome không tải được trang. UNKNOWN: còn lại."""
+        try:
+            self.driver.get("https://muse.ai")
+        except Exception as error:
+            text = str(error).lower()
+            if "net::" in text or "err_" in text or "disconnected" in text:
+                return "NETWORK_ERROR", "Không tải được muse.ai (lỗi mạng). Chưa đổi trạng thái tài khoản."
+            if "timeout" in text or "timed out" in text:
+                return "NETWORK_ERROR", "muse.ai tải quá lâu. Chưa đổi trạng thái tài khoản."
+            return "UNKNOWN", "Chrome không mở được muse.ai."
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                url = self.driver.current_url or ""
+                if url.startswith("chrome-error://"):
+                    return "NETWORK_ERROR", "Không tải được muse.ai (lỗi mạng). Chưa đổi trạng thái tài khoản."
+                if self.session_ready():
+                    return "READY", ""
+                text = " ".join(e.text for e in self.elements("[role='alert'],[role='status'],h1,h2") if e.is_displayed()).lower()
+                if any(t in text for t in ("too many requests", "rate limit", "quá nhiều yêu cầu", "429")):
+                    return "RATE_LIMITED", "Muse báo quá nhiều yêu cầu (429). Sẽ kiểm tra lại sau."
+                if any(t in text for t in ("captcha", "verify you are human", "xác minh bạn là con người")):
+                    return "LOGIN_REQUIRED", "Muse yêu cầu xác minh. Bấm Mở phiên Muse và tự xử lý trên cửa sổ."
+                if self.named("input", {"Số di động hoặc email"}):
+                    return "LOGIN_REQUIRED", "Phiên Muse đã đăng xuất. Bấm Đăng nhập để nhập OTP."
+            except Exception:
+                return "UNKNOWN", "Chrome của lần kiểm tra bị đóng hoặc mất kết nối."
+            if time.monotonic() >= deadline:
+                return "UNKNOWN", "Không nhận diện được trang Muse sau khi tải. Thử lại sau."
+            time.sleep(1)
+
     def wait(self, action, timeout, error):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
