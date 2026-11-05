@@ -496,6 +496,9 @@ class Store:
             referenced.update(row["token"] for row in db.execute("SELECT token FROM image_library"))
             referenced.update(self.characters.referenced_tokens(db))
             referenced.update(row[0] for row in db.execute("SELECT media_id FROM media WHERE hidden=0"))
+            support = db.execute("SELECT value FROM settings WHERE key='support_bar'").fetchone()
+        if support:
+            referenced.add((json.loads(support[0]) or {}).get("qr"))  # ảnh QR của thanh hỗ trợ
         for path in self.image_dir.iterdir():
             if path.is_file() and path.stem not in referenced and re.fullmatch(r"[a-f0-9]{32}", path.stem):
                 path.unlink()
@@ -851,6 +854,26 @@ class Store:
             totals = {s: 0 for s in ("waiting", "running", "done", "error")}
             totals.update({r[0]: r[1] for r in db.execute("SELECT status,count(*) FROM jobs GROUP BY status")})
             return {"accounts": accounts, "jobs": jobs, "totals": totals, "batches": batches}
+
+    SUPPORT_DEFAULT = {"message": "Mời cafe HANA MEDIA", "phone": "0983105651", "qr": None}
+
+    def support_bar(self):
+        """Thanh hỗ trợ trên cùng: lời nhắn, số điện thoại hỗ trợ và ảnh QR (người dùng tự tải lên; trống = chưa có)."""
+        saved = self.setting("support_bar", {}) or {}
+        bar = {**self.SUPPORT_DEFAULT, **{k: v for k, v in saved.items() if k in self.SUPPORT_DEFAULT}}
+        if bar["qr"] and not self.image_file(bar["qr"]):
+            bar["qr"] = None  # ảnh QR đã bị xóa khỏi thư viện
+        return bar
+
+    def save_support_bar(self, message, phone, qr):
+        message = re.sub(r"\s+", " ", str(message or "")).strip()[:120]
+        phone = str(phone or "").strip()
+        if not re.fullmatch(r"\+?[0-9][0-9 .]{5,19}", phone):
+            raise ValueError("Số điện thoại hỗ trợ không hợp lệ.")
+        if qr is not None and (not isinstance(qr, str) or not re.fullmatch(r"[a-f0-9]{32}", qr) or not self.image_file(qr)):
+            raise ValueError("Ảnh QR không còn trong thư viện. Tải lại ảnh QR.")
+        self.save_setting("support_bar", {"message": message or self.SUPPORT_DEFAULT["message"], "phone": phone, "qr": qr})
+        return self.support_bar()
 
     def setting(self, key, default=None):
         with self.connect() as db:

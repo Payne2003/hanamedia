@@ -267,6 +267,7 @@ class Handler(BaseHTTPRequestHandler):
             data["engine"] = self.server.engine.snapshot()
             data["key"] = self.server.secret
             data["app_version"] = APP_VERSION
+            data["support"] = self.server.store.support_bar()
             shared = self.server.shared
             data["shared_account"] = {"enabled": shared.enabled, "profile": str(shared.dir), "login_open": shared.login_open(),
                                       "profile_used": (shared.dir / "Local State").exists()}
@@ -474,6 +475,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/library/import-flow":
                 imported = store.import_flow_downloads(engine.flow_downloads)
                 return self.reply({"ok": True, "imported": imported})
+            elif path == "/api/settings/support":
+                return self.reply({"ok": True, "support": store.save_support_bar(body.get("message"), body.get("phone"),
+                                                                                  body.get("qr"))})
             elif path == "/api/settings/shared-account":
                 self.server.apply_shared(body.get("enabled") is True)
             elif path == "/api/shared-login":
