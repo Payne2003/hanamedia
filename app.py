@@ -414,6 +414,17 @@ class Handler(BaseHTTPRequestHandler):
                 if "parallel" in body:
                     engine.health.set_parallel(body["parallel"])
                 return self.reply({"ok": True, **engine.health.check_all()})
+            elif path in ("/api/accounts/cookies", "/api/accounts/cookies/apply", "/api/accounts/cookies/delete"):
+                # Cookie Manager: không bao giờ trả giá trị cookie về giao diện; lỗi không chứa giá trị cookie.
+                if not re.fullmatch(r"[a-f0-9]{32}", str(body.get("id", ""))):
+                    raise ValueError("Tài khoản không hợp lệ.")
+                if path == "/api/accounts/cookies/delete":
+                    return self.reply({"ok": True, "deleted": store.cookies.delete(body["id"])})
+                stats = store.cookies.save(body["id"], body.get("cookies")) if path == "/api/accounts/cookies" else None
+                if path == "/api/accounts/cookies/apply" and not store.cookies.load(body["id"]):
+                    raise ValueError("Tài khoản chưa có cookie đã lưu.")
+                check = engine.health.request([body["id"]], apply_cookies=True)
+                return self.reply({"ok": True, "stats": stats, **check})
             elif path == "/api/accounts/update":
                 with engine.lock:
                     store.configure_account(body["id"], body["enabled"], body["budget"])

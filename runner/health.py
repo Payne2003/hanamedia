@@ -13,6 +13,7 @@ import threading
 import time
 
 from . import muse
+from .cookies import CookieError
 
 HEALTH_STATES = ("LIVE", "CHECKING", "LOGIN_REQUIRED", "EXPIRED", "BUSY", "NETWORK_ERROR", "RATE_LIMITED", "UNKNOWN")
 
@@ -34,14 +35,15 @@ class HealthMonitor:
         self.workers = []
         self.owned = set()  # Chrome ẩn do bộ kiểm tra tự mở: đóng khi tắt tool
         self.last_results = {}
+        self.apply_cookies = set()  # tài khoản cần áp cookie đã lưu vào Chrome trước khi kiểm tra
 
     def set_parallel(self, parallel):
         if type(parallel) is not int or not 1 <= parallel <= 4:
             raise ValueError("Số Chrome kiểm tra cùng lúc phải từ 1 đến 4.")
         self.parallel = parallel
 
-    def request(self, account_ids):
-        """Xếp hàng kiểm tra. Trả về số tài khoản đã xếp hàng và danh sách tài khoản đang bận (bỏ qua, không đụng vào)."""
+    def request(self, account_ids, apply_cookies=False):
+        """Xếp hàng kiểm tra. apply_cookies=True: áp cookie đã lưu (mã hóa) vào Chrome của tài khoản rồi mới kiểm tra. Trả về số tài khoản đã xếp hàng và danh sách tài khoản đang bận (bỏ qua, không đụng vào)."""
         accounts = {a["id"]: a for a in self.store.snapshot()["accounts"]}
         queued, busy = 0, []
         for account_id in account_ids:
@@ -52,6 +54,8 @@ class HealthMonitor:
                 busy.append(account["email"])
                 continue
             with self.lock:
+                if apply_cookies:
+                    self.apply_cookies.add(account_id)
                 if account_id in self.pending or account_id in self.running:
                     continue
                 self.pending.add(account_id)
@@ -83,8 +87,10 @@ class HealthMonitor:
             with self.lock:
                 self.pending.discard(account_id)
                 self.running.add(account_id)
+                cookies = account_id in self.apply_cookies
+                self.apply_cookies.discard(account_id)
             try:
-                self.last_results[account_id] = self.check(account_id)
+                self.last_results[account_id] = self.check(account_id, apply_cookies=cookies)
             finally:
                 with self.lock:
                     self.running.discard(account_id)
@@ -95,8 +101,10 @@ class HealthMonitor:
         with self.lock:
             return {"queued": len(self.pending), "checking": len(self.running), "parallel": self.parallel}
 
-    def check(self, account_id):
-        """Kiểm tra một tài khoản. Trả về trạng thái sức khỏe đã ghi."""
+    def check(self, account_id, apply_cookies=False):
+        """Kiểm tra một tài khoản. Trả về trạng thái sức khỏe đã ghi.
+        apply_cookies: áp cookie đã lưu vào Chrome của tài khoản (qua CDP, chỉ cookie muse.ai) trước khi mở muse.ai.
+        Cookie chỉ được coi là dùng được khi kiểm tra sau đó thấy LIVE."""
         before = self.store.begin_check(account_id)
         if before is None:
             return "BUSY"
@@ -122,12 +130,22 @@ class HealthMonitor:
                     owned = True
                     with self.lock:
                         self.owned.add(browser)
+            if browser is not None and apply_cookies:
+                cookies = self.store.cookies.load(account_id)
+                if not cookies:
+                    raise LookupError("Tài khoản chưa có cookie đã lưu.")
+                browser.apply_cookies(cookies)
             if browser is not None:
                 health, message = browser.check_session()
                 if health == "LOGIN_REQUIRED" and before["health"] == "LIVE":
                     health, message = "EXPIRED", "Phiên Muse đã hết hạn. Bấm Đăng nhập để nhập OTP."
+        except LookupError as error:
+            health, message = "UNKNOWN", str(error)
+        except (CookieError, muse.MuseFailure) as error:
+            health, message = "UNKNOWN", str(error)
         except Exception:
-            health, message = "UNKNOWN", "Không kiểm tra được phiên. Thử lại sau."
+            health, message = "UNKNOWN", ("Không áp được cookie vào Chrome của tài khoản." if apply_cookies
+                                          else "Không kiểm tra được phiên. Thử lại sau.")
         finally:
             if owned:
                 with self.lock:
@@ -136,6 +154,8 @@ class HealthMonitor:
             if health not in HEALTH_STATES or health in ("CHECKING", "BUSY"):
                 health = "UNKNOWN"
             self.store.end_check(account_id, before["state"], health, message)
+            if apply_cookies:
+                self.store.cookies.mark_applied(account_id, health)
         return health
 
     def shutdown(self):

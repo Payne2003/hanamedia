@@ -312,6 +312,24 @@ class MuseBrowser:
         host = urlparse(self.driver.current_url).hostname or ""
         return (host == "muse.ai" or host.endswith(".muse.ai")) and self.composer() is not None
 
+    def apply_cookies(self, cookies):
+        """Đặt cookie muse.ai đã kiểm tra (runner/cookies.parse) vào hồ sơ Chrome của tài khoản qua CDP.
+        Không ghi giá trị cookie ra log hay thông báo lỗi. Trả về số cookie Chrome nhận."""
+        accepted = 0
+        for cookie in cookies:
+            if not str(cookie.get("domain", "")).lstrip(".").endswith("muse.ai"):
+                continue  # chỉ cookie của muse.ai
+            params = {key: cookie[key] for key in ("name", "value", "domain", "path", "secure", "httpOnly", "sameSite",
+                                                   "expires") if key in cookie}
+            try:
+                result = self.driver.execute_cdp_cmd("Network.setCookie", params)
+            except Exception:
+                continue
+            accepted += bool(result.get("success", True)) if isinstance(result, dict) else 1
+        if not accepted:
+            raise MuseFailure("Chrome không nhận cookie nào. Cookie có thể sai định dạng hoặc đã hết hạn.")
+        return accepted
+
     def check_session(self, timeout=45):
         """Kiểm tra phiên cho Account Health Monitor: chỉ mở trang chủ muse.ai và nhìn trang (không gọi API nội bộ,
         không gửi prompt, không bấm gì, không tốn credit). Trả về (health, thông báo).

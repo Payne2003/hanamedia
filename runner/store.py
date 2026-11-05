@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .content import parse_structured
+from .cookies import CookieStore
 from .media import SOURCES as MEDIA_SOURCES, MediaLibrary
 from .characters import JOB_COLUMNS, SCHEMA as CHARACTER_SCHEMA, CharacterRegistry, migrate as migrate_characters
 
@@ -101,6 +102,7 @@ class Store:
             db.execute("UPDATE accounts SET health='LIVE' WHERE health='READY'")  # tên cũ của bản thử đầu
         self.characters = CharacterRegistry(self)
         self.media = MediaLibrary(self)
+        self.cookies = CookieStore(self)  # Cookie Manager: chỉ lưu bản mã hóa
         self.cleanup_images()
         self.media.purge_hidden()
 
@@ -739,6 +741,9 @@ class Store:
                 job["image_count"] = len(json.loads(job.pop("images") or "[]"))
                 job["name"] = f"Prompt {job['ordinal'] + 1}"
                 jobs.append(job)
+            cookies = self.cookies.summaries(db)
+            for account in accounts:
+                account.update(cookies.get(account["id"], {"cookie_count": 0}))
             totals = {s: 0 for s in ("waiting", "running", "done", "error")}
             totals.update({r[0]: r[1] for r in db.execute("SELECT status,count(*) FROM jobs GROUP BY status")})
             return {"accounts": accounts, "jobs": jobs, "totals": totals}

@@ -103,5 +103,50 @@ class HealthBrowserTests(unittest.TestCase):
                                   "captcha": "attention", "slow": "ready", "offline": "ready"})  # mất mạng: không "chết"
 
 
+    def test_cookies_set_through_real_cdp_reach_muse(self):
+        """Cookie nhập ở Cookie Manager -> Network.setCookie (CDP thật) -> Chrome gửi cookie lên muse.ai -> LIVE."""
+        root = Path(tempfile.mkdtemp())
+        store = Store(root / "t.db")
+        store.add_accounts("good@tuan89.site\nbad@tuan89.site", 10)
+        ids = {a["email"].split("@")[0]: a["id"] for a in store.snapshot()["accounts"]}
+        store.cookies.save(ids["good"], '[{"name":"muse_session","value":"tok-123","domain":".muse.ai","httpOnly":true,'
+                                        '"secure":true,"sameSite":"lax"},{"name":"x","value":"y","domain":".evil.com"}]')
+        store.cookies.save(ids["bad"], "Cookie: muse_session=wrong")
+        seen = []
+        engine = Engine(store, root)
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(executable_path=CHROME)
+
+                def serve(route, request):
+                    cookie = request.headers.get("cookie", "")
+                    seen.append(cookie)
+                    body = PAGES["live" if "muse_session=tok-123" in cookie else "login"]
+                    route.fulfill(status=200, content_type="text/html; charset=utf-8",
+                                  body=f"<!doctype html><meta charset=utf-8>{body}")
+
+                def factory(profile, downloads):
+                    page = browser.new_context().new_page()  # mỗi tài khoản một hồ sơ (context) riêng
+                    page.route(MUSE, serve)
+                    cdp = page.context.new_cdp_session(page)
+                    driver = Driver(page)
+                    driver.execute_cdp_cmd = lambda cmd, params: cdp.send(cmd, params)
+                    muse = MuseBrowser.__new__(MuseBrowser)
+                    muse.driver = driver
+                    muse.close = page.context.close
+                    return muse
+
+                monitor = HealthMonitor(engine, factory, parallel=1, spacing=0)
+                self.assertEqual(monitor.check(ids["bad"], apply_cookies=False), "LOGIN_REQUIRED")
+                results = {name: monitor.check(ids[name], apply_cookies=True) for name in ("good", "bad")}
+                browser.close()
+        finally:
+            engine.shutdown()
+        self.assertEqual(results, {"good": "LIVE", "bad": "LOGIN_REQUIRED"})
+        self.assertIn("muse_session=tok-123", seen[1])  # Chrome thật gửi cookie đã đặt qua CDP
+        self.assertFalse(any("x=y" in cookie for cookie in seen))  # cookie trang khác không bao giờ được đặt
+        self.assertEqual(store.account(ids["good"])["state"], "ready")
+
+
 if __name__ == "__main__":
     unittest.main()
