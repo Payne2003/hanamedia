@@ -406,6 +406,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r"[a-f0-9]{32}", str(body.get("id", ""))):
                     raise ValueError("Tài khoản không hợp lệ.")
                 return self.reply({"ok": True, "email": engine.remove_account(body["id"])})
+            elif path == "/api/accounts/check":
+                if not re.fullmatch(r"[a-f0-9]{32}", str(body.get("id", ""))):
+                    raise ValueError("Tài khoản không hợp lệ.")
+                return self.reply({"ok": True, **engine.health.request([body["id"]])})
+            elif path == "/api/accounts/check-all":
+                if "parallel" in body:
+                    engine.health.set_parallel(body["parallel"])
+                return self.reply({"ok": True, **engine.health.check_all()})
             elif path == "/api/accounts/update":
                 with engine.lock:
                     store.configure_account(body["id"], body["enabled"], body["budget"])

@@ -9,6 +9,7 @@ from .gemini_web import chrome_executable
 from .flow import FLOW_URL  # noqa: E402  (flow.google.com)
 FLOW_LOGIN = object()  # yêu cầu đặc biệt trong hàng đợi Flow: mở Chrome thường để đăng nhập
 FLOW_CLOSE = object()  # đóng Chrome Flow do tool điều khiển (nhường hồ sơ Google chung)
+from .health import HealthMonitor
 from .muse import MuseBrowser, MuseFailure
 
 
@@ -40,6 +41,7 @@ class Engine:
         self.flow_thread = threading.Thread(target=self.flow_worker, daemon=True)
         self.flow_thread.start()
         self.store.recover()
+        self.health = HealthMonitor(self)
         threading.Thread(target=self.supervise, daemon=True).start()
 
     def launch(self, function, *args):
@@ -392,7 +394,8 @@ class Engine:
                     "output_folder": self.store.setting("output_folder", ""), "flow_status": self.flow_status,
                     "flow_profile": str(self.flow_profile), "flow_busy": self.flow_busy,
                     "flow_profile_used": (self.flow_profile.parent / "Local State").exists(),
-                    "login_all": self.login_all_status, "login_all_running": self.login_all_running}
+                    "login_all": self.login_all_status, "login_all_running": self.login_all_running,
+                    "health": self.health.status()}
 
     def shutdown(self):
         with self.lock:
@@ -401,6 +404,7 @@ class Engine:
             return list(self.threads)
 
     def close_browsers(self):
+        self.health.shutdown()
         self.flow_requests.put(None)
         if self.flow_thread.is_alive():
             self.flow_thread.join(timeout=10)
