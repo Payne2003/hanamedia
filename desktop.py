@@ -41,6 +41,9 @@ def self_check():
         manager = SeleniumManager()._get_binary()
         if not manager.exists():
             raise RuntimeError(f"Thiếu selenium-manager: {manager}")
+        from runner.video_tools import ffmpeg, run
+        if run([ffmpeg(), "-version"], 30).returncode != 0:  # nâng 4K / ghép video cần ffmpeg chạy được
+            raise RuntimeError("ffmpeg không chạy được")
         import tkinter  # noqa: F401  hộp chọn thư mục
         import webview  # noqa: F401  cửa sổ app
         import app  # noqa: F401

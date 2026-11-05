@@ -286,6 +286,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(job)
             except ValueError as error:
                 return self.reply({"error": str(error)}, 404)
+        stitched = re.fullmatch(r"/api/batch/([a-zA-Z0-9-]{16,80})/video", path)
+        if stitched:
+            with self.server.store.connect() as db:
+                row = db.execute("SELECT stitch_output FROM batch_options WHERE batch=? AND stitch_status='done'",
+                                 (stitched.group(1),)).fetchone()
+            file = Path(row["stitch_output"]) if row and row["stitch_output"] else None
+            if not file or not file.is_file() or file.suffix.lower() != ".mp4":
+                return self.reply({"error": "Video ghép không còn trên máy."}, 404)
+            download = "download" in parse_qs(urlsplit(self.path).query)
+            return self.send_file(file, "video/mp4", "attachment" if download else "inline", file.name)
         if path == "/api/library":
             return self.reply({"images": self.server.store.library_images()})
         if path.startswith("/api/media") and self.media_get(path):
@@ -425,14 +435,19 @@ class Handler(BaseHTTPRequestHandler):
                 engine.close_review(body["id"])
             elif path == "/api/jobs":
                 store.enqueue(body["prompts"], body["cost"], body["batch"],
-                              body.get("images"), body.get("mode", "text"), body.get("sources"))
+                              body.get("images"), body.get("mode", "text"), body.get("sources"),
+                              body.get("scene_ids"), body.get("options"))
                 engine.changed.set()
+            elif path == "/api/batch/stitch":
+                if not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", str(body.get("batch", ""))):
+                    raise ValueError("Lượt chạy không hợp lệ.")
+                engine.stitch_now(body["batch"])
             elif path == "/api/jobs/update":
                 account = body.get("account_id") or None
                 if account is not None and not re.fullmatch(r"[a-f0-9]{32}", str(account)):
                     raise ValueError("Tài khoản không hợp lệ.")
                 job = store.update_job(body["id"], body["prompt"], body.get("details"), body.get("images"),
-                                       body.get("mode", "text"), account)
+                                       body.get("mode", "text"), account, body.get("video"))
                 engine.changed.set()
                 return self.reply({"ok": True, "job": job})
             elif path in ("/api/jobs/characters", "/api/jobs/attach-characters"):

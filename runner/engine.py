@@ -1,4 +1,5 @@
 import queue
+import time
 import shutil
 import threading
 from pathlib import Path
@@ -11,6 +12,8 @@ FLOW_LOGIN = object()  # yêu cầu đặc biệt trong hàng đợi Flow: mở 
 FLOW_CLOSE = object()  # đóng Chrome Flow do tool điều khiển (nhường hồ sơ Google chung)
 from .health import HealthMonitor
 from .muse import MuseBrowser, MuseFailure
+from .video_tools import VideoError, needs_upscale, probe, size_for, stitch, target_size, upscale
+from .video_tools import request_spec
 
 
 class Engine:
@@ -40,9 +43,91 @@ class Engine:
                             else "Chưa đăng nhập Google Flow: vào Cài đặt → Google Flow → Đăng nhập")
         self.flow_thread = threading.Thread(target=self.flow_worker, daemon=True)
         self.flow_thread.start()
+        # Hậu kỳ trên máy (nâng độ phân giải, tự ghép) — một luồng riêng, không chiếm luồng/tài khoản Muse.
+        self.post_requests = queue.Queue()
+        self.post_status = ""
+        for job_id in self.store.post_pending():  # khởi động lại: làm tiếp phần nâng độ phân giải còn dở
+            self.post_requests.put(job_id)
+        if self.store.stitch_candidates():
+            self.post_requests.put("")
+        self.post_thread = threading.Thread(target=self.post_worker, daemon=True)
+        self.post_thread.start()
         self.store.recover()
         self.health = HealthMonitor(self)
         threading.Thread(target=self.supervise, daemon=True).start()
+
+    # ---- hậu kỳ --------------------------------------------------------------------------------------------------
+    def post_worker(self):
+        """Nâng độ phân giải video vừa tải (giữ file gốc) rồi ghép các lượt đã xong hết cảnh. Sau khi khởi động lại,
+        tự làm tiếp phần còn dở."""
+        while not self.closing:
+            try:
+                item = self.post_requests.get(timeout=2)
+            except queue.Empty:
+                continue
+            if item is None:
+                return
+            try:
+                if item.startswith("stitch:"):
+                    self.stitch_batch(item[7:], manual=True)
+                else:
+                    if item:
+                        self.post_job(item)
+                    for batch in self.store.stitch_candidates():
+                        self.stitch_batch(batch)
+            except Exception:
+                self.post_status = "Hậu kỳ gặp lỗi không mong muốn. Video gốc vẫn được giữ."
+            finally:
+                self.changed.set()
+
+    def post_job(self, job_id):
+        """Video tải về nhỏ hơn độ phân giải đã chọn thì phóng lên (file mới "Prompt N (4K).mp4", giữ file gốc)."""
+        job = self.store.job_post_info(job_id)
+        if not job or job["status"] != "done" or not job["resolution"] or not job["output"]:
+            return
+        source = Path(job["output"])
+        try:
+            self.store.set_post(job_id, "running")
+            info = probe(source)
+            size = size_for(job["aspect"], job["resolution"], info)
+            if not needs_upscale(info, size):
+                self.store.set_post(job_id, f"ok:{info['width']}x{info['height']}")
+                return
+            self.post_status = f"Đang nâng {source.name} lên {job['resolution']}"
+            output = upscale(source, source.with_name(f"{source.stem} ({job['resolution']}).mp4"), size)
+            self.store.set_post(job_id, f"upscaled:{size[0]}x{size[1]}", str(output))
+        except (VideoError, OSError) as error:
+            self.store.set_post(job_id, "error:" + (str(error) if isinstance(error, VideoError)
+                                                    else "Không đọc/ghi được file video."))
+        finally:
+            self.post_status = ""
+
+    def stitch_batch(self, batch, manual=False):
+        """Ghép các cảnh đã xong của một lượt theo thứ tự cảnh (ưu tiên bản đã nâng độ phân giải)."""
+        scenes = [s for s in self.store.batch_scenes(batch) if s["status"] == "done" and s["output"]]
+        sources = [Path(s["upscaled_output"] or s["output"]) for s in scenes]
+        sources = [path for path in sources if path.is_file()]
+        if len(sources) < 2:
+            self.store.set_stitch(batch, "error", error="Cần ít nhất 2 cảnh đã xong (còn file trên máy) để ghép.")
+            return
+        first = scenes[0]
+        size = target_size(first["aspect"], first["resolution"]) if first["resolution"] else None
+        destination = sources[0].parent.parent / f"Video ghép {time.strftime('%Y-%m-%d %H%M')} ({len(sources)} cảnh).mp4"
+        try:
+            self.store.set_stitch(batch, "running")
+            self.post_status = f"Đang ghép {len(sources)} cảnh thành một video"
+            output = stitch(sources, destination, size)
+            self.store.set_stitch(batch, "done", str(output))
+        except (VideoError, OSError) as error:
+            self.store.set_stitch(batch, "error", error=str(error) if isinstance(error, VideoError)
+                                  else "Không đọc/ghi được file video.")
+        finally:
+            self.post_status = ""
+
+    def stitch_now(self, batch):
+        if not any(s["status"] == "done" for s in self.store.batch_scenes(batch)):
+            raise ValueError("Lượt này chưa có cảnh nào xong.")
+        self.post_requests.put("stitch:" + batch)
 
     def launch(self, function, *args):
         def wrapped():
@@ -216,8 +301,10 @@ class Engine:
             browser = self.session(job, account, headless, target)
             browser.set_download_directory(target)
             self.store.phase(job["id"], "Chuẩn bị gửi prompt", browser.driver.current_url)
+            spec = request_spec(job.get("aspect"), job.get("duration"), job.get("resolution"))
+            extra = {"spec": spec} if spec else {}  # prompt không chọn thông số: gửi đúng như trước
             file = browser.generate(job["prompt"], job["id"], lambda: self.store.submitting(job["id"]),
-                                    automatic=automatic, images=job["images"])
+                                    automatic=automatic, images=job["images"], **extra)
             final = target / f"Prompt {job['ordinal'] + 1}.mp4"
             if file != final:
                 try:
@@ -225,6 +312,8 @@ class Engine:
                 except OSError:
                     final = file  # video đã tải về: giữ tên gốc chứ không báo lỗi tác vụ
             self.store.finish(job["id"], output=str(final))
+            if job.get("resolution") or self.store.batch_stitch(job["batch"]):
+                self.post_requests.put(job["id"])  # nâng độ phân giải / ghép video chạy riêng, không giữ tài khoản Muse
         except Exception as error:
             message = str(error) if isinstance(error, MuseFailure) else "Bộ chạy gặp lỗi Chrome hoặc đọc/ghi file. Kiểm tra Muse và quyền ghi thư mục; không tự gửi lại."
             session_ready = False
@@ -395,6 +484,7 @@ class Engine:
                     "flow_profile": str(self.flow_profile), "flow_busy": self.flow_busy,
                     "flow_profile_used": (self.flow_profile.parent / "Local State").exists(),
                     "login_all": self.login_all_status, "login_all_running": self.login_all_running,
+                    "post_status": self.post_status,
                     "health": self.health.status()}
 
     def shutdown(self):
@@ -404,6 +494,7 @@ class Engine:
             return list(self.threads)
 
     def close_browsers(self):
+        self.post_requests.put(None)
         self.health.shutdown()
         self.flow_requests.put(None)
         if self.flow_thread.is_alive():

@@ -2,6 +2,10 @@ const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let state=null,key='',filter='all',busy=false,pendingBatch=null,toastTimer,visibleJobs=[],mode='text',libraryImages=[];
 const selectedJobs=new Set(),promptImages=new Map();
+const VIDEO_KEY='hana-video-settings';
+let fixedCharacters=[];
+const postLabel=p=>!p?'':p==='running'?'⏳ đang nâng':p.startsWith('upscaled:')?`✓ đã nâng ${p.slice(9)}`:p.startsWith('ok:')?`✓ đủ ${p.slice(3)}`:p.startsWith('error:')?'⚠ lỗi nâng':'';
+const stitchNames={'':'Chờ đủ cảnh',running:'⏳ Đang ghép',done:'✓ Đã ghép',error:'⚠ Lỗi ghép'};
 let mediaItems=[],mediaLimits={max_file_mb:20,max_batch:50},mediaType='',mediaCategory='',previewIndex=-1,pickerTarget='composer',pickerItems=[],mediaSearchTimer;
 const mediaSelected=new Set(),pickerSelected=new Set();
 const categoryNames={character:'Nhân vật',product:'Sản phẩm',reference:'Tham chiếu',other:'Khác'};
@@ -22,8 +26,8 @@ function toast(message,error=false){$('toast').textContent=message;$('toast').hi
 async function api(path,body){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Runner-Key':key},body:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw Error(data.error||'Yêu cầu thất bại.');return data;}
 function splitPrompts(){const value=$('prompts').value;const mode=$('separator').value;return value.split(mode==='blank'?/\r?\n\s*\r?\n/:mode==='custom'?/^\s*---\s*$/m:/\r?\n/).map(x=>x.trim()).filter(Boolean);}
 function countPrompts(){const count=mode==='image_generate'?Number(Boolean($('prompts').value.trim())):splitPrompts().length;$('promptCount').textContent=`${count} ${mode==='image_generate'?'ảnh':'tác vụ'}`;try{localStorage.setItem('huy-runner-draft',$('prompts').value);}catch{}renderImageAssignments();}
-function renderMode(){const imageVideo=mode==='image_video',imageGenerate=mode==='image_generate';document.querySelectorAll('.creation-tabs [data-mode]').forEach(button=>button.classList.toggle('active',imageGenerate?button.dataset.mode==='image_generate':button.dataset.mode!=='image_generate'));document.querySelectorAll('.video-submodes [data-mode]').forEach(button=>button.classList.toggle('active',button.dataset.mode===mode));$('composerTitle').textContent=imageGenerate?'Tạo ảnh':imageVideo?'Ảnh → video':'Tạo video';$('importButton').hidden=imageGenerate;document.querySelectorAll('.video-only').forEach(element=>element.hidden=imageGenerate);$('flowPanel').hidden=!imageGenerate;document.querySelector('.image-assignment').hidden=!imageVideo;$('prompts').placeholder=imageGenerate?'Mô tả ảnh bạn muốn tạo trong Google Flow…':'Mỗi dòng là một prompt. Viết mô tả video bạn muốn tạo…';countPrompts();}
-function syncSettings(){if(!state)return;$('folderPath').textContent=state.engine.output_folder||'Chưa chọn thư mục lưu';$('accountCount').textContent=String(state.accounts.length);$('loginAllStatus').textContent=state.engine.login_all||'';$('loginAll').disabled=Boolean(state.engine.login_all_running);$('pause').disabled=!state.engine.enabled;$('run').disabled=state.engine.enabled;$('flowStatus').textContent=state.engine.flow_status||'Ảnh Flow tải xuống được lưu vào thư viện riêng của tool.';}
+function renderMode(){const imageVideo=mode==='image_video',imageGenerate=mode==='image_generate';document.querySelectorAll('.creation-tabs [data-mode]').forEach(button=>button.classList.toggle('active',imageGenerate?button.dataset.mode==='image_generate':button.dataset.mode!=='image_generate'));document.querySelectorAll('.video-submodes [data-mode]').forEach(button=>button.classList.toggle('active',button.dataset.mode===mode));$('composerTitle').textContent=imageGenerate?'Tạo ảnh':imageVideo?'Ảnh → video':'Tạo video';$('importButton').hidden=imageGenerate;document.querySelectorAll('.video-only').forEach(element=>element.hidden=imageGenerate);document.querySelector('.image-assignment').hidden=!imageVideo;$('prompts').placeholder=imageGenerate?'Mô tả ảnh bạn muốn tạo trong Google Flow…':'Mỗi dòng là một prompt. Viết mô tả video bạn muốn tạo…';countPrompts();}
+function syncSettings(){if(!state)return;$('folderPath').textContent=state.engine.output_folder||'Chưa chọn thư mục lưu';$('accountCount').textContent=String(state.accounts.length);$('loginAllStatus').textContent=state.engine.login_all||'';$('loginAll').disabled=Boolean(state.engine.login_all_running);$('pause').disabled=!state.engine.enabled;$('run').disabled=state.engine.enabled;}
 function jobProgress(job,now=Date.now()){
   if(job.status==='done')return 100;
   if(job.status!=='running')return Number(job.progress)||0;
@@ -58,7 +62,7 @@ function renderJobs(){
     const thumbnail=job.status==='done'&&job.output
       ?`<button class="video-thumb" type="button" data-play="${job.id}" aria-label="Xem video ${esc(job.name)}"><video data-thumb-job="${job.id}" data-video-src="/api/media/${job.id}" muted playsinline preload="none"></video><span class="thumb-play">▶</span><span class="thumb-placeholder">▶</span></button>`
       :job.image_count?`<img src="/api/image/${job.id}/0" alt="Ảnh tham chiếu" loading="lazy">`:'<span class="thumb-placeholder">▣</span>';
-    return `<tr class="${job.status==='running'?'is-running':''}"><td class="select-col"><input class="job-select" data-select-job="${job.id}" type="checkbox" aria-label="Chọn ${esc(job.name)}" ${selectedJobs.has(job.id)?'checked':''} ${job.status==='running'?'disabled':''}></td><td>${esc(job.name.replace('Prompt ','')||'—')}</td><td class="thumb-col"><div class="job-thumb">${thumbnail}</div></td><td class="prompt-cell"><strong>${esc(job.name)}</strong>${job.status==='done'&&job.output?`<span class="job-filename">${esc(job.output.split(/[\\\\/]/).pop())}</span>`:''}<div class="prompt-text" title="${esc(job.prompt)}">${esc(job.prompt)}</div></td><td><span class="type-label">${job.generation_mode==='image'?'▧ Ảnh → video':'▣ Video'}</span></td><td><span class="account-chip">${esc(accounts.get(assigned)||(assigned&&job.status!=='waiting'?'TK đã xóa':'Chờ tài khoản'))}</span></td><td><span class="badge ${esc(job.status)}">${esc(statusNames[job.status])}</span><div class="job-progress ${esc(job.status)}" role="progressbar" aria-label="Tiến độ ${esc(job.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span data-progress="${progress}"></span></div><div class="progress-caption"><b>${estimated?'~':''}${progress}%</b><span class="detail ${job.error?'error':''}" title="${esc(job.error||job.phase)}">${esc(progressLabel)}</span></div></td><td><div class="row-actions"><button data-copy="${job.id}" title="Chép prompt" aria-label="Chép prompt">⧉</button>${job.status==='error'&&!job.submitted?`<button data-retry="${job.id}" title="Thử lại" aria-label="Thử lại">↻</button>`:''}${job.status==='done'?`<button data-play="${job.id}" title="Xem video" aria-label="Xem video">◉</button><a href="/api/video/${job.id}" title="Tải video" aria-label="Tải video">⇩</a>`:''}${job.account_id&&job.status==='error'?`<button data-review="${job.account_id}" title="Mở phiên Muse" aria-label="Mở phiên Muse">↗</button>`:''}</div></td></tr>`;
+    return `<tr class="${job.status==='running'?'is-running':''}"><td class="select-col"><input class="job-select" data-select-job="${job.id}" type="checkbox" aria-label="Chọn ${esc(job.name)}" ${selectedJobs.has(job.id)?'checked':''} ${job.status==='running'?'disabled':''}></td><td>${esc(job.name.replace('Prompt ','')||'—')}</td><td class="thumb-col"><div class="job-thumb">${thumbnail}</div></td><td class="prompt-cell"><strong>${esc(job.name)}</strong>${job.status==='done'&&job.output?`<span class="job-filename">${esc(job.output.split(/[\\\\/]/).pop())}</span>`:''}<div class="prompt-text" title="${esc(job.prompt)}">${esc(job.prompt)}</div></td><td><span class="type-label">${job.generation_mode==='image'?`▧ Ảnh → video · ${job.image_count} ảnh`:'▣ Video'}</span></td><td>${videoSpecCell(job)}</td><td><span class="account-chip">${esc(accounts.get(assigned)||(assigned&&job.status!=='waiting'?'TK đã xóa':'Chờ tài khoản'))}</span></td><td><span class="badge ${esc(job.status)}">${esc(statusNames[job.status])}</span><div class="job-progress ${esc(job.status)}" role="progressbar" aria-label="Tiến độ ${esc(job.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span data-progress="${progress}"></span></div><div class="progress-caption"><b>${estimated?'~':''}${progress}%</b><span class="detail ${job.error?'error':''}" title="${esc(job.error||job.phase)}">${esc(progressLabel)}</span></div></td><td><div class="row-actions"><button data-copy="${job.id}" title="Chép prompt" aria-label="Chép prompt">⧉</button>${job.status==='error'&&!job.submitted?`<button data-retry="${job.id}" title="Thử lại" aria-label="Thử lại">↻</button>`:''}${job.status==='done'?`<button data-play="${job.id}" title="Xem video" aria-label="Xem video">◉</button><a href="/api/video/${job.id}" title="Tải video" aria-label="Tải video">⇩</a>`:''}${job.account_id&&job.status==='error'?`<button data-review="${job.account_id}" title="Mở phiên Muse" aria-label="Mở phiên Muse">↗</button>`:''}</div></td></tr>`;
   }).join('');
   // Chính sách bảo mật (CSP) chặn style="..." trong HTML: đặt độ rộng thanh tiến độ bằng JS.
   $('rows').querySelectorAll('[data-progress]').forEach(bar=>bar.style.width=`${bar.dataset.progress}%`);
@@ -107,7 +111,7 @@ async function uploadImage(file){const data=await sendMedia(file);return {token:
 async function refreshLibrary(){const response=await fetch('/api/library');if(!response.ok)throw Error('Không tải được thư viện ảnh.');libraryImages=(await response.json()).images;return libraryImages;}
 function renderLibrary(){renderLibraryIfOpen();}
 function safeMuse(url){try{const u=new URL(url);return u.protocol==='https:'&&u.hostname==='muse.ai';}catch{return false;}}
-function renderAccounts(){if(!state)return;renderAccountStats();const active=document.activeElement;if(active&&$('accountList').contains(active))return;$('accountList').innerHTML=state.accounts.length?state.accounts.map(a=>`<div class="account-row" data-account="${a.id}"><div class="account-top"><strong>${esc(a.email)}</strong><span class="badge ${a.state==='busy'?'running':a.state==='ready'?'done':a.state==='attention'?'error':''}">${esc(accountNames[a.state])}</span></div><div class="detail">${esc(a.detail||'Phiên Chrome riêng cho tài khoản này')}</div><div class="account-health"><span class="badge ${healthClass(accountHealth(a))}">${esc(healthNames[accountHealth(a)]||accountHealth(a))}</span><span>Kiểm tra: ${esc(ago(a.last_checked))}</span><span>Chờ ${Number(a.jobs_assigned||0)} · Xong ${Number(a.jobs_completed||0)} · Lỗi ${Number(a.jobs_failed||0)}</span>${a.last_error&&a.last_error!==a.detail?`<span class="detail error">${esc(a.last_error)}</span>`:''}</div><div class="account-controls"><label><input data-enabled type="checkbox" ${a.enabled?'checked':''} ${['busy','authenticating','reviewing'].includes(a.state)?'disabled':''}> Sử dụng</label><label>Credit dự kiến <input data-budget type="number" min="0" step="0.01" value="${Number(a.budget).toFixed(2)}" ${['busy','authenticating','reviewing'].includes(a.state)?'disabled':''}></label><button data-save="${a.id}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''}>Lưu</button><button data-check="${a.id}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''} title="Mở muse.ai bằng hồ sơ của tài khoản để xem phiên còn đăng nhập không">↻ Kiểm tra</button><button data-login="${a.id}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''}>Đăng nhập</button>${a.state==='reviewing'?`<button data-close-review="${a.id}">Đóng phiên</button>`:`<button data-review="${a.id}" ${['busy','authenticating','checking'].includes(a.state)?'disabled':''}>Mở phiên Muse</button>`}<button class="danger-outline" data-delete-account="${a.id}" data-email="${esc(a.email)}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''} title="Xóa tài khoản khỏi tool">✕ Xóa</button></div></div>`).join(''):'<div class="notice">Thêm email đầu tiên để tạo phiên Chrome riêng.</div>';}
+function renderAccounts(){if(!state)return;renderNickOptions();renderStitchPanel();renderAccountStats();const active=document.activeElement;if(active&&$('accountList').contains(active))return;$('accountList').innerHTML=state.accounts.length?state.accounts.map(a=>`<div class="account-row" data-account="${a.id}"><div class="account-top"><strong>${esc(a.email)}</strong><span class="badge ${a.state==='busy'?'running':a.state==='ready'?'done':a.state==='attention'?'error':''}">${esc(accountNames[a.state])}</span></div><div class="detail">${esc(a.detail||'Phiên Chrome riêng cho tài khoản này')}</div><div class="account-health"><span class="badge ${healthClass(accountHealth(a))}">${esc(healthNames[accountHealth(a)]||accountHealth(a))}</span><span>Kiểm tra: ${esc(ago(a.last_checked))}</span><span>Chờ ${Number(a.jobs_assigned||0)} · Xong ${Number(a.jobs_completed||0)} · Lỗi ${Number(a.jobs_failed||0)}</span>${a.last_error&&a.last_error!==a.detail?`<span class="detail error">${esc(a.last_error)}</span>`:''}</div><div class="account-controls"><label><input data-enabled type="checkbox" ${a.enabled?'checked':''} ${['busy','authenticating','reviewing'].includes(a.state)?'disabled':''}> Sử dụng</label><label>Credit dự kiến <input data-budget type="number" min="0" step="0.01" value="${Number(a.budget).toFixed(2)}" ${['busy','authenticating','reviewing'].includes(a.state)?'disabled':''}></label><button data-save="${a.id}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''}>Lưu</button><button data-check="${a.id}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''} title="Mở muse.ai bằng hồ sơ của tài khoản để xem phiên còn đăng nhập không">↻ Kiểm tra</button><button data-login="${a.id}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''}>Đăng nhập</button>${a.state==='reviewing'?`<button data-close-review="${a.id}">Đóng phiên</button>`:`<button data-review="${a.id}" ${['busy','authenticating','checking'].includes(a.state)?'disabled':''}>Mở phiên Muse</button>`}<button class="danger-outline" data-delete-account="${a.id}" data-email="${esc(a.email)}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''} title="Xóa tài khoản khỏi tool">✕ Xóa</button></div></div>`).join(''):'<div class="notice">Thêm email đầu tiên để tạo phiên Chrome riêng.</div>';}
 async function refresh(){try{const response=await fetch('/api/state');if(!response.ok)throw Error();state=await response.json();key=state.key;$('connection').textContent='● Bộ chạy đã kết nối';syncSettings();renderJobs();renderAccounts();}catch{$('connection').textContent='● Mất kết nối bộ chạy';}}
 async function action(fn){try{await fn();await refresh();}catch(e){toast(e.message,true);}}
 async function addJobs(run){
@@ -124,14 +128,16 @@ async function addJobs(run){
     if(entry&&entry.prompt!==prompts[index])return toast(`Prompt số ${index+1} đã đổi. Hãy gắn lại ảnh nhân vật.`,true);
   }
   if(imagesByPrompt.some(images=>images.length>10))return toast('Mỗi prompt tối đa 10 ảnh.',true);
-  if(generationMode==='image'&&imagesByPrompt.some(images=>!images.length))return toast('Chế độ Ảnh → video yêu cầu chọn ít nhất một ảnh cho từng prompt.',true);
+  if(generationMode==='image'&&!fixedCharacters.length&&imagesByPrompt.some(images=>!images.length))return toast('Chế độ Ảnh → video yêu cầu chọn ít nhất một ảnh cho từng prompt (hoặc thêm Ảnh nhân vật cố định).',true);
+  const options=videoOptions();
+  if(imagesByPrompt.some(images=>new Set([...options.characters,...images.map(i=>i.token)]).size>10))return toast('Ảnh nhân vật cố định cộng ảnh riêng của một prompt vượt quá 10 ảnh.',true);
   busy=true;$('create').disabled=$('add').disabled=true;
   try{
-    const signature=JSON.stringify([prompts,cost,generationMode,imagesByPrompt.map(images=>images.map(image=>image.token))]);
+    const signature=JSON.stringify([prompts,cost,generationMode,imagesByPrompt.map(images=>images.map(image=>image.token)),options]);
     if(pendingBatch?.signature!==signature)pendingBatch={signature,id:crypto.randomUUID()};
     try{localStorage.setItem('huy-runner-pending',JSON.stringify(pendingBatch));}catch{}
     const images=imagesByPrompt.map(assets=>assets.map(asset=>asset.token));
-    await api('/api/jobs',{prompts,cost,mode:generationMode,batch:pendingBatch.id,images,sources:prompts.map(prompt=>promptSources[prompt]||''),scene_ids:prompts.map(prompt=>promptScenes[prompt]||null)});
+    await api('/api/jobs',{prompts,cost,mode:generationMode,batch:pendingBatch.id,images,sources:prompts.map(prompt=>promptSources[prompt]||''),scene_ids:prompts.map(prompt=>promptScenes[prompt]||null),options});
     pendingBatch=null;
     try{localStorage.removeItem('huy-runner-pending');}catch{}
     $('prompts').value='';promptImages.clear();countPrompts();
@@ -141,15 +147,6 @@ async function addJobs(run){
   finally{busy=false;$('create').disabled=$('add').disabled=false;await refresh();}
 }
 $('create').onclick=()=>addJobs(true);$('add').onclick=()=>addJobs(false);
-$('createFlowImage').onclick=async()=>{
-  const prompt=$('prompts').value.trim();
-  if(!prompt)return toast('Hãy nhập mô tả ảnh trước.',true);
-  try{await api('/api/flow/create-image',{prompt});toast('Đã mở Flow và điền prompt. Chọn Hình ảnh, tạo ảnh rồi tải ảnh xuống.');await refresh();}catch(error){toast(error.message,true);}
-};
-$('importFlowImages').onclick=async()=>{
-  try{const result=await api('/api/library/import-flow',{});await refreshLibrary();renderLibrary();$('flowStatus').textContent=state?.engine.flow_status||'Đã quét thư mục tải Flow.';toast(result.imported?`Đã thêm ${result.imported} ảnh Flow vào thư viện.`:'Chưa thấy ảnh mới trong thư mục tải Flow.');}
-  catch(error){toast(error.message,true);}
-};
 $('run').onclick=()=>action(async()=>{await api('/api/start',{parallel:Number($('parallel').value),headless:$('headless').checked,automatic:$('operation').value==='auto'});toast('Đã bật bộ chạy.');});
 $('pause').onclick=()=>action(async()=>{await api('/api/pause',{});toast('Đã dừng nhận thêm. Tác vụ đang chạy vẫn tiếp tục tải video.');});
 $('pickFolder').onclick=()=>action(async()=>{$('pickFolder').disabled=true;toast('Chọn thư mục trong cửa sổ Windows vừa mở.');try{await api('/api/folder',{});}finally{$('pickFolder').disabled=false;}});
@@ -440,6 +437,7 @@ function fillJob(){
   const accounts=state?.accounts||[];
   $('jobAccount').innerHTML=`<option value="">Chờ tài khoản (tool tự chia)</option>`+accounts.map((a,i)=>`<option value="${a.id}">Tài khoản ${i+1} · ${esc(a.email)}${a.enabled?'':' (đang tắt)'}</option>`).join('');
   $('jobAccount').value=job.assigned_account_id&&accounts.some(a=>a.id===job.assigned_account_id)?job.assigned_account_id:'';
+  $('jobAspect').value=job.aspect||'';$('jobDuration').value=job.duration?String(job.duration):'';$('jobResolution').value=job.resolution||'';
   const canRerun=job.status==='done'||job.status==='error';
   $('jobStatus').innerHTML=`<option value="${job.status}">${statusLabel[job.status]}${job.status==='error'&&job.error?' – '+esc(job.error.slice(0,80)):''}</option>`+(canRerun?'<option value="rerun">Chờ (chạy lại prompt này)</option>':'');
   $('jobStatus').disabled=!canRerun;
@@ -491,7 +489,7 @@ function renderJobEditing(){
   $('jobRerun').disabled=running||studioJob?.status==='waiting';
   renderJobImages();
 }
-function jobPayload(){return {id:studioJob.id,prompt:$('jobPrompt').value,details:{setting:$('jobSetting').value,behavior:$('jobBehavior').value,action:$('jobAction').value,camera:$('jobCamera').value},images:studioImages,mode:studioMode,account_id:$('jobAccount').value||null};}
+function jobPayload(){return {id:studioJob.id,prompt:$('jobPrompt').value,details:{setting:$('jobSetting').value,behavior:$('jobBehavior').value,action:$('jobAction').value,camera:$('jobCamera').value},images:studioImages,mode:studioMode,account_id:$('jobAccount').value||null,video:{aspect:$('jobAspect').value,duration:Number($('jobDuration').value)||0,resolution:$('jobResolution').value}};}
 function jobChanged(){if(!studioJob||!studioEditing)return false;const p=jobPayload(),j=studioJob;return p.prompt.trim()!==j.prompt||JSON.stringify(Object.values(p.details).map(v=>v.trim()))!==JSON.stringify([j.details.setting,j.details.behavior,j.details.action,j.details.camera])||JSON.stringify(p.images)!==JSON.stringify(j.images)||p.mode!==(j.generation_mode==='image'?'image':'text')||(p.account_id||'')!==(j.assigned_account_id&&state?.accounts?.some(a=>a.id===j.assigned_account_id)?j.assigned_account_id:'');}
 async function saveJob(){
   if(!$('jobPrompt').value.trim()){$('jobNotice').innerHTML='<b>Prompt không được để trống.</b>';$('jobNotice').hidden=false;$('jobPrompt').focus();return false;}
@@ -725,14 +723,10 @@ function renderSettings(force){
   $('sharedBadge').textContent=shared.enabled?(shared.login_open?'Cửa sổ đăng nhập đang mở':shared.profile_used?'✓ Đang bật':'Đang bật · chưa đăng nhập'):'Đang tắt';
   $('sharedBadge').className='status-chip '+(shared.enabled?(shared.profile_used?'approved':'review'):'');
   $('sharedLogin').hidden=$('sharedHint').hidden=!shared.enabled;$('sharedLogin').disabled=Boolean(shared.login_open);
-  for(const id of ['loginAuto','loginChatgpt','loginFlow']){$(id).textContent=shared.enabled?'Đăng nhập bằng tài khoản chung (ở trên)':{loginAuto:'Đăng nhập Google · Gemini (mở Chrome thường)',loginChatgpt:'Đăng nhập ChatGPT (mở Chrome thường)',loginFlow:'Đăng nhập Google Flow (mở Chrome thường)'}[id];}
-  if(shared.enabled)$('flowProfile').textContent=shared.profile+' (hồ sơ chung)';
-  $('flowBadge').textContent=engine.flow_profile_used?'Đã mở đăng nhập trên máy này':'Chưa đăng nhập';$('flowBadge').className='status-chip '+(engine.flow_profile_used?'approved':'error');
+  for(const id of ['loginAuto','loginChatgpt']){$(id).textContent=shared.enabled?'Đăng nhập bằng tài khoản chung (ở trên)':{loginAuto:'Đăng nhập Google · Gemini (mở Chrome thường)',loginChatgpt:'Đăng nhập ChatGPT (mở Chrome thường)'}[id];}
   const seen=web.account?.logged_in?(web.account.email||'đã đăng nhập'):'';
   $('geminiAccountLine').innerHTML=`Tài khoản Gemini: <b>${esc(email||seen||'chưa đăng nhập')}</b>${model?` · model ${esc(model)}`:''} · <button type="button" class="text-button" data-open-settings>⚙ Đổi trong Cài đặt</button>`;
   if(force||document.activeElement!==$('chatgptModel'))$('chatgptModel').value=chat.model||'';
-  $('flowProfile').textContent=engine.flow_profile||'';
-  $('settingsFlowStatus').textContent=engine.flow_status||'';$('loginFlow').disabled=Boolean(engine.flow_busy);
   const accounts=state.accounts||[],ready=accounts.filter(a=>a.state==='ready').length,attention=accounts.filter(a=>a.state==='attention').length;
   $('museBadge').textContent=`${accounts.length} tài khoản`;
   $('museSummary').textContent=accounts.length?`${ready} sẵn sàng · ${attention} cần kiểm tra · ${accounts.length-ready-attention} khác`:'Chưa có tài khoản Muse. Thêm email rồi bấm Đăng nhập.';
@@ -743,7 +737,6 @@ document.addEventListener('click',e=>{
   if(e.target.closest('[data-open-accounts]'))$('accountsButton').click();
   if(e.target.closest('[data-pick-folder]'))$('pickFolder').click();
 });
-$('loginFlow').onclick=()=>action(async()=>{await api('/api/flow/login',{});$('loginFlow').blur();toast('Đang mở Chrome thường cho Google Flow. Đăng nhập xong thì đóng hẳn cửa sổ đó.');});
 setInterval(()=>{renderSettings(false);},1500);
 $('sharedAccount').onchange=()=>{const enabled=$('sharedAccount').checked;
   if(enabled&&!confirm('Dùng một tài khoản Google cho Gemini, ChatGPT và Google Flow?\n\nTool sẽ đóng các cửa sổ Chrome đang rảnh và dùng một hồ sơ chung. Lần đầu cần đăng nhập lại một lần.')){$('sharedAccount').checked=false;return;}
@@ -922,12 +915,15 @@ $('previewDelete').onclick=async()=>{const item=mediaItems[previewIndex];if(!ite
 // ---- Chọn ảnh từ thư viện cho prompt (Video Studio / Prompt Studio) ----
 function pickerCurrent(){
   if(pickerTarget==='studio')return studioImages;
+  if(pickerTarget==='characters')return fixedCharacters.map(c=>c.token);
   const prompts=splitPrompts(),index=Number($('imagePromptIndex').value),entry=promptImages.get(index);
   return entry&&entry.prompt===prompts[index]?entry.assets.map(a=>a.token):[];
 }
 async function openPicker(target){
   pickerTarget=target;pickerSelected.clear();
-  if(target==='composer'){
+  if(target==='characters'){
+    $('pickerTarget').textContent='Chọn ảnh nhân vật cố định: tool gắn các ảnh này vào MỌI cảnh của lượt chạy (tối đa 10 ảnh mỗi cảnh).';
+  }else if(target==='composer'){
     const prompts=splitPrompts(),index=Number($('imagePromptIndex').value);
     if(!prompts[index])return toast('Nhập prompt trước khi chọn ảnh.',true);
     $('pickerTarget').textContent=`Gắn ảnh cho Prompt ${index+1}: ${prompts[index].slice(0,90)}${prompts[index].length>90?'…':''}`;
@@ -963,7 +959,12 @@ $('pickerFiles').onchange=()=>{const files=[...$('pickerFiles').files];$('picker
 $('closeImageLibrary').onclick=()=>$('imageLibrary').close();
 $('pickerAttach').onclick=()=>{
   const chosen=[...pickerSelected].map(id=>pickerItems.find(item=>item.id===id)).filter(Boolean);if(!chosen.length)return;
-  if(pickerTarget==='studio'){
+  if(pickerTarget==='characters'){
+    const fresh=chosen.filter(item=>!fixedCharacters.some(c=>c.token===item.id));
+    if(fixedCharacters.length+fresh.length>10)return toast('Tối đa 10 ảnh nhân vật cố định.',true);
+    fixedCharacters.push(...fresh.map(item=>({token:item.id,name:item.display_name})));saveVideoSettings();renderFixedCharacters();
+    toast(`Đã thêm ${fresh.length} ảnh nhân vật: gắn vào mọi cảnh khi chạy.`);
+  }else if(pickerTarget==='studio'){
     if(!studioEditing)return toast('Prompt này không còn sửa được.',true);
     const fresh=chosen.filter(item=>!studioImages.includes(item.id));
     if(studioImages.length+fresh.length>10)return toast(`Mỗi prompt tối đa 10 ảnh; prompt đang có ${studioImages.length} ảnh.`,true);
@@ -982,3 +983,45 @@ $('pickerAttach').onclick=()=>{
 };
 $('jobLibrary').onclick=()=>openPicker('studio');
 function renderLibraryIfOpen(){if($('imageLibrary').open)loadPicker();}
+
+// ===== Thiết lập video của Studio: tỉ lệ, thời lượng, độ phân giải, nick, tự ghép, ảnh nhân vật cố định =====
+function videoOptions(){
+  return {aspect:$('vAspect').value,duration:Number($('vDuration').value)||0,resolution:$('vResolution').value,
+    stitch:$('vStitch').checked,characters:fixedCharacters.map(c=>c.token),account_id:$('vAccount').value||null};
+}
+function saveVideoSettings(){try{localStorage.setItem(VIDEO_KEY,JSON.stringify({...videoOptions(),fixed:fixedCharacters}));}catch{}}
+function loadVideoSettings(){
+  try{const v=JSON.parse(localStorage.getItem(VIDEO_KEY)||'null');if(!v)return;
+    for(const [id,key] of [['vAspect','aspect'],['vResolution','resolution']])if([...$(id).options].some(o=>o.value===v[key]))$(id).value=v[key];
+    if([...$('vDuration').options].some(o=>o.value===String(v.duration||'')))$('vDuration').value=String(v.duration||'');
+    $('vStitch').checked=Boolean(v.stitch);$('vAccount').dataset.want=v.account_id||'';
+    fixedCharacters=Array.isArray(v.fixed)?v.fixed.filter(c=>/^[a-f0-9]{32}$/.test(c.token||'')).slice(0,10):[];
+  }catch{}
+}
+function renderFixedCharacters(){
+  $('vCharacterChips').innerHTML=fixedCharacters.map((c,i)=>`<span class="image-chip" title="${esc(c.name)}"><img src="/api/library/image/${c.token}" alt=""><span>${esc(c.name)}</span><button type="button" data-remove-fixed="${i}" aria-label="Bỏ ${esc(c.name)}">×</button></span>`).join('')||'<span class="detail">Chưa chọn — bấm “+ Nhân vật” để lấy ảnh từ Thư viện.</span>';
+  $('vClearCharacters').hidden=!fixedCharacters.length;
+}
+function renderNickOptions(){
+  const select=$('vAccount'),want=select.dataset.want??select.value;delete select.dataset.want;
+  const options='<option value="">🔄 Xoay vòng các nick sẵn sàng</option>'+state.accounts.map((a,i)=>`<option value="${a.id}">Nick ${i+1} · ${esc(a.email)}${a.state==='ready'?'':a.state==='attention'?' (cần kiểm tra)':''}</option>`).join('');
+  if(select.dataset.sig!==options){select.innerHTML=options;select.dataset.sig=options;}
+  select.value=state.accounts.some(a=>a.id===want)?want:'';
+}
+function videoSpecCell(job){
+  const parts=[job.aspect||'tự chọn',job.duration?`${job.duration}s`:'—',job.resolution||'gốc'];
+  const post=job.status==='done'&&job.resolution?postLabel(job.post_status):'';
+  return `<span class="spec-chip">${esc(parts.join(' · '))}</span>${post?`<span class="detail${job.post_status.startsWith('error:')?' error':''}" title="${esc(job.post_status.startsWith('error:')?job.post_status.slice(6):'')}">${esc(post)}</span>`:''}`;
+}
+function renderStitchPanel(){
+  const batches=state.batches||[],panel=$('stitchPanel');panel.hidden=!batches.length;
+  panel.innerHTML=batches.length?`<b>🔗 Video ghép</b>`+batches.map(b=>`<div class="stitch-row"><span>Lượt ${esc(new Date(b.created*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'}))} · ${b.done}/${b.scenes} cảnh xong${b.failed?` · ${b.failed} lỗi`:''}</span><span class="stitch-state ${b.stitch_status}">${esc(stitchNames[b.stitch_status]||b.stitch_status)}</span>${b.stitch_error?`<span class="detail error">${esc(b.stitch_error)}</span>`:''}${b.stitch_status==='done'?`<a class="button-link" href="/api/batch/${esc(b.batch)}/video" target="_blank" rel="noopener">▶ Xem</a><a class="button-link" href="/api/batch/${esc(b.batch)}/video?download=1">⇩ Tải</a>`:''}${b.stitch_status!=='running'&&b.done>=2?`<button type="button" data-stitch-now="${esc(b.batch)}" title="Ghép các cảnh đã xong (bỏ qua cảnh lỗi/chưa xong)">${b.stitch_status==='done'?'↻ Ghép lại':'Ghép ngay'}</button>`:''}</div>`).join(''):'';
+}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-stitch-now]');if(!b)return;
+  if(!confirm('Ghép ngay các cảnh đã xong của lượt này? Cảnh lỗi hoặc chưa xong sẽ bị bỏ qua.'))return;
+  action(async()=>{await api('/api/batch/stitch',{batch:b.dataset.stitchNow});toast('Đang ghép video. Xem tiến độ ở khung Video ghép.');});});
+for(const id of ['vAspect','vDuration','vResolution','vStitch','vAccount'])$(id).addEventListener('change',saveVideoSettings);
+$('vCharacters').onclick=()=>openPicker('characters');
+$('vClearCharacters').onclick=()=>{fixedCharacters=[];saveVideoSettings();renderFixedCharacters();};
+$('vCharacterChips').onclick=e=>{const b=e.target.closest('[data-remove-fixed]');if(!b)return;fixedCharacters.splice(Number(b.dataset.removeFixed),1);saveVideoSettings();renderFixedCharacters();};
+loadVideoSettings();renderFixedCharacters();if(state){renderNickOptions();renderStitchPanel();}
