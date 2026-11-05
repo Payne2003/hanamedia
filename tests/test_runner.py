@@ -840,7 +840,7 @@ class FlowLoginTests(unittest.TestCase):
             self.assertEqual(len(launched), 1)
             self.assertEqual(launched[0][0], "chrome.exe")
             self.assertIn(f"--profile-directory={engine.flow_profile.name}", launched[0])
-            self.assertEqual(launched[0][-1], "https://labs.google/fx/tools/flow")
+            self.assertEqual(launched[0][-1], "https://flow.google.com")
             self.assertIn("Đã mở Chrome thường", engine.flow_status)
         finally:
             engine.shutdown()
@@ -932,3 +932,40 @@ class NewChatTests(unittest.TestCase):
             engine.shutdown()
             engine.close_browsers()
             temp.cleanup()
+
+
+class FlowPromptTests(unittest.TestCase):
+    def flow(self, page, clicked):
+        from runner.flow import FlowImageSession, JS_FLOW_PAGE, JS_NEW_PROJECT
+        flow = object.__new__(FlowImageSession)
+        flow.debug_path = Path(tempfile.mkdtemp()) / "flow-debug.txt"
+
+        class Driver:
+            def find_elements(self, *a):
+                return []
+            def execute_script(self, script, *a):
+                if script is JS_FLOW_PAGE:
+                    return page
+                if script is JS_NEW_PROJECT:
+                    clicked.append(1)
+                    return "Dự án mới"
+                return "trang flow"
+        flow.driver = Driver()
+        return flow
+
+    def test_signed_out_flow_asks_to_log_in_from_settings(self):
+        clicked = []
+        with patch("runner.flow.time.sleep", lambda _: None):
+            with self.assertRaisesRegex(RuntimeError, "Cài đặt → Google Flow → Đăng nhập"):
+                self.flow({"signIn": True}, clicked).prompt("x", timeout=5)
+        self.assertEqual(clicked, [])
+
+    def test_new_project_is_clicked_at_most_three_times_then_dumps(self):
+        clicked, clock = [], [0.0]
+        flow = self.flow({"loading": False}, clicked)
+        with patch("runner.flow.time.sleep", lambda s: clock.__setitem__(0, clock[0] + 1)), \
+                patch("runner.flow.time.monotonic", lambda: clock[0]):
+            with self.assertRaisesRegex(RuntimeError, "sau khi bấm Dự án mới"):
+                flow.prompt("x", timeout=60)
+        self.assertEqual(len(clicked), 3)  # không tạo hàng loạt dự án trống
+        self.assertIn("Không tìm thấy ô prompt", flow.debug_path.read_text(encoding="utf-8"))

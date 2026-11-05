@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .content import parse_structured
+from .media import SOURCES as MEDIA_SOURCES, MediaLibrary
 from .characters import JOB_COLUMNS, SCHEMA as CHARACTER_SCHEMA, CharacterRegistry, migrate as migrate_characters
 
 
@@ -36,10 +37,24 @@ def mailbox_for(email, value):
     return email, value
 
 
+# Trạng thái tài khoản đang giữ Chrome của nó: không cấu hình, xóa, đăng nhập hay kiểm tra chồng lên.
+LOCKED_STATES = ("busy", "authenticating", "reviewing", "checking")
+ACCOUNT_COLUMNS = {
+    "health": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+    "last_checked": "REAL NOT NULL DEFAULT 0",
+    "last_error": "TEXT NOT NULL DEFAULT ''",
+    "check_failures": "INTEGER NOT NULL DEFAULT 0",
+    "next_check": "REAL NOT NULL DEFAULT 0",
+    "health_before": "TEXT NOT NULL DEFAULT ''",
+}
+
+
 class Store:
     def __init__(self, path):
         self.path = str(path)
         self.image_dir = Path(self.path).parent / "input-images"
+        # Ảnh của Thư viện Video & Ảnh: data/media/<uploaded|generated|imported>/images/<token>.<đuôi>
+        self.media_dirs = [Path(self.path).parent / "media" / source / "images" for source in MEDIA_SOURCES]
         with self.connect() as db:
             db.executescript("""
             PRAGMA journal_mode=WAL;
@@ -78,8 +93,16 @@ class Store:
             for name, declaration in migrations.items():
                 if name not in columns:
                     db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {declaration}")
+            # Account Health Monitor: tình trạng phiên Muse đo được, tách khỏi state (state vẫn điều phối tác vụ).
+            account_columns = {row["name"] for row in db.execute("PRAGMA table_info(accounts)")}
+            for name, declaration in ACCOUNT_COLUMNS.items():
+                if name not in account_columns:
+                    db.execute(f"ALTER TABLE accounts ADD COLUMN {name} {declaration}")
+            db.execute("UPDATE accounts SET health='LIVE' WHERE health='READY'")  # tên cũ của bản thử đầu
         self.characters = CharacterRegistry(self)
+        self.media = MediaLibrary(self)
         self.cleanup_images()
+        self.media.purge_hidden()
 
     @contextmanager
     def connect(self):
@@ -102,7 +125,9 @@ class Store:
                           if job["submitted"] else "Bộ chạy bị tắt trước khi gửi. Có thể thử lại.")
                 db.execute("UPDATE jobs SET status='error',phase='Bị gián đoạn',error=?,updated=? WHERE id=?",
                            (detail, time.time(), job["id"]))
-            db.execute("UPDATE accounts SET state='new',detail='Cần kiểm tra lại phiên' WHERE state IN ('busy','authenticating','reviewing')")
+            db.execute("UPDATE accounts SET state='new',detail='Cần kiểm tra lại phiên' WHERE state IN ('busy','authenticating','reviewing','checking')")
+            db.execute("UPDATE accounts SET health=CASE WHEN health_before!='' THEN health_before ELSE 'UNKNOWN' END,"
+                       "health_before='' WHERE health='CHECKING'")
         self.characters.recover_image_tasks()
 
     def add_account(self, email, mailbox, budget):
@@ -156,12 +181,45 @@ class Store:
     def set_account(self, account_id, state, detail=""):
         with self.connect() as db:
             db.execute("UPDATE accounts SET state=?,detail=? WHERE id=?", (state, detail, account_id))
+            if state == "ready":  # chỉ gọi 'ready' sau khi đã thấy ô soạn tin Muse: đó là bằng chứng phiên còn sống
+                db.execute("UPDATE accounts SET health='LIVE',last_checked=?,last_error='',check_failures=0 WHERE id=?",
+                           (time.time(), account_id))
+
+    def begin_check(self, account_id):
+        """Giữ chỗ tài khoản để kiểm tra phiên. Trả về {state, health} trước đó, hoặc None nếu tài khoản đang chạy/đăng nhập/
+        đang mở phiên/đang được kiểm tra (không bao giờ chen vào tác vụ đang chạy)."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT state,health FROM accounts WHERE id=?", (account_id,)).fetchone()
+            if not row or row["state"] in LOCKED_STATES:
+                return None
+            db.execute("UPDATE accounts SET state='checking',health_before=health,health='CHECKING' WHERE id=?", (account_id,))
+            return dict(row)
+
+    def end_check(self, account_id, previous, health, error=""):
+        """Ghi kết quả kiểm tra. Chỉ LIVE / LOGIN_REQUIRED / EXPIRED đổi state điều phối; lỗi mạng, 429 và lỗi chưa rõ
+        giữ nguyên state cũ (không đánh dấu tài khoản hỏng) và tăng bộ đếm lỗi để lịch kiểm tra giãn ra."""
+        now = time.time()
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM accounts WHERE id=? AND state='checking'", (account_id,)).fetchone()
+            if not row:
+                return
+            if health == "LIVE":
+                state, detail, failures = "ready", "Đã kiểm tra: phiên Muse còn đăng nhập", 0
+            elif health in ("LOGIN_REQUIRED", "EXPIRED"):
+                state, detail, failures = "attention", error, 0
+            else:
+                state, detail, failures = previous, row["detail"], row["check_failures"] + 1
+            db.execute("""UPDATE accounts SET state=?,detail=?,health=?,last_checked=?,last_error=?,check_failures=?,
+                          health_before='' WHERE id=?""",
+                       (state, detail, health, now, "" if health == "LIVE" else error, failures, account_id))
 
     def configure_account(self, account_id, enabled, budget):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
-            if not row or row["state"] in ("busy", "authenticating", "reviewing"):
+            if not row or row["state"] in LOCKED_STATES:
                 raise ValueError("Tài khoản đang bận hoặc không tồn tại.")
             db.execute("UPDATE accounts SET enabled=?,budget=? WHERE id=?", (int(bool(enabled)), number(budget), account_id))
         self.plan_waiting()
@@ -173,7 +231,7 @@ class Store:
             row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
             if not row:
                 raise ValueError("Không tìm thấy tài khoản.")
-            if row["state"] in ("busy", "authenticating", "reviewing") or db.execute(
+            if row["state"] in LOCKED_STATES or db.execute(
                     "SELECT 1 FROM jobs WHERE status='running' AND account_id=?", (account_id,)).fetchone():
                 raise ValueError("Tài khoản đang chạy, đăng nhập hoặc đang mở phiên. Đợi xong hoặc đóng phiên rồi xóa.")
             db.execute("UPDATE jobs SET assigned_account_id=NULL WHERE status='waiting' AND assigned_account_id=?",
@@ -187,7 +245,7 @@ class Store:
         """Giữ chỗ tài khoản cho đăng nhập/mở phiên. Từ chối nếu tài khoản đang chạy tác vụ hoặc đang đăng nhập."""
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            cursor = db.execute("UPDATE accounts SET state=?,detail=? WHERE id=? AND state NOT IN ('busy','authenticating','reviewing')",
+            cursor = db.execute("UPDATE accounts SET state=?,detail=? WHERE id=? AND state NOT IN ('busy','authenticating','reviewing','checking')",
                                 (state, detail, account_id))
             if cursor.rowcount != 1:
                 raise ValueError("Tài khoản đang bận hoặc không tồn tại.")
@@ -298,6 +356,7 @@ class Store:
         return {"token": token, "type": content_type}
 
     def add_library_image(self, token, name):
+        """Giữ cho mã cũ: đưa một ảnh đã có (token) vào Thư viện Video & Ảnh."""
         image = self.image_file(token)
         if not image:
             raise ValueError("Ảnh không còn tồn tại hoặc không hợp lệ.")
@@ -305,63 +364,43 @@ class Store:
         with self.connect() as db:
             db.execute("INSERT OR IGNORE INTO image_library(token,name,created) VALUES(?,?,?)",
                        (token, name, time.time()))
+            self.media.insert_existing(db, token, image[0], "uploaded", name)
         return token
 
     def library_images(self):
-        with self.connect() as db:
-            rows = db.execute("SELECT token,name,created FROM image_library ORDER BY created DESC").fetchall()
-        result = []
-        for row in rows:
-            image = self.image_file(row["token"])
-            if image:
-                result.append({"token": row["token"], "name": row["name"], "created": row["created"],
-                               "type": image[1]})
-        return result
+        """Ảnh trong Thư viện Video & Ảnh theo dạng cũ {token, name, created, type} (hộp chọn ảnh cho prompt)."""
+        return [{"token": item["id"], "name": item["display_name"], "created": item["created_at"], "type": item["mime_type"]}
+                for item in self.media.list("image")["items"] if item["available"]]
 
     def delete_library_images(self, tokens):
+        """Xóa khỏi thư viện; ảnh còn được prompt/nhân vật dùng chỉ bị ẩn và giữ file."""
         if (not isinstance(tokens, list) or not 1 <= len(tokens) <= 200 or
                 any(not isinstance(token, str) or not re.fullmatch(r"[a-f0-9]{32}", token)
                     for token in tokens)):
             raise ValueError("Chọn từ 1 đến 200 ảnh hợp lệ để xóa.")
         tokens = list(dict.fromkeys(tokens))
         with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
-                f"SELECT token FROM image_library WHERE token IN ({','.join('?' for _ in tokens)})",
-                tokens).fetchall()
-            db.executemany("DELETE FROM image_library WHERE token=?", [(row["token"],) for row in rows])
-            referenced = {token for row in db.execute("SELECT images FROM jobs")
-                          for token in json.loads(row["images"] or "[]")}
-            referenced.update(self.characters.referenced_tokens(db))
-        for row in rows:
-            token = row["token"]
-            if token not in referenced:
-                image = self.image_file(token)
-                if image:
-                    image[0].unlink(missing_ok=True)
-        return len(rows)
+            present = [row[0] for row in db.execute(
+                f"SELECT media_id FROM media WHERE hidden=0 AND media_id IN ({','.join('?' * len(tokens))})", tokens)]
+        if not present:
+            return 0
+        result = self.media.delete(present, confirmed=True)
+        return result["deleted"] + result["hidden"]
 
     def import_flow_downloads(self, folder):
+        """Nhập ảnh Flow đã tải vào thư viện (nguồn: generated). Trùng nội dung (SHA-256) thì bỏ qua."""
         folder = Path(folder)
         if not folder.is_dir():
             return 0
         imported = 0
-        known = {hashlib.sha256(self.image_file(item["token"])[0].read_bytes()).digest()
-                 for item in self.library_images()}
         for path in sorted(folder.iterdir(), key=lambda item: item.stat().st_mtime):
             if not path.is_file() or path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
                 continue
-            data = path.read_bytes()
-            extension, _ = self.image_type(data)
-            if not extension:
+            try:
+                _, duplicate = self.media.add_image(path.read_bytes(), path.name, source="generated", strict=False)
+            except (ValueError, OSError):
                 continue
-            digest = hashlib.sha256(data).digest()
-            if digest in known:
-                continue
-            token = self.add_image(data)
-            self.add_library_image(token["token"], path.name)
-            known.add(digest)
-            imported += 1
+            imported += not duplicate
         return imported
 
     def image_file(self, token):
@@ -369,9 +408,10 @@ class Store:
             return None
         for extension, content_type in ((".png", "image/png"), (".jpg", "image/jpeg"),
                                         (".gif", "image/gif"), (".webp", "image/webp")):
-            path = self.image_dir / (token + extension)
-            if path.is_file():
-                return path, content_type
+            for folder in (self.image_dir, *self.media_dirs):
+                path = folder / (token + extension)
+                if path.is_file():
+                    return path, content_type
         return None
 
     def _image_digest(self, token):
@@ -401,6 +441,7 @@ class Store:
                           for token in json.loads(row["images"] or "[]")}
             referenced.update(row["token"] for row in db.execute("SELECT token FROM image_library"))
             referenced.update(self.characters.referenced_tokens(db))
+            referenced.update(row[0] for row in db.execute("SELECT media_id FROM media WHERE hidden=0"))
         for path in self.image_dir.iterdir():
             if path.is_file() and path.stem not in referenced and re.fullmatch(r"[a-f0-9]{32}", path.stem):
                 path.unlink()
@@ -425,6 +466,8 @@ class Store:
             remaining = {token for row in db.execute("SELECT images FROM jobs")
                          for token in json.loads(row["images"] or "[]")}
             remaining.update(row["token"] for row in db.execute("SELECT token FROM image_library"))
+            remaining.update(row[0] for row in db.execute("SELECT media_id FROM media WHERE hidden=0"))
+            remaining.update(self.characters.referenced_tokens(db))
         for token in tokens - remaining:
             image = self.image_file(token)
             if image:
@@ -491,12 +534,12 @@ class Store:
             db.execute("BEGIN IMMEDIATE")
             accounts = [dict(row) for row in db.execute(
                 """SELECT id,budget,rowid FROM accounts
-                   WHERE enabled=1 AND state IN ('new','ready','busy') ORDER BY rowid""")]
+                   WHERE enabled=1 AND state IN ('new','ready','busy','checking') ORDER BY rowid""")]
             eligible = {account["id"] for account in accounts}
             stale = db.execute(
                 """SELECT j.id FROM jobs j LEFT JOIN accounts a ON a.id=j.assigned_account_id
                    WHERE j.status='waiting' AND j.assigned_account_id IS NOT NULL
-                   AND (a.id IS NULL OR a.enabled!=1 OR a.state NOT IN ('new','ready','busy'))"""
+                   AND (a.id IS NULL OR a.enabled!=1 OR a.state NOT IN ('new','ready','busy','checking'))"""
             ).fetchall()
             stale_ids = [row["id"] for row in stale]
             if stale_ids:
@@ -590,6 +633,14 @@ class Store:
                        ("error" if error else "done", "Cần kiểm tra" if error else "Đã tải MP4",
                         job["progress"] if error else 100, output, error, time.time(), job_id))
             db.execute("UPDATE accounts SET state=?,detail=? WHERE id=?", (account_state, error, job["account_id"]))
+            if not error:  # vừa tải được video: phiên chắc chắn còn sống
+                db.execute("UPDATE accounts SET health='LIVE',last_checked=?,last_error='',check_failures=0 WHERE id=?",
+                           (time.time(), job["account_id"]))
+        if output and not error:
+            try:
+                self.media.sync_generated()  # video vừa tải hiện ngay trong Thư viện Video & Ảnh
+            except Exception:
+                pass  # thư viện lỗi không được làm hỏng kết quả tác vụ; bấm Làm mới để đồng bộ lại
 
     DETAIL_FIELDS = ("setting", "camera", "behavior", "action")
     SCENE_PROMPT = re.compile(
@@ -676,7 +727,12 @@ class Store:
 
     def snapshot(self):
         with self.connect() as db:
-            accounts = [dict(r) for r in db.execute("SELECT id,email,enabled,budget,state,detail FROM accounts ORDER BY rowid")]
+            accounts = [dict(r) for r in db.execute(
+                """SELECT a.id,a.email,a.enabled,a.budget,a.state,a.detail,a.health,a.last_checked,a.last_error,
+                   (SELECT count(*) FROM jobs j WHERE j.status='waiting' AND j.assigned_account_id=a.id) AS jobs_assigned,
+                   (SELECT count(*) FROM jobs j WHERE j.status='done' AND j.account_id=a.id) AS jobs_completed,
+                   (SELECT count(*) FROM jobs j WHERE j.status='error' AND j.account_id=a.id) AS jobs_failed
+                   FROM accounts a ORDER BY a.rowid""")]
             jobs = []
             for row in db.execute("SELECT * FROM jobs ORDER BY created DESC,rowid DESC LIMIT 2000"):
                 job = dict(row)

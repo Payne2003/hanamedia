@@ -12,7 +12,7 @@ import sys
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from runner import content
 from runner.gemini_web import GeminiWebRunner
@@ -23,6 +23,7 @@ from runner.gemini_web import chrome_executable, login_url
 from runner.profiles import SharedProfile
 from runner.engine import Engine
 from runner.characters import NeedsConfirm
+from runner.media import MediaError, MediaInUse
 from runner.store import Store
 from runner.instance import InstanceLock
 from runner.paths import data_root, frozen, resource_root
@@ -116,6 +117,135 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_file(self, file, content_type, disposition="inline", filename=None, cache_control="private, max-age=60"):
+        """Gửi file (hỗ trợ Range cho video). filename được làm sạch và mã hóa RFC 5987 (chống chèn header)."""
+        size = file.stat().st_size
+        start, end, code = 0, size - 1, 200
+        range_header = self.headers.get("Range")
+        if range_header and size:
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header)
+            if not match or not any(match.groups()):
+                return self.reply({"error": "Range không hợp lệ."}, 416)
+            first, last = match.groups()
+            if first:
+                start = int(first)
+                end = min(int(last), size - 1) if last else size - 1
+            else:
+                start = max(0, size - int(last))
+            if start >= size or start > end:
+                return self.reply({"error": "Range vượt quá file."}, 416)
+            code = 206
+        self.headers_out(code, content_type, max(0, end - start + 1), cache_control)
+        self.send_header("Accept-Ranges", "bytes")
+        if code == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        if filename:
+            safe = re.sub(r'[\x00-\x1f\x7f"\\/;]', "", filename).strip() or "media"
+            ascii_name = safe.encode("ascii", "ignore").decode() or "media"
+            self.send_header("Content-Disposition", f"{disposition}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(safe)}")
+        self.end_headers()
+        try:
+            with file.open("rb") as handle:
+                handle.seek(start)
+                remaining = end - start + 1
+                while remaining > 0 and (chunk := handle.read(min(1024 * 256, remaining))):
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+
+    def media_get(self, path):
+        """GET /api/media, /api/media/item/<id>[/thumbnail|/file|/download]. Trả về True nếu đã xử lý."""
+        media = self.server.store.media
+        if path == "/api/media":
+            query = parse_qs(urlsplit(self.path).query)
+            pick = lambda name: (query.get(name) or [""])[0]
+            try:
+                media.sync_generated()
+            except Exception:
+                pass
+            self.reply(media.list(pick("type") or None, pick("category") or None, pick("q"), pick("source") or None))
+            return True
+        match = re.fullmatch(r"/api/media/item/([a-f0-9]{32})(?:/(thumbnail|file|download))?", path)
+        if not match:
+            return False
+        media_id, part = match.groups()
+        try:
+            if not part:
+                self.reply(media.item(media_id))
+                return True
+            file, content_type, row = media.file(media_id)
+        except MediaError as error:
+            self.reply({"error": str(error)}, 404)
+            return True
+        if part == "thumbnail" and row["media_type"] != "image":
+            self.reply({"error": "Video không có ảnh thu nhỏ."}, 404)
+            return True
+        name = row["display_name"]
+        extension = Path(row["relative_path"]).suffix
+        if extension and not name.lower().endswith(extension.lower()):
+            name += extension
+        self.send_file(file, content_type, "attachment" if part == "download" else "inline", name,
+                       "private, max-age=3600" if part == "thumbnail" else "private, max-age=60")
+        return True
+
+    def media_mutate(self, method, path):
+        """PATCH/DELETE /api/media/item/<id>, POST /api/media/{upload,delete-batch,open-folder}."""
+        media = self.server.store.media
+        try:
+            if method == "POST" and path == "/api/media/upload":
+                limits = media.limits()
+                size = int(self.headers.get("Content-Length", "0"))
+                if size <= 0:
+                    raise MediaError("File trống.")
+                if size > limits["max_file_mb"] * 1024 * 1024:
+                    raise MediaError(f"Ảnh vượt quá {limits['max_file_mb']} MB.")
+                category = self.headers.get("X-Media-Category") or "reference"
+                item, duplicate = media.add_image(self.rfile.read(size), unquote(self.headers.get("X-Image-Name", "Ảnh")),
+                                                  category=category)
+                return self.reply({"ok": True, "duplicate": duplicate, "item": item,
+                                   "token": item["id"], "type": item["mime_type"], "name": item["display_name"]})
+            if self.headers.get_content_type() != "application/json":
+                raise MediaError("Yêu cầu phải là JSON.")
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 <= size <= 1_000_000:
+                raise MediaError("Dữ liệu quá lớn.")
+            body = json.loads(self.rfile.read(size) or b"{}")
+            if not isinstance(body, dict):
+                raise MediaError("Dữ liệu không hợp lệ.")
+            match = re.fullmatch(r"/api/media/item/([a-f0-9]{32})", path)
+            if method == "PATCH" and match:
+                return self.reply({"ok": True, "item": media.update(match.group(1), body)})
+            if method == "DELETE" and match:
+                return self.reply({"ok": True, **media.delete([match.group(1)], body.get("confirmed") is True)})
+            if method == "POST" and path == "/api/media/delete-batch":
+                return self.reply({"ok": True, **media.delete(body.get("ids"), body.get("confirmed") is True)})
+            if method == "POST" and path == "/api/media/open-folder":
+                media.root.mkdir(parents=True, exist_ok=True)
+                if os.name != "nt":
+                    raise MediaError(f"Thư mục thư viện: {media.root}")
+                os.startfile(media.root)
+                return self.reply({"ok": True})
+            return self.reply({"error": "Không tìm thấy thao tác."}, 404)
+        except MediaInUse as error:
+            return self.reply({"error": str(error), "needs_confirm": True, "dependencies": error.dependencies}, 409)
+        except MediaError as error:
+            return self.reply({"error": str(error)}, 400)
+        except (ValueError, TypeError):
+            return self.reply({"error": "Dữ liệu không hợp lệ."}, 400)
+        except OSError:
+            return self.reply({"error": "Không ghi được file vào thư mục dữ liệu. Kiểm tra dung lượng ổ đĩa và quyền ghi."}, 500)
+
+    def do_PATCH(self):
+        if not self.allowed(True):
+            return self.reply({"error": "Yêu cầu không hợp lệ. Mở tool tại địa chỉ 127.0.0.1."}, 403)
+        self.media_mutate("PATCH", urlsplit(self.path).path)
+
+    def do_DELETE(self):
+        if not self.allowed(True):
+            return self.reply({"error": "Yêu cầu không hợp lệ. Mở tool tại địa chỉ 127.0.0.1."}, 403)
+        self.media_mutate("DELETE", urlsplit(self.path).path)
+
     def allowed(self, mutate=False):
         if self.headers.get("Host") != urlsplit(self.server.origin).netloc:
             return False
@@ -158,6 +288,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"error": str(error)}, 404)
         if path == "/api/library":
             return self.reply({"images": self.server.store.library_images()})
+        if path.startswith("/api/media") and self.media_get(path):
+            return
         if path == "/api/projects":
             return self.reply({"projects": self.server.store.characters.projects()})
         project_match = re.fullmatch(r"/api/project/([a-f0-9]{32})", path)
@@ -245,6 +377,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             path = urlsplit(self.path).path
             store, engine = self.server.store, self.server.engine
+            if path.startswith("/api/media/"):
+                return self.media_mutate("POST", path)
             if path in ("/api/image-upload", "/api/library/image-upload"):
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= 10_000_000:
@@ -272,6 +406,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r"[a-f0-9]{32}", str(body.get("id", ""))):
                     raise ValueError("Tài khoản không hợp lệ.")
                 return self.reply({"ok": True, "email": engine.remove_account(body["id"])})
+            elif path == "/api/accounts/check":
+                if not re.fullmatch(r"[a-f0-9]{32}", str(body.get("id", ""))):
+                    raise ValueError("Tài khoản không hợp lệ.")
+                return self.reply({"ok": True, **engine.health.request([body["id"]])})
+            elif path == "/api/accounts/check-all":
+                if "parallel" in body:
+                    engine.health.set_parallel(body["parallel"])
+                return self.reply({"ok": True, **engine.health.check_all()})
             elif path == "/api/accounts/update":
                 with engine.lock:
                     store.configure_account(body["id"], body["enabled"], body["budget"])

@@ -107,7 +107,7 @@ class SharedAccountServerTests(unittest.TestCase):
         self.assertIn(f"--user-data-dir={self.root / 'profiles' / 'google-shared'}", args)
         self.assertTrue(any("accounts.google.com" in a and "ban%40gmail.com" in a for a in args))
         self.assertTrue(any("chatgpt.com" in a for a in args))
-        self.assertTrue(any("labs.google/fx/tools/flow" in a for a in args))
+        self.assertTrue(any("flow.google.com" in a for a in args))
 
 
 if __name__ == "__main__":

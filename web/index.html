@@ -14,8 +14,7 @@
     <nav class="primary-nav">
       <button type="button" class="active" data-nav="studio" id="navStudio"><i>⌂</i>Studio · Video Queue<b id="sideRuns" class="nav-badge" hidden>0</b></button>
       <button type="button" data-nav="content" id="openContent"><i>✎</i>Content Studio</button>
-      <button type="button" id="navCharacters"><i>☺</i>Character Library</button>
-      <button type="button" id="openLibrary"><i>▧</i>Image Library</button>
+      <button type="button" data-nav="media" id="openLibrary"><i>▧</i>Thư viện Video &amp; Ảnh</button>
       <button type="button" id="accountsButton"><i>♙</i>Tài khoản Muse <b id="accountCount" class="nav-badge">0</b></button>
       <button type="button" data-nav="settings" id="navSettings"><i>⚙</i>Cài đặt</button>
     </nav>
@@ -45,7 +44,7 @@
         <textarea id="prompts" rows="7" maxlength="1000000" placeholder="Mỗi dòng là một prompt. Viết mô tả video bạn muốn tạo…"></textarea>
         <div class="prompt-hint video-only">Mỗi dòng là 1 prompt. Dùng <code>---</code> nếu muốn tách đoạn.</div>
         <div class="field video-only prompt-split"><label for="separator">Ký tự ngăn cách</label><select id="separator"><option value="line">Mỗi dòng một prompt</option><option value="blank">Dòng trống</option><option value="custom">---</option></select></div>
-        <div class="field image-assignment" hidden><label for="imagePromptIndex">Ảnh tham chiếu <span>(theo prompt)</span></label><div class="image-assignment-controls"><select id="imagePromptIndex" aria-label="Chọn prompt cần gắn ảnh"></select><button id="chooseLibrary" type="button">▧ Thư mục</button><button id="chooseImages" type="button">+ Ảnh</button><input id="characterImages" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></div><button type="button" class="image-dropzone" id="chooseImagesDrop"><span>⇧</span>Kéo thả ảnh hoặc chọn từ thư viện</button><div id="imageHint" class="detail">Gắn ảnh tham chiếu đúng prompt. Tối đa 10 ảnh mỗi prompt.</div><div id="assignedImages" class="image-chips"></div></div>
+        <div class="field image-assignment" hidden><label for="imagePromptIndex">Ảnh tham chiếu <span>(theo prompt)</span></label><div class="image-assignment-controls"><select id="imagePromptIndex" aria-label="Chọn prompt cần gắn ảnh"></select><button id="chooseLibrary" type="button">▧ Thư mục</button><button id="chooseImages" type="button">+ Ảnh</button><input id="characterImages" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></div><button type="button" class="image-dropzone" id="chooseImagesDrop"><span>⇧</span>Kéo thả ảnh hoặc chọn từ thư viện</button><div id="imageHint" class="detail">Gắn ảnh tham chiếu đúng prompt. Tối đa 10 ảnh mỗi prompt.</div><div id="assignedImages" class="image-chips"></div></div>
         <section id="flowPanel" class="flow-panel" hidden><p>Prompt ảnh sẽ được điền trong Google Flow. Chọn <b>Hình ảnh</b>, tạo và tải kết quả xuống.</p><div class="flow-actions"><button id="createFlowImage" type="button" class="primary">Mở Flow và điền prompt</button><button id="importFlowImages" type="button">Nhập ảnh đã tải</button></div><div id="flowStatus" class="detail">Ảnh tải xuống sẽ được lưu vào thư viện của tool.</div></section>
         <div class="video-only">
           <div class="field"><label for="parallel">Số tài khoản chạy đồng thời</label><select id="parallel"><option value="1">1 tài khoản</option><option value="2" selected>2 tài khoản</option><option value="3">3 tài khoản</option><option value="4">4 tài khoản</option><option value="5">5 tài khoản</option><option value="6">6 tài khoản</option><option value="7">7 tài khoản</option><option value="8">8 tài khoản</option><option value="9">9 tài khoản</option><option value="10">10 tài khoản</option><option value="12">12 tài khoản</option><option value="15">15 tài khoản</option><option value="20">20 tài khoản</option></select></div>
@@ -71,7 +70,7 @@
         </div>
         <div class="job-right">
           <label>Ảnh tham chiếu / Tải tệp lên</label>
-          <div id="jobDrop" class="job-drop"><span>🖼 Kéo thả tệp vào đây hoặc</span><button id="jobChoose" type="button" data-job-field>Chọn tệp</button><small>Hỗ trợ: JPG, PNG, WEBP (tối đa 10MB) · tối đa 10 ảnh</small><input id="jobFiles" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></div>
+          <div id="jobDrop" class="job-drop"><span>🖼 Kéo thả tệp vào đây hoặc</span><button id="jobChoose" type="button" data-job-field>Chọn tệp</button><small>Hỗ trợ: JPG, PNG, WEBP (tối đa 10MB) · tối đa 10 ảnh</small><button id="jobLibrary" type="button" data-job-field>▧ Chọn từ thư viện</button><input id="jobFiles" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></div>
           <div id="jobImages" class="job-images"></div>
           <div id="jobCharacters" class="job-characters"></div>
           <label for="jobCamera">Góc quay</label>
@@ -83,6 +82,22 @@
           <p id="jobInfo" class="detail"></p>
         </div>
       </div>
+    </section>
+    <section id="mediaView" class="media-page" hidden aria-labelledby="mediaTitle">
+      <div class="media-head">
+        <div><div class="eyebrow">MEDIA LIBRARY · LƯU TRÊN MÁY</div><h1 id="mediaTitle">Thư viện Video &amp; Ảnh</h1><p>Ảnh bạn tải lên, ảnh Flow/nhân vật và video Muse do tool tạo. Chọn ảnh ở đây để gắn vào prompt Ảnh → Video.</p></div>
+        <div class="media-head-actions"><button id="mediaOpenFolder" type="button" title="Mở thư mục chứa file của thư viện">▱ Mở thư mục</button><button id="mediaRefresh" type="button">↻ Làm mới</button><button id="mediaUpload" type="button" class="primary">+ Tải ảnh lên</button><input id="mediaFiles" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple hidden></div>
+      </div>
+      <div class="media-toolbar">
+        <span class="media-total"><b id="mediaTotal">0</b> media</span>
+        <div class="tabs" role="group" aria-label="Loại media"><button type="button" class="active" data-media-type="">Tất cả</button><button type="button" data-media-type="image">Ảnh</button><button type="button" data-media-type="video">Video</button></div>
+        <div class="tabs" role="group" aria-label="Phân loại"><button type="button" class="active" data-media-category="">Mọi nhóm</button><button type="button" data-media-category="character">Nhân vật</button><button type="button" data-media-category="product">Sản phẩm</button><button type="button" data-media-category="reference">Tham chiếu</button></div>
+        <input id="mediaSearch" type="search" placeholder="Tìm theo tên…" aria-label="Tìm media theo tên" maxlength="100">
+      </div>
+      <div id="mediaDrop" class="media-drop" tabindex="0" role="button" aria-label="Kéo thả ảnh hoặc bấm để chọn ảnh"><b>⇪ Kéo thả nhiều ảnh vào đây</b><span>hoặc bấm để chọn · JPG, JPEG, PNG, WEBP · <span id="mediaLimits">tối đa 20 MB mỗi ảnh</span></span></div>
+      <div id="mediaUploads" class="media-uploads" hidden></div>
+      <div id="mediaSelection" class="media-selection" hidden><span><b id="mediaSelectedCount">0</b> đã chọn</span><button id="mediaSelectAll" type="button">Chọn tất cả đang hiện</button><button id="mediaClearSelection" type="button">Bỏ chọn</button><button id="mediaDeleteSelected" type="button" class="danger-outline">✕ Xóa đã chọn</button></div>
+      <div id="mediaGrid" class="media-grid" aria-live="polite"></div>
     </section>
     <section id="settingsView" class="settings-page" hidden>
       <div class="content-topbar"><h1>Cài đặt</h1><span class="crumb">/</span><span class="detail">Đăng nhập các tài khoản tool cần dùng. Tool không đọc hay lưu mật khẩu.</span></div>
@@ -139,37 +154,21 @@
             <li>Nếu Gemini đã trả lời mà tool vẫn chờ: bấm <b>Lấy kết quả ngay</b>.</li>
           </ol>
         </details>
-        <details><summary><b>3</b> Nhân vật và ảnh Master (bước 3 · Nhân vật)</summary>
-          <ol>
-            <li>Bấm <b>💾 Lưu danh sách cảnh thành dự án</b>, chọn Gemini Pro hoặc ChatGPT, bấm <b>✦ Tìm nhân vật</b>. AI liệt kê các nhân vật duy nhất (Character ID, mô tả, prompt ảnh) và nhân vật xuất hiện trong từng cảnh.</li>
-            <li>Bấm một nhân vật ở danh sách bên trái để xem/sửa chi tiết bên phải, rồi bấm <b>Lưu thay đổi</b>.</li>
-            <li><b>Tạo ảnh Master:</b> bấm <b>✦ Mở Flow &amp; điền prompt</b> → trong Flow chọn <b>Hình ảnh</b>, mô hình <b>Nano Banana</b>, bấm tạo, tải ảnh xuống → quay lại bấm <b>⇄ Thay ảnh → ⇩ Lấy ảnh mới tải từ Flow</b> → bấm ảnh muốn dùng. (Veo là mô hình tạo <b>video</b>; ảnh nhân vật tạo bằng Nano Banana.)</li>
-            <li>Có thể <b>Tải ảnh lên</b> hoặc chọn ảnh trong thư viện. Bấm ảnh nhỏ dưới ảnh lớn để đổi ảnh Master. Ưng ý thì bấm <b>🔒 Duyệt / Khóa</b>.</li>
-            <li>Ở <b>Nhân vật trong từng cảnh</b>: tick nhân vật rồi bấm <b>Lưu</b> để sửa tay. Cảnh đã chỉnh tay không bị AI ghi đè.</li>
-          </ol>
-        </details>
-        <details><summary><b>4</b> Prompt tiếng Anh và đưa sang Studio (bước 4)</summary>
+        <details><summary><b>3</b> Prompt tiếng Anh và đưa sang Studio (bước 3 · Prompt)</summary>
           <ol>
             <li>Bấm <b>↓ Lấy từ danh sách cảnh</b>, chọn thời lượng, tỷ lệ khung hình, bật <b>Prompt chuẩn đủ trường</b> nếu muốn.</li>
             <li>Bấm <b>✦ Viết prompt tiếng Anh bằng ChatGPT</b>. Cảnh nào thiếu hoặc còn tiếng Việt, tool tự hỏi lại.</li>
-            <li>Bấm <b>→ Đưa vào Studio</b>. Prompt giữ liên kết với cảnh gốc (khi dự án có cùng số cảnh) nên tự biết nhân vật của mình.</li>
+            <li>Bấm <b>→ Đưa vào Studio</b>.</li>
           </ol>
         </details>
-        <details><summary><b>5</b> Gắn ảnh nhân vật cho từng prompt (Prompt Studio)</summary>
-          <ol>
-            <li>Ở <b>Studio · Video Queue</b>, bấm vào một prompt trong hàng đợi để mở <b>Prompt Studio</b>.</li>
-            <li>Mục <b>Nhân vật</b> hiện nhân vật của cảnh gốc (hoặc tick chọn rồi bấm <b>Lưu nhân vật</b>). Mục <b>Ảnh nhân vật tham chiếu</b> hiện ảnh Master tương ứng.</li>
-            <li>Bấm <b>🔗 Gắn ảnh nhân vật vào prompt</b>: tool đặt đúng ảnh Master của các nhân vật trong prompt (tối đa 10 ảnh) và hỏi trước khi chuyển sang chế độ <b>Ảnh → video</b>.</li>
-          </ol>
-        </details>
-        <details><summary><b>6</b> Tạo video hàng loạt trên Muse</summary>
+        <details><summary><b>4</b> Tạo video hàng loạt trên Muse</summary>
           <ol>
             <li>Ở <b>Studio · Video Queue</b>: chọn số tài khoản chạy đồng thời (nên bắt đầu với 1–2), bỏ chọn <b>Chạy ẩn cửa sổ Chrome</b> nếu muốn xem cửa sổ Muse làm việc.</li>
             <li>Bấm <b>▶ Chạy</b>. Tool chia prompt cho các tài khoản, tạo video và tải về thư mục lưu với tên <b>Prompt N.mp4</b>.</li>
             <li>Prompt lỗi <b>sau khi đã gửi</b> lên Muse thì tool không tự gửi lại: mở Muse kiểm tra rồi mới bấm Chạy lại trong Prompt Studio.</li>
           </ol>
         </details>
-        <details><summary><b>7</b> Khi gặp lỗi</summary>
+        <details><summary><b>5</b> Khi gặp lỗi</summary>
           <ul>
             <li><b>Ô xác minh “tôi không phải người máy” (Cloudflare, reCAPTCHA…) trên ChatGPT:</b> tự bấm xác minh trong cửa sổ ChatGPT. Trong lúc đó tool đứng chờ, không dán, không gửi. Xác minh xong, nếu tin nhắn chưa đi thì tool tự dán và gửi lại (tối đa 3 lần, không gửi trùng khi ChatGPT đã nhận). Tool không tự vượt qua bước xác minh. Bị hỏi liên tục thì dùng Gemini cho bước đó.</li>
             <li><b>“Chưa đăng nhập …”:</b> đăng nhập lại ở thẻ tương ứng phía trên (hoặc nút Đăng nhập tài khoản chung).</li>
@@ -178,7 +177,7 @@
             <li><b>Trang báo “Bộ chạy đang chạy bản cũ”:</b> tắt hẳn tool rồi mở lại, nhấn Ctrl+F5.</li>
           </ul>
         </details>
-        <details><summary><b>8</b> Cập nhật tool</summary>
+        <details><summary><b>6</b> Cập nhật tool</summary>
           <ul>
             <li><b>App Windows:</b> tải bộ cài mới (HanaMedia-Setup), đóng app, cài đè lên. Tài khoản, dự án, nhân vật và các Chrome đã đăng nhập được giữ nguyên.</li>
             <li><b>Chạy bằng mã nguồn:</b> đóng CHAY_WINDOWS.cmd, chạy <code>git pull origin main</code> trong thư mục tool, mở lại CHAY_WINDOWS.cmd và nhấn Ctrl+F5.</li>
@@ -192,9 +191,8 @@
       <nav class="stepper" aria-label="Các bước">
         <button type="button" data-step="1"><span>1</span>Ý tưởng</button><i></i>
         <button type="button" data-step="2"><span>2</span>Kịch bản</button><i></i>
-        <button type="button" data-step="3"><span>3</span>Nhân vật</button><i></i>
-        <button type="button" data-step="4"><span>4</span>Prompt</button><i></i>
-        <button type="button" data-step="5"><span>5</span>Tổng quan</button>
+                <button type="button" data-step="4"><span>3</span>Prompt</button><i></i>
+        <button type="button" data-step="5"><span>4</span>Tổng quan</button>
       </nav>
       <div id="runnerOutdated" class="content-error" role="alert" hidden><b>Bộ chạy đang chạy bản cũ.</b> Đóng cửa sổ đen CHAY_WINDOWS.cmd (hoặc nhấn Ctrl+C trong đó), mở lại CHAY_WINDOWS.cmd rồi tải lại trang này bằng Ctrl+F5.</div>
       <div class="content-columns">
@@ -227,7 +225,7 @@
         </div>
       </div>
       <div class="english-card card" data-step-panel="4">
-        <div class="english-heading"><h3><span>4</span>Prompt tiếng Anh · ChatGPT</h3><p>Mỗi “Bối cảnh N: …” thành 1 prompt tiếng Anh, mỗi dòng một prompt, viết bằng ChatGPT. Cảnh nào thiếu hoặc chưa phải tiếng Anh, tool tự hỏi lại riêng những cảnh đó.</p></div>
+        <div class="english-heading"><h3><span>3</span>Prompt tiếng Anh · ChatGPT</h3><p>Mỗi “Bối cảnh N: …” thành 1 prompt tiếng Anh, mỗi dòng một prompt, viết bằng ChatGPT. Cảnh nào thiếu hoặc chưa phải tiếng Anh, tool tự hỏi lại riêng những cảnh đó.</p></div>
         <div class="english-columns">
           <div>
             <div class="english-label"><label for="englishInput">Đầu vào · danh sách cảnh</label><button id="englishFromScenes" type="button" class="text-button">↓ Lấy từ danh sách cảnh</button></div>
@@ -247,7 +245,7 @@
           </div>
         </div>
       </div>
-      <div class="character-studio" id="characterPanel" data-step-panel="3">
+      <div class="character-studio" id="characterPanel" data-step-panel="3" hidden>
         <div class="character-toolbar card">
           <span id="projectInfo" class="detail">Chưa có dự án. Viết cảnh ở bước 2 rồi bấm Lưu thành dự án.</span>
           <span class="bulk-spacer"></span>
@@ -277,17 +275,18 @@
         <div class="character-summary card"><span class="summary-icon">☺</span><div><b>Tổng quan nhân vật</b><small id="characterSummary">0 nhân vật</small></div><span class="bulk-spacer"></span><button type="button" class="primary" data-goto-step="4">Tiếp tục: Tạo Prompt →</button></div>
       </div>
       <div class="overview card" data-step-panel="5">
-        <div class="english-heading"><h3><span>5</span>Tổng quan dự án</h3><p>Kiểm tra nhanh trước khi đưa prompt sang Studio để tạo video.</p></div>
+        <div class="english-heading"><h3><span>4</span>Tổng quan dự án</h3><p>Kiểm tra nhanh trước khi đưa prompt sang Studio để tạo video.</p></div>
         <div id="overviewStats" class="overview-grid"></div>
-        <div class="content-actions"><button type="button" data-goto-step="2">Xem kịch bản &amp; cảnh</button><button type="button" data-goto-step="3">Nhân vật</button><button type="button" class="primary" data-goto-step="4">Prompt tiếng Anh → Studio</button></div>
+        <div class="content-actions"><button type="button" data-goto-step="2">Xem kịch bản &amp; cảnh</button><button type="button" class="primary" data-goto-step="4">Prompt tiếng Anh → Studio</button></div>
       </div>
     </section>
   </main>
   </div>
   </div>
-  <dialog id="accounts"><div class="dialog-heading"><div><div class="eyebrow">EMAIL + OTP · KHÔNG MẬT KHẨU</div><h2>Tài khoản Muse</h2></div><button id="closeAccounts" aria-label="Đóng">✕</button></div><p class="dialog-description">Mỗi tài khoản có phiên Chrome riêng. Tool thử lấy OTP mới từ link hộp thư; nếu hộp thư lỗi, nhập mã trực tiếp trên cửa sổ Muse.</p><div class="login-all"><label>Chrome đăng nhập cùng lúc<select id="loginParallel"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="5">5</option></select></label><button id="loginAll" type="button" class="primary">Đăng nhập tất cả tài khoản chưa sẵn sàng</button><span id="loginAllStatus" class="detail"></span></div><div id="accountList"></div><form id="accountForm"><h3>Thêm tài khoản</h3><div class="form-grid"><label>Email Muse <small>(mỗi dòng một email, thêm bao nhiêu cũng được)</small><textarea id="email" rows="4" autocomplete="off" required maxlength="200000" placeholder="email1@tuan89.site&#10;email2@tuan89.site"></textarea></label><label>Ngân sách credit dự kiến<input id="budget" type="number" required min="0" step="0.01" value="10"></label></div><label>Link hộp thư OTP <small>(chỉ khi thêm 1 email)</small><input id="mailbox" type="url" placeholder="Tự điền link Tuan89 theo email nếu để trống"></label><button class="primary" type="submit">+ Thêm tài khoản</button></form><p class="subtle-note">Phiên đăng nhập được giữ trên máy. Không chia sẻ thư mục data. Tài khoản hết ngân sách hoặc cần kiểm tra sẽ không nhận tác vụ mới.</p></dialog>
+  <dialog id="accounts"><div class="dialog-heading"><div><div class="eyebrow">EMAIL + OTP · KHÔNG MẬT KHẨU</div><h2>Tài khoản Muse</h2></div><button id="closeAccounts" aria-label="Đóng">✕</button></div><p class="dialog-description">Mỗi tài khoản có phiên Chrome riêng. Tool thử lấy OTP mới từ link hộp thư; nếu hộp thư lỗi, nhập mã trực tiếp trên cửa sổ Muse.</p><div class="login-all"><label>Chrome đăng nhập cùng lúc<select id="loginParallel"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="5">5</option></select></label><button id="loginAll" type="button" class="primary">Đăng nhập tất cả tài khoản chưa sẵn sàng</button><span id="loginAllStatus" class="detail"></span></div><section class="health-panel" aria-label="Tình trạng tài khoản"><div id="accountStats" class="health-stats"></div><div class="health-actions"><label>Kiểm tra cùng lúc<select id="checkParallel"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select></label><button id="checkAll" type="button">↻ Kiểm tra tất cả</button><span id="checkStatus" class="detail"></span></div><p class="subtle-note">Kiểm tra chỉ mở trang chủ muse.ai bằng hồ sơ Chrome của tài khoản (không gửi prompt, không tốn credit) và bỏ qua tài khoản đang chạy. Lỗi mạng hoặc 429 không làm tài khoản bị đánh dấu hỏng.</p></section><div id="accountList"></div><form id="accountForm"><h3>Thêm tài khoản</h3><div class="form-grid"><label>Email Muse <small>(mỗi dòng một email, thêm bao nhiêu cũng được)</small><textarea id="email" rows="4" autocomplete="off" required maxlength="200000" placeholder="email1@tuan89.site&#10;email2@tuan89.site"></textarea></label><label>Ngân sách credit dự kiến<input id="budget" type="number" required min="0" step="0.01" value="10"></label></div><label>Link hộp thư OTP <small>(chỉ khi thêm 1 email)</small><input id="mailbox" type="url" placeholder="Tự điền link Tuan89 theo email nếu để trống"></label><button class="primary" type="submit">+ Thêm tài khoản</button></form><p class="subtle-note">Phiên đăng nhập được giữ trên máy. Không chia sẻ thư mục data. Tài khoản hết ngân sách hoặc cần kiểm tra sẽ không nhận tác vụ mới.</p></dialog>
   <dialog id="player"><div class="dialog-heading"><h2 id="playerTitle">Video của cảnh</h2><button id="closePlayer" aria-label="Đóng video">✕</button></div><video id="videoPlayer" controls playsinline></video><p id="playerPrompt"></p></dialog>
-  <dialog id="imageLibrary"><div class="dialog-heading"><div><div class="eyebrow">THƯ VIỆN CỤC BỘ</div><h2>Ảnh tham chiếu</h2></div><button id="closeImageLibrary" aria-label="Đóng thư viện">✕</button></div><p class="dialog-description">Chọn ảnh đã tạo từ Flow hoặc ảnh đã thêm trước đây để gắn vào prompt đang chọn.</p><div id="imageLibraryGrid" class="image-library-grid"></div></dialog>
+  <dialog id="imageLibrary" class="media-picker"><div class="dialog-heading"><div><div class="eyebrow">THƯ VIỆN VIDEO &amp; ẢNH</div><h2>Chọn ảnh từ thư viện</h2></div><button id="closeImageLibrary" aria-label="Đóng thư viện">✕</button></div><p class="dialog-description" id="pickerTarget">Chọn một hoặc nhiều ảnh rồi bấm Gắn vào Prompt.</p><div class="picker-toolbar"><input id="pickerSearch" type="search" placeholder="Tìm ảnh…" aria-label="Tìm ảnh" maxlength="100"><select id="pickerCategory" aria-label="Phân loại"><option value="">Mọi nhóm</option><option value="character">Nhân vật</option><option value="product">Sản phẩm</option><option value="reference">Tham chiếu</option><option value="other">Khác</option></select><button id="pickerUpload" type="button">+ Tải ảnh lên</button><input id="pickerFiles" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple hidden></div><div id="pickerUploads" class="media-uploads" hidden></div><div id="imageLibraryGrid" class="media-pick-grid"></div><div class="picker-foot"><span id="pickerCount">Chưa chọn ảnh</span><button id="pickerAttach" type="button" class="primary" disabled>Gắn vào Prompt</button></div></dialog>
+  <dialog id="mediaPreview" class="media-preview" aria-labelledby="previewName"><div class="dialog-heading"><div><div class="eyebrow" id="previewKind">ẢNH</div><h2 id="previewName">Media</h2></div><button id="closePreview" aria-label="Đóng xem trước">✕</button></div><div class="preview-body"><div class="preview-stage"><button id="previewPrev" type="button" class="preview-nav" aria-label="Media trước">‹</button><div id="previewMedia"></div><button id="previewNext" type="button" class="preview-nav" aria-label="Media sau">›</button></div><aside class="preview-info"><label>Tên hiển thị<input id="previewRename" maxlength="160"></label><label>Phân loại<select id="previewCategory"><option value="character">Nhân vật</option><option value="product">Sản phẩm</option><option value="reference">Tham chiếu</option><option value="other">Khác</option></select></label><button id="previewSave" type="button" class="primary">Lưu thay đổi</button><dl id="previewMeta"></dl><div id="previewUsage" class="detail"></div><div class="preview-actions"><a id="previewDownload" class="button-link" href="#" download>⇩ Tải xuống</a><button id="previewDelete" type="button" class="danger-outline">✕ Xóa</button></div></aside></div></dialog>
   <div id="toast" role="status" hidden></div>
   <script type="module" src="/app.js"></script>
 </body>
