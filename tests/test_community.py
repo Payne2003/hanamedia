@@ -14,7 +14,7 @@ from runner.store import Store
 
 class CommunityTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp()).resolve()
         self.store = Store(self.root / "t.db")
 
     def tearDown(self):

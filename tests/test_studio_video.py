@@ -56,7 +56,7 @@ class OptionsTests(unittest.TestCase):
 
 class StudioStoreTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp()).resolve()
         self.store = Store(self.root / "t.db")
         self.store.add_accounts("a@tuan89.site\nb@tuan89.site", 100)
         self.a, self.b = [x["id"] for x in self.store.snapshot()["accounts"]]
@@ -109,7 +109,7 @@ class StudioStoreTests(unittest.TestCase):
 class PostProcessingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.media = Path(tempfile.mkdtemp())
+        cls.media = Path(tempfile.mkdtemp()).resolve()
         cls.small = make_video(cls.media / "small.mp4", "640x360", 1)
         cls.hd = make_video(cls.media / "hd.mp4", "1280x720", 1, audio=False)
         cls.tall = make_video(cls.media / "tall.mp4", "360x640", 2)
@@ -119,7 +119,7 @@ class PostProcessingTests(unittest.TestCase):
         shutil.rmtree(cls.media, ignore_errors=True)
 
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp()).resolve()
         self.store = Store(self.root / "t.db")
         self.store.add_account("a@tuan89.site", "", 100)
         self.engine = Engine(self.store, self.root)
@@ -199,7 +199,7 @@ class PostProcessingTests(unittest.TestCase):
 
 class StudioHTTPTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp()).resolve()
         self.store = Store(self.root / "t.db")
         self.store.add_account("a@tuan89.site", "", 100)
         self.stitched = []

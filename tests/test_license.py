@@ -32,7 +32,7 @@ class Clock:
 
 class LicenseTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp()).resolve()
         for folder in ("admin", "client"):
             (self.root / folder).mkdir()
         self.clock = Clock(date(2025, 3, 1))
@@ -177,7 +177,7 @@ class LicenseTests(unittest.TestCase):
 
 class LicenseHTTPTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp()).resolve()
         issuer_store = Store(self.root / "admin.db")
         self.issuer = LicenseManager(issuer_store, self.root / "issuer", trusted=[])
         public = self.issuer.init_signing_key()
