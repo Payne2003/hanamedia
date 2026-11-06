@@ -463,7 +463,7 @@ button.cd-thumb{padding:0;background:none;cursor:pointer}button.cd-thumb:disable
 .ld-dates{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .ld-perms #ldPerms{display:flex;flex-direction:column;gap:4px;margin-top:4px;padding:8px;border:1px solid var(--border);border-radius:10px}
 .ld-perms .check{flex-direction:row!important;font-size:var(--fs-sm)!important;color:var(--text)!important}
-.ld-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ld-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 .ld-key{display:flex;flex-direction:column;gap:6px}.ld-key textarea{min-height:90px;font:var(--fs-xs)/1.4 ui-monospace,Consolas,monospace}
 .rev-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--c-surface-3);font-size:var(--fs-md)}.rev-row b{margin-left:auto;color:var(--green)}.rev-row small{color:var(--muted)}
 .license-audit{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;font-size:var(--fs-sm)}
@@ -584,3 +584,13 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 .lm-machine code{font-size:var(--fs-md);overflow-wrap:anywhere;word-break:break-all;background:var(--c-input);padding:8px 10px;border-radius:var(--radius);border:1px solid var(--c-border);max-width:100%}
 .side-role{display:inline-block;margin:6px 0;padding:3px 10px;border-radius:var(--radius-pill);background:var(--c-accent-soft);color:var(--c-accent-text);font-size:var(--fs-xs);font-weight:600}
 .ld-perms .check.disabled{opacity:.45}
+
+/* Thu hồi online */
+.lm-online{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:var(--fs-sm);color:var(--muted)}
+.lm-online button{padding:5px 10px;font-size:var(--fs-sm)}
+.revoke-card{padding:14px 18px;margin-bottom:16px;display:flex;flex-direction:column;gap:10px}
+.revoke-card .rc-head{display:flex;align-items:center;gap:10px}.revoke-card h2{margin:0}
+.rc-actions{display:flex;gap:8px;flex-wrap:wrap}
+.rc-setup summary{cursor:pointer;font-weight:600;font-size:var(--fs-md)}
+.rc-setup ol{margin:8px 0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
+.rc-token{display:flex;gap:8px;flex-wrap:wrap}.rc-token input{flex:1 1 280px;min-width:0}

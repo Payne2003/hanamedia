@@ -52,6 +52,7 @@ class AppServer(ThreadingHTTPServer):
             engine.license_ok = lambda: self.license.allows("create_jobs")
         except AttributeError:
             pass
+        threading.Thread(target=self.license_watch, name="license-check", daemon=True).start()
         self.gemini_web = GeminiWebRunner(self.data_dir / "profiles" / "gemini-web")
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
         # Tài khoản chung: Gemini, ChatGPT, Flow dùng một hồ sơ Chrome (đăng nhập Google một lần).
@@ -64,6 +65,18 @@ class AppServer(ThreadingHTTPServer):
             self.shared.register("Flow", engine.release_flow)
         if store.setting("shared_google_profile") is True:
             self.apply_shared(True)
+
+    def license_watch(self):
+        """Máy khách: tải danh sách thu hồi khi mở app rồi mỗi giờ (lỗi mạng thì thử lại sau 10 phút)."""
+        stop = threading.Event()
+        stop.wait(3)
+        while True:
+            try:
+                if self.license.needs_check():
+                    self.license.check_revocations()
+            except Exception:  # không để luồng kiểm tra chết vì lỗi lạ (ví dụ CSDL đang bận)
+                pass
+            stop.wait(60)
 
     def apply_shared(self, enabled):
         """Bật/tắt tài khoản chung. Chỉ đổi khi không phần nào đang chạy; đóng mọi Chrome tự động đang rảnh."""
@@ -297,7 +310,19 @@ class Handler(BaseHTTPRequestHandler):
                 account, token = manager.renew(str(body.get("id")), body.get("plan"), body.get("amount"))
                 return self.reply({"ok": True, "account": account, "key": token})
             if path == "/api/license/lock":
-                return self.reply({"ok": True, "account": manager.set_locked(str(body.get("id")), body.get("locked") is True)})
+                account, revocation = manager.set_locked(str(body.get("id")), body.get("locked") is True)
+                return self.reply({"ok": True, "account": account, "revocation": revocation})
+            if path == "/api/license/delete":
+                if body.get("confirm") is not True:
+                    raise licensing.LicenseError("Cần xác nhận.")
+                return self.reply({"ok": True, "revocation": manager.delete_account(str(body.get("id")))})
+            if path == "/api/license/publisher":
+                return self.reply({"ok": True, "revocation": manager.set_publisher_token(body.get("token"))})
+            if path == "/api/license/publish":
+                return self.reply({"ok": True, "revocation": manager.publish()})
+            if path == "/api/license/check":
+                result = manager.check_revocations()
+                return self.reply({"ok": True, "check": result, "status": manager.status()})
             return self.reply({"error": "Không tìm thấy thao tác."}, 404)
         except (licensing.LicenseError, ValueError, TypeError) as error:
             return self.reply({"error": str(error) if isinstance(error, licensing.LicenseError) else "Dữ liệu không hợp lệ."}, 400)
@@ -339,7 +364,8 @@ class Handler(BaseHTTPRequestHandler):
             data["app_version"] = APP_VERSION
             status = self.server.license.status()
             data["license"] = {k: status.get(k) for k in ("state", "message", "allowed", "enforced", "role", "name",
-                                                           "expires", "days_left", "issuer", "issuer_mode")}
+                                                           "expires", "days_left", "issuer", "issuer_mode",
+                                                           "online_check", "checked_at", "check_error")}
             data["support"] = self.server.store.support_bar()
             data["community"] = self.server.store.community()
             shared = self.server.shared
