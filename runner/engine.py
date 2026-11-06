@@ -316,9 +316,13 @@ class Engine:
             if job.get("resolution") or self.store.batch_stitch(job["batch"]):
                 self.post_requests.put(job["id"])  # nâng độ phân giải / ghép video chạy riêng, không giữ tài khoản Muse
         except Exception as error:
-            message = str(error) if isinstance(error, MuseFailure) else "Bộ chạy gặp lỗi Chrome hoặc đọc/ghi file. Kiểm tra Muse và quyền ghi thư mục; không tự gửi lại."
+            known = isinstance(error, MuseFailure)
+            technical = "" if known else self.log_error(job, account, error)
+            message = str(error) if known else (
+                f"Bộ chạy gặp lỗi Chrome/trang Muse ({technical}). Chi tiết trong data/logs/runner.log; không tự gửi lại.")
+            alive = bool(browser) and self.alive(browser)
             session_ready = False
-            if browser:
+            if alive:
                 try:
                     session_ready = browser.session_ready()
                 except Exception:
@@ -328,10 +332,32 @@ class Engine:
                     if self.browsers.get(account["id"]) is browser:
                         self.browsers.pop(account["id"])
                 browser.close()
-            account_state = error.state if isinstance(error, MuseFailure) else "ready"
-            if not session_ready:
-                account_state = "attention"
+            account_state = error.state if known else "ready"
+            if alive and not session_ready:
+                account_state = "attention"  # Chrome còn mở nhưng Muse đã đăng xuất: cần người dùng đăng nhập lại
+            # Chrome bị đóng / treo: lần sau mở Chrome mới, KHÔNG dừng tài khoản.
+            if not known and self.store.requeue_unsent(job["id"], f"lỗi Chrome trước khi gửi ({technical})", account_state):
+                return
             self.store.finish(job["id"], error=message, account_state=account_state)
+
+    def log_error(self, job, account, error):
+        """Ghi lỗi kỹ thuật (không ghi prompt, cookie hay OTP) vào data/logs/runner.log; trả về tên lỗi ngắn gọn."""
+        import traceback
+        name = type(error).__name__
+        first = (str(error).strip().splitlines() or [""])[0][:160]
+        try:
+            folder = self.data / "logs"
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / "runner.log"
+            if path.exists() and path.stat().st_size > 2_000_000:
+                path.replace(folder / "runner.old.log")
+            stack = "".join(traceback.format_exception(type(error), error, error.__traceback__, limit=12))
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] tác vụ {job['id']} · tài khoản "
+                             f"{account.get('label') or account['id']} · {name}: {first}\n{stack}")
+        except OSError:
+            pass
+        return f"{name}: {first}" if first else name
 
     def login(self, account_id, review=False, keep=True, slots=None):
         with self.lock:

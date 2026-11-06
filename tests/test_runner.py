@@ -287,6 +287,87 @@ class StoreTests(unittest.TestCase):
         finally:
             engine.shutdown()
 
+    def test_chrome_error_before_submit_requeues_without_pausing_account(self):
+        account = self.account()
+        self.store.set_account(account["id"], "ready")
+        self.jobs(1)
+        engine = Engine(self.store, self.root / "engine-data")
+
+        class CrashingBrowser:
+            def __init__(self, profile, downloads, headless, phase):
+                self.downloads = Path(downloads)
+                self.driver = type("Driver", (), {"current_url": "https://muse.ai", "window_handles": ["main"]})()
+
+            def login(self, account):
+                pass
+
+            def set_download_directory(self, downloads):
+                pass
+
+            def session_ready(self):
+                return True
+
+            def generate(self, prompt, job_id, before_submit, automatic=True, images=None):
+                raise RuntimeError("stale element reference: element is not attached\nStacktrace: ...")
+
+            def close(self):
+                self.driver.window_handles = []
+
+        try:
+            with patch("runner.engine.MuseBrowser", CrashingBrowser):
+                for attempt in range(3):
+                    job, claimed = self.store.claim(1)
+                    engine.work(job, claimed, False, str(self.root / "output"), True)
+                    state = self.store.account(account["id"])["state"]
+                    self.assertEqual(state, "ready")  # lỗi Chrome không làm dừng tài khoản
+                    status = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]][0]
+                    if attempt < 2:
+                        self.assertEqual(status["status"], "waiting")  # chưa gửi: tự chạy lại
+                    else:
+                        self.assertEqual(status["status"], "error")
+                        self.assertIn("RuntimeError: stale element reference", status["error"])
+            log = (self.root / "engine-data" / "logs" / "runner.log").read_text(encoding="utf-8")
+            self.assertIn("RuntimeError", log)
+            self.assertNotIn("Prompt", log.split("RuntimeError")[0])  # không ghi nội dung prompt
+        finally:
+            engine.shutdown()
+
+    def test_chrome_error_after_submit_is_never_resent(self):
+        account = self.account()
+        self.store.set_account(account["id"], "ready")
+        self.jobs(1)
+        engine = Engine(self.store, self.root / "engine-data")
+
+        class SubmittedThenCrash:
+            def __init__(self, profile, downloads, headless, phase):
+                self.driver = type("Driver", (), {"current_url": "https://muse.ai", "window_handles": []})()
+
+            def login(self, account):
+                pass
+
+            def set_download_directory(self, downloads):
+                pass
+
+            def session_ready(self):
+                return True
+
+            def generate(self, prompt, job_id, before_submit, automatic=True, images=None):
+                before_submit()
+                raise RuntimeError("chrome not reachable")
+
+            def close(self):
+                pass
+
+        try:
+            with patch("runner.engine.MuseBrowser", SubmittedThenCrash):
+                job, claimed = self.store.claim(1)
+                engine.work(job, claimed, False, str(self.root / "output"), True)
+            status = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]][0]
+            self.assertEqual(status["status"], "error")
+            self.assertEqual(self.store.account(account["id"])["state"], "ready")  # Chrome chết: mở lại lần sau
+        finally:
+            engine.shutdown()
+
     def session_browser(self):
         class FakeBrowser:
             instances = []
