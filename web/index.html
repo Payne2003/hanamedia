@@ -65,7 +65,12 @@
           <p class="detail vs-note">Thông số được ghi vào yêu cầu gửi Muse (Muse tối đa 10 giây/cảnh). Video tải về nhỏ hơn độ phân giải đã chọn sẽ được tool phóng lên trên máy (giữ file gốc; phóng to không thêm chi tiết như AI).</p>
         </section>
         <div class="video-only">
-          <div class="field"><label for="parallel">Số luồng (tối đa 2 tài khoản chạy cùng lúc)</label><select id="parallel"><option value="1">1 tài khoản</option><option value="2" selected>2 tài khoản</option></select></div>
+          <div class="field"><label for="parallel">Số luồng (tối đa 2 tài khoản chạy cùng lúc)</label><select id="parallel"><option value="1">1 tài khoản</option><option value="2" selected>2 tài khoản</option></select><details class="field-help"><summary>Nên chọn bao nhiêu luồng?</summary><ul>
+<li>Mỗi luồng = <b>1 cửa sổ Chrome + 1 tài khoản Muse</b>, dùng khoảng 1–1,5 GB RAM (nặng hơn khi gắn nhiều ảnh tham chiếu, chọn 4K).</li>
+<li><b>Máy 8 GB RAM: chọn 1 luồng.</b> Máy 16 GB trở lên: 2 luồng.</li>
+<li>Nhiều luồng <b>không làm mỗi video nhanh hơn</b> (Muse tạo video mới là bước chậm). Chạy quá sức máy thì Chrome dễ treo, cảnh bị lỗi giữa chừng.</li>
+<li>Nhiều tài khoản Muse chạy cùng lúc trên một máy, một mạng dễ bị Muse để ý và giới hạn tài khoản. 2 luồng là mức an toàn.</li>
+</ul></details></div>
           <details class="advanced-settings"><summary>Thiết lập nâng cao</summary><div class="field"><label for="cost">Credit dự kiến / video</label><input id="cost" type="number" min="0.01" step="0.01" value="1"></div><div class="field"><label for="operation">Cách chạy</label><select id="operation"><option value="auto">Tự gửi prompt & tải video</option><option value="assisted">Điền sẵn prompt để tôi gửi & tải</option></select></div><label class="check"><input id="headless" type="checkbox"><span>Chạy ẩn cửa sổ Chrome</span></label><p class="detail">Một tài khoản xử lý một video tại một thời điểm. Credit là ngân sách dự kiến do bạn nhập.</p></details>
           <button id="create" class="primary full">🚀 Chạy ngay các luồng</button><button id="add" class="full">Chỉ thêm vào hàng đợi</button>
         </div>
