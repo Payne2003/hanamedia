@@ -49,8 +49,9 @@ ROLE_DEFAULTS = {
 ROLE_RANK = {role: rank for rank, role in enumerate(ROLES)}  # số nhỏ = quyền cao
 ISSUE_PERMISSIONS = ("create_users", "renew")  # có một trong hai thì máy được cấp/gia hạn key cho người dưới
 MAX_CHAIN = 3
-PLANS = {"1m": 1, "1y": 12, "3y": 36}
-PLAN_NAMES = {"1m": "1 tháng", "1y": "1 năm", "3y": "3 năm"}
+PLANS = {"trial": 0, "1m": 1, "1y": 12, "3y": 36}  # số tháng; gói dùng thử tính theo ngày (PLAN_DAYS)
+PLAN_DAYS = {"trial": 2}
+PLAN_NAMES = {"trial": "Dùng thử 2 ngày", "1m": "1 tháng", "1y": "1 năm", "3y": "3 năm"}
 PREFIX = "HANA1"
 REV_PREFIX = "HANAREV1"
 CHECK_INTERVAL = 3600  # máy khách tải danh sách thu hồi mỗi giờ (và mỗi lần mở app)
@@ -85,6 +86,13 @@ def add_months(start, months):
     year, month = start.year + month // 12, month % 12 + 1
     day = min(start.day, calendar.monthrange(year, month)[1])
     return date(year, month, day) - timedelta(days=1)
+
+
+def plan_end(start, plan):
+    """Ngày hết hạn của gói tính từ ngày bắt đầu (tính cả ngày bắt đầu): dùng thử 2 ngày 07/11 → 08/11."""
+    if plan in PLAN_DAYS:
+        return start + timedelta(days=PLAN_DAYS[plan] - 1)
+    return add_months(start, PLANS[plan])
 
 
 _MACHINE = None
@@ -636,7 +644,7 @@ class LicenseManager:
                     raise LicenseError("Không tìm thấy tài khoản.")
                 plan = data.get("plan") or row["plan"]
                 if plan not in PLANS:
-                    raise LicenseError("Chọn gói 1 tháng, 1 năm hoặc 3 năm.")
+                    raise LicenseError("Chọn gói dùng thử 2 ngày, 1 tháng, 1 năm hoặc 3 năm.")
                 start = parse_day(data.get("start"), date.fromisoformat(row["start"]))
                 expires = parse_day(data.get("expires"), date.fromisoformat(row["expires"]))
                 if expires < start:
@@ -656,9 +664,9 @@ class LicenseManager:
             else:
                 plan = data.get("plan")
                 if plan not in PLANS:
-                    raise LicenseError("Chọn gói 1 tháng, 1 năm hoặc 3 năm.")
+                    raise LicenseError("Chọn gói dùng thử 2 ngày, 1 tháng, 1 năm hoặc 3 năm.")
                 start = parse_day(data.get("start"), self.today())
-                expires = parse_day(data.get("expires"), add_months(start, PLANS[plan]))
+                expires = parse_day(data.get("expires"), plan_end(start, plan))
                 if expires < start:
                     raise LicenseError("Ngày hết hạn phải sau ngày bắt đầu.")
                 self.check_limits(context["limits"], record["role"], record["permissions"], expires, "create")
@@ -687,7 +695,7 @@ class LicenseManager:
         """Gia hạn: cộng thêm gói vào ngày hết hạn hiện tại (hoặc từ hôm nay nếu đã hết hạn), cấp key mới."""
         context = self.require_issuer()
         if plan not in PLANS:
-            raise LicenseError("Chọn gói 1 tháng, 1 năm hoặc 3 năm.")
+            raise LicenseError("Chọn gói dùng thử 2 ngày, 1 tháng, 1 năm hoặc 3 năm.")
         amount = self.amount(amount)
         with self.store.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -695,7 +703,7 @@ class LicenseManager:
             if not row:
                 raise LicenseError("Không tìm thấy tài khoản.")
             base = max(date.fromisoformat(row["expires"]) + timedelta(days=1), self.today())
-            expires = add_months(base, PLANS[plan])
+            expires = plan_end(base, plan)
             self.check_limits(context["limits"], None, None, expires, "renew")
             db.execute("UPDATE licenses SET plan=?,expires=?,locked=0,updated=? WHERE id=?",
                        (plan, expires.isoformat(), self.clock(), license_id))
