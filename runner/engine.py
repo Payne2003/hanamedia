@@ -11,6 +11,8 @@ from .flow import FLOW_URL  # noqa: E402  (flow.google.com)
 FLOW_LOGIN = object()  # yêu cầu đặc biệt trong hàng đợi Flow: mở Chrome thường để đăng nhập
 FLOW_CLOSE = object()  # đóng Chrome Flow do tool điều khiển (nhường hồ sơ Google chung)
 from .health import HealthMonitor
+
+MAX_PARALLEL = 2  # tối đa 2 Chrome Muse chạy cùng lúc (tạo video, đăng nhập hàng loạt, kiểm tra tài khoản)
 from .muse import MuseBrowser, MuseFailure
 from .video_tools import VideoError, needs_upscale, probe, size_for, stitch, target_size, upscale
 from .video_tools import request_spec
@@ -144,8 +146,8 @@ class Engine:
         thread.start()
 
     def start(self, limit, headless, automatic=True):
-        if type(limit) is not int or not 1 <= limit <= 20 or type(headless) is not bool or type(automatic) is not bool:
-            raise ValueError("Số tài khoản chạy đồng thời phải từ 1 đến 20.")
+        if type(limit) is not int or not 1 <= limit <= MAX_PARALLEL or type(headless) is not bool or type(automatic) is not bool:
+            raise ValueError(f"Số luồng (tài khoản chạy cùng lúc) tối đa {MAX_PARALLEL}.")
         destination = self.store.setting("output_folder")
         if not destination or not Path(destination).is_dir():
             raise ValueError("Chọn thư mục lưu trước khi chạy.")
@@ -383,8 +385,8 @@ class Engine:
     def login_all(self, parallel):
         """Đăng nhập lần lượt mọi tài khoản đang bật mà chưa sẵn sàng, tối đa `parallel` Chrome cùng lúc.
         Đăng nhập xong thì đóng Chrome (phiên lưu trong hồ sơ riêng) để không mở hàng trăm cửa sổ."""
-        if type(parallel) is not int or not 1 <= parallel <= 20:
-            raise ValueError("Số Chrome đăng nhập cùng lúc phải từ 1 đến 20.")
+        if type(parallel) is not int or not 1 <= parallel <= MAX_PARALLEL:
+            raise ValueError(f"Số Chrome đăng nhập cùng lúc tối đa {MAX_PARALLEL}.")
         with self.lock:
             if self.closing:
                 raise ValueError("Bộ chạy đang tắt.")

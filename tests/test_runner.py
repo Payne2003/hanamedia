@@ -332,6 +332,20 @@ class StoreTests(unittest.TestCase):
         finally:
             engine.shutdown()
 
+    def test_at_most_two_parallel_accounts(self):
+        engine = Engine(self.store, self.root / "engine-data")
+        try:
+            self.store.save_setting("output_folder", str(self.root))
+            for limit in (3, 5, 20):
+                with self.assertRaisesRegex(ValueError, "tối đa 2"):
+                    engine.start(limit, False)
+                with self.assertRaisesRegex(ValueError, "tối đa 2"):
+                    engine.login_all(limit)
+            engine.start(2, False)
+            self.assertEqual(engine.limit, 2)
+        finally:
+            engine.shutdown()
+
     def test_chrome_error_after_submit_is_never_resent(self):
         account = self.account()
         self.store.set_account(account["id"], "ready")

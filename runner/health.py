@@ -36,8 +36,8 @@ class HealthMonitor:
         self.last_results = {}
 
     def set_parallel(self, parallel):
-        if type(parallel) is not int or not 1 <= parallel <= 4:
-            raise ValueError("Số Chrome kiểm tra cùng lúc phải từ 1 đến 4.")
+        if type(parallel) is not int or not 1 <= parallel <= 2:
+            raise ValueError("Số Chrome kiểm tra cùng lúc tối đa 2.")
         self.parallel = parallel
 
     def request(self, account_ids):
