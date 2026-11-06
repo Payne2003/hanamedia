@@ -580,3 +580,7 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 #queueTable .prompt-text{font-size:var(--fs-sm);color:var(--c-text-2)}
 .composer select,.composer input,.composer textarea{font-size:var(--fs-sm)}
 .license-table th{letter-spacing:.2px}
+.lm-machine{align-items:flex-start;flex-direction:column;gap:6px}
+.lm-machine code{font-size:var(--fs-md);overflow-wrap:anywhere;word-break:break-all;background:var(--c-input);padding:8px 10px;border-radius:var(--radius);border:1px solid var(--c-border);max-width:100%}
+.side-role{display:inline-block;margin:6px 0;padding:3px 10px;border-radius:var(--radius-pill);background:var(--c-accent-soft);color:var(--c-accent-text);font-size:var(--fs-xs);font-weight:600}
+.ld-perms .check.disabled{opacity:.45}

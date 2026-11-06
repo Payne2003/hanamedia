@@ -339,7 +339,7 @@ class Handler(BaseHTTPRequestHandler):
             data["app_version"] = APP_VERSION
             status = self.server.license.status()
             data["license"] = {k: status.get(k) for k in ("state", "message", "allowed", "enforced", "role", "name",
-                                                           "expires", "days_left", "issuer")}
+                                                           "expires", "days_left", "issuer", "issuer_mode")}
             data["support"] = self.server.store.support_bar()
             data["community"] = self.server.store.community()
             shared = self.server.shared
@@ -375,7 +375,7 @@ class Handler(BaseHTTPRequestHandler):
             manager = self.server.license
             data = {"status": manager.status(), "roles": licensing.ROLE_NAMES, "permissions": licensing.PERMISSION_NAMES,
                     "defaults": licensing.ROLE_DEFAULTS, "plans": licensing.PLAN_NAMES}
-            if manager.signing_key():
+            if manager.issuer_context():
                 data["dashboard"] = manager.dashboard()
             return self.reply(data)
         if path == "/api/library":

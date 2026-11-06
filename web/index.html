@@ -20,7 +20,7 @@
       <button type="button" data-nav="community" id="navCommunity"><i>👥</i>Cộng đồng</button>
       <button type="button" data-nav="settings" id="navSettings"><i>⚙</i>Cài đặt</button>
     </nav>
-    <div class="sidebar-foot"><span id="connection" class="connection">Đang kết nối…</span><span class="running-pill"><i></i><b id="headerRuns">0</b> luồng đang chạy</span><small id="appVersion">v1.0.0</small></div>
+    <div class="sidebar-foot"><span id="connection" class="connection">Đang kết nối…</span><span class="running-pill"><i></i><b id="headerRuns">0</b> luồng đang chạy</span><span id="sideRole" class="side-role" hidden></span><small id="appVersion">v1.0.0</small></div>
   </aside>
   <div class="app-main">
   <div class="support-bar" role="region" aria-label="Hỗ trợ">
@@ -123,7 +123,7 @@
         <div class="lm-head"><h2>Bản quyền của máy này</h2><span id="licenseChip" class="status-chip">—</span></div>
         <p id="licenseMessage" class="detail"></p>
         <dl id="licenseInfo" class="license-info"></dl>
-        <div class="lm-machine">Mã máy: <code id="licenseMachine">—</code><button type="button" id="copyMachine">📋 Sao chép mã máy</button><small>Gửi mã máy cho người bán để nhận key.</small></div>
+        <div class="lm-machine"><span>Mã máy</span><code id="licenseMachine">—</code><button type="button" id="copyMachine">📋 Sao chép mã máy</button><small>Gửi nguyên chuỗi này cho người bán để nhận key. Nếu được cấp role quản lý, máy này sẽ tự cấp key được cho khách của mình.</small></div>
         <form id="licenseActivate" class="lm-activate"><textarea id="licenseKey" rows="3" spellcheck="false" placeholder="Dán key HANA1.… vào đây"></textarea><div><button type="submit" class="primary">Kích hoạt</button><button type="button" id="licenseRemove" class="danger-outline">Gỡ key</button></div></form>
       </section>
       <details id="issuerInit" class="card license-init" hidden><summary>Dành cho Super Admin: khởi tạo khóa ký trên máy này</summary>
@@ -132,6 +132,7 @@
       </details>
       <div id="issuerPanel" hidden>
         <div id="issuerTrust" class="notice" hidden></div>
+        <div id="issuerScope" class="notice" hidden></div>
         <div id="licenseStats" class="license-stats"></div>
         <div class="license-grid">
           <section class="card license-list"><div class="ll-head"><h2>Danh sách tài khoản</h2><input id="licenseSearch" type="search" placeholder="Tìm theo tên, email…"><button type="button" id="licenseAdd" class="primary">+ Thêm tài khoản</button></div>
@@ -144,7 +145,7 @@
             <label>Role<select id="ldRole"></select></label>
             <div class="ld-plan"><span>Gói sử dụng</span><div id="ldPlans" class="ld-plans"></div></div>
             <div class="ld-dates"><label>Ngày bắt đầu<input id="ldStart" type="date"></label><label>Ngày hết hạn<input id="ldExpires" type="date" disabled></label></div>
-            <label>Mã máy được dùng <small>(mỗi dòng một mã; để trống = máy nào cũng được)</small><textarea id="ldDevices" rows="2" spellcheck="false" placeholder="ABCD-1234-EF56-7890"></textarea></label>
+            <label>Mã máy được dùng <small>(dán nguyên chuỗi khách gửi, mỗi dòng một máy; để trống = máy nào cũng được, nhưng khi đó máy đó không được quyền quản lý)</small><textarea id="ldDevices" rows="2" spellcheck="false" placeholder="ABCD-1234-EF56-7890.xxxxxxxxxxxxxxxx"></textarea></label>
             <label>Quota video <small>(0 = không giới hạn)</small><input id="ldQuota" type="number" min="0" step="1" value="0"></label>
             <label id="ldAmountWrap">Số tiền thu (VNĐ)<input id="ldAmount" type="number" min="0" step="1000" value="0"></label>
             <div class="ld-perms"><span>Quyền (Permissions)</span><div id="ldPerms"></div></div>
