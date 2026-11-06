@@ -137,16 +137,24 @@ VIDEO_REFUSAL = ("không tạo được video", "không thể tạo video", "kh�
                  "unable to create this video", "can't make this video", "can't create that video")
 
 
+REGION_WORDS = re.compile(r"quốc gia|khu vực|country|region|territor")
+UNAVAILABLE = re.compile(r"không khả dụng|chưa khả dụng|không hỗ trợ|chưa hỗ trợ|not available|isn't available|unavailable|"
+                         r"not supported|isn't supported")
+REFUSAL = re.compile(r"(không|chưa)\s+(thể\s+)?(tiếp tục\s+)?tạo\s+(được\s+)?(đoạn\s+)?video|"
+                     r"(can't|cannot|can not|unable to|won't)\s+(continue\s+)?(create|generate|make|produce)\s+(this|that|the|a)?\s*video")
+
+
 def reply_problem(text):
     """(thông báo, trạng thái tài khoản) nếu câu trả lời của Muse cho thấy không có video; None nếu chưa thấy."""
     text = re.sub(r"\s+", " ", str(text or "")).lower()
     if not text:
         return None
-    if "video" in text and any(t in text for t in REGION_BLOCK):
+    if "video" in text and (any(t in text for t in REGION_BLOCK)
+                            or (REGION_WORDS.search(text) and UNAVAILABLE.search(text))):
         return ("Muse báo tài khoản này không dùng được tính năng tạo video ở quốc gia/khu vực của tài khoản. "
                 "Đây là giới hạn của tài khoản, không phải do prompt; gửi lại cũng không được. Tài khoản đã tạm dừng — "
                 "dùng tài khoản Muse khác có tính năng tạo video.", "attention")
-    if any(t in text for t in VIDEO_REFUSAL):
+    if any(t in text for t in VIDEO_REFUSAL) or REFUSAL.search(text):
         return ("Muse trả lời bằng chữ và không tạo video cho prompt này (xem câu trả lời trên Muse). "
                 "Tool không tự gửi lại; sửa prompt rồi tạo lại.", "ready")
     return None
