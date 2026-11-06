@@ -400,6 +400,16 @@ class DelegationTests(unittest.TestCase):
         _, token = self.root_m.save_account(data)
         return self.agent.activate(token)
 
+    def test_device_key_is_created_once_under_concurrency(self):
+        from concurrent.futures import ThreadPoolExecutor
+        folder = self.root / "fresh"
+        folder.mkdir()
+        fresh = LicenseManager(Store(folder / "t.db"), folder, trusted=[self.public])
+        with ThreadPoolExecutor(16) as pool:
+            codes = set(pool.map(lambda _: fresh.request_code(), range(64)))
+        self.assertEqual(len(codes), 1)
+        self.assertEqual(sorted(p.name for p in (folder / "license").iterdir()), ["device.key"])
+
     def test_request_code_and_root_owner(self):
         code = self.customer.request_code()
         self.assertRegex(code, r"^[0-9A-F]{4}(-[0-9A-F]{4}){3}\.[A-Za-z0-9_-]{43}$")

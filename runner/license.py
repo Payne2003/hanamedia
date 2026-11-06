@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -57,6 +58,9 @@ RETRY_INTERVAL = 600  # đang mất kết nối: thử lại mỗi 10 phút
 GRACE_DAYS = 3  # không kiểm tra được quá số ngày này thì tạm khóa đến khi có mạng
 MACHINE = re.compile(r"^[0-9A-F]{4}(-[0-9A-F]{4}){3}$")
 PUBLIC = re.compile(r"^[A-Za-z0-9_-]{43}$")
+
+
+_KEY_LOCK = threading.Lock()
 
 
 class LicenseError(ValueError):
@@ -318,14 +322,27 @@ class LicenseManager:
             return None
 
     def write_key(self, path):
+        """Tạo khóa mới; không ghi đè khóa đã có (nêu FileExistsError). Ghi file tạm rồi mới đặt tên thật để luồng khác
+        không bao giờ đọc phải file rỗng / ghi dở."""
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
         from cryptography.hazmat.primitives import serialization
         raw = Ed25519PrivateKey.generate().private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
                                                           serialization.NoEncryption())
         self.dir.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        temp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as handle:
             handle.write(b64(raw))
+        try:
+            os.link(temp, path)  # nguyên tử, lỗi nếu khóa đã tồn tại
+        except FileExistsError:
+            raise
+        except OSError:  # hệ thống file không hỗ trợ hard link
+            if path.exists():
+                raise FileExistsError(path) from None
+            os.replace(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
         return raw
 
     def signing_key(self):
@@ -338,10 +355,14 @@ class LicenseManager:
         raw = self.read_key(path)
         if raw:
             return raw
-        try:
-            return self.write_key(path)
-        except FileExistsError:
-            return self.read_key(path)
+        with _KEY_LOCK:
+            raw = self.read_key(path)
+            if raw:
+                return raw
+            try:
+                return self.write_key(path)
+            except FileExistsError:
+                return self.read_key(path)
 
     def device_public(self):
         return b64(public_from_private(self.device_key()))

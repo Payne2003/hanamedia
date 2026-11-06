@@ -127,6 +127,31 @@ def compose_request(prompt, job_id, use_images=False, spec=""):
     return instruction + "\n\n" + prompt + ("\n\n" + spec if spec else "") + "\n\nMã tác vụ: " + job_id
 
 
+# Muse trả lời bằng chữ thay vì tạo video. Chỉ đọc câu trả lời NẰM SAU mã tác vụ của chính prompt vừa gửi.
+REGION_BLOCK = ("quốc gia/khu vực của bạn", "quốc gia/ khu vực của bạn", "quốc gia hoặc khu vực của bạn",
+                "khu vực của bạn", "not available in your country", "not available in your region",
+                "isn't available in your country", "isn't available in your region", "not available for your account",
+                "không khả dụng với tài khoản")
+VIDEO_REFUSAL = ("không tạo được video", "không thể tạo video", "không tạo được đoạn video", "chưa thể tạo video",
+                 "can't create this video", "cannot create this video", "can't generate this video",
+                 "unable to create this video", "can't make this video", "can't create that video")
+
+
+def reply_problem(text):
+    """(thông báo, trạng thái tài khoản) nếu câu trả lời của Muse cho thấy không có video; None nếu chưa thấy."""
+    text = re.sub(r"\s+", " ", str(text or "")).lower()
+    if not text:
+        return None
+    if "video" in text and any(t in text for t in REGION_BLOCK):
+        return ("Muse báo tài khoản này không dùng được tính năng tạo video ở quốc gia/khu vực của tài khoản. "
+                "Đây là giới hạn của tài khoản, không phải do prompt; gửi lại cũng không được. Tài khoản đã tạm dừng — "
+                "dùng tài khoản Muse khác có tính năng tạo video.", "attention")
+    if any(t in text for t in VIDEO_REFUSAL):
+        return ("Muse trả lời bằng chữ và không tạo video cho prompt này (xem câu trả lời trên Muse). "
+                "Tool không tự gửi lại; sửa prompt rồi tạo lại.", "ready")
+    return None
+
+
 def valid_mp4(path):
     """Require a complete ISO BMFF container, including media and metadata."""
     path = Path(path)
@@ -660,6 +685,21 @@ return false;
         raise MuseFailure(f"Muse chưa tải lên xong ảnh nhân vật ({max(added, 0)}/{len(files)} ảnh sau {timeout} giây"
                           f"{', vẫn đang tải' if state['busy'] else ''}). Chưa gửi prompt; có thể chạy lại.")
 
+    def reply_text(self, marker):
+        """Chữ Muse trả lời sau prompt có mã tác vụ này (không đọc prompt của người dùng)."""
+        try:
+            return self.driver.execute_script("""
+                const marker=arguments[0];
+                for (const log of document.querySelectorAll('[role="log"]')) {
+                  const ps=[...log.querySelectorAll('p')];
+                  let i=-1; ps.forEach((p,k)=>{ if (p.innerText.includes(marker)) i=k; });
+                  if (i>=0) return ps.slice(i+1).map(p=>p.innerText).join(' ').slice(0,4000);
+                }
+                return '';
+            """, marker) or ""
+        except Exception:
+            return ""
+
     @staticmethod
     def card_key(card):
         buttons = card.find_elements("css selector", "[role='button'][aria-label]")
@@ -726,6 +766,9 @@ return false;
                     break
             if new_card:
                 break
+            problem = reply_problem(self.reply_text(marker))
+            if problem:
+                raise MuseFailure(*problem)
             time.sleep(3)
         if not new_card:
             raise MuseFailure("Đã gửi prompt nhưng chưa nhận video sau 20 phút. Kiểm tra Muse trước khi tạo lại.")
