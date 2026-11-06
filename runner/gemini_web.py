@@ -248,12 +248,20 @@ class GeminiWebSession:
         options.add_argument("--lang=vi-VN")
         options.add_argument("--window-size=1280,1000")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        try:
-            self.driver = webdriver.Chrome(options=options, service=Service(log_output=os.devnull))
-            self.driver.set_page_load_timeout(90)
-        except Exception as error:
-            raise GeminiWebError(f"Không mở được Chrome cho {self.NAME}. Đóng cửa sổ {self.NAME} cũ của tool (nếu có) rồi thử lại. "
-                                 f"Chi tiết: {error}") from error
+        from .chrome_profile import free_profile, short_error
+        for attempt in range(2):
+            try:
+                self.driver = webdriver.Chrome(options=options, service=Service(log_output=os.devnull))
+                self.driver.set_page_load_timeout(90)
+                break
+            except Exception as error:
+                # Lần đầu lỗi: thường do Chrome cũ của chính tool còn giữ hồ sơ. Đóng nó rồi thử lại một lần.
+                if attempt == 0:
+                    free_profile(profile)
+                    continue
+                raise GeminiWebError(f"Không mở được Chrome cho {self.NAME} (đã thử đóng Chrome cũ đang giữ hồ sơ). "
+                                     f"Đóng hết cửa sổ Chrome của tool, khởi động lại app rồi thử lại. "
+                                     f"Chi tiết: {short_error(error)}") from error
 
     def alive(self):
         try:

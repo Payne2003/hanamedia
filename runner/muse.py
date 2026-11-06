@@ -208,12 +208,19 @@ class MuseBrowser:
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
         })
-        try:
-            self.driver = webdriver.Chrome(options=options, service=Service(log_output=os.devnull))
-            self.driver.set_page_load_timeout(60)
-            self.driver.set_script_timeout(30)
-        except Exception:
-            raise MuseFailure("Không khởi động được Chrome. Kiểm tra Chrome, kết nối mạng và đóng phiên tool dùng cùng tài khoản.") from None
+        from .chrome_profile import free_profile, short_error
+        for attempt in range(2):
+            try:
+                self.driver = webdriver.Chrome(options=options, service=Service(log_output=os.devnull))
+                self.driver.set_page_load_timeout(60)
+                self.driver.set_script_timeout(30)
+                break
+            except Exception as error:
+                if attempt == 0:  # Chrome cũ của tool còn giữ hồ sơ tài khoản này: đóng nó rồi thử lại một lần
+                    free_profile(profile)
+                    continue
+                raise MuseFailure("Không khởi động được Chrome (đã thử đóng Chrome cũ đang giữ hồ sơ tài khoản). "
+                                  f"Kiểm tra Chrome rồi khởi động lại app. Chi tiết: {short_error(error)}") from None
 
     def close(self):
         try:
