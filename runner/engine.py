@@ -11,6 +11,8 @@ from .flow import FLOW_URL  # noqa: E402  (flow.google.com)
 FLOW_LOGIN = object()  # yêu cầu đặc biệt trong hàng đợi Flow: mở Chrome thường để đăng nhập
 FLOW_CLOSE = object()  # đóng Chrome Flow do tool điều khiển (nhường hồ sơ Google chung)
 from .health import HealthMonitor
+
+MAX_PARALLEL = 2  # tối đa 2 Chrome Muse chạy cùng lúc (tạo video, đăng nhập hàng loạt, kiểm tra tài khoản)
 from .muse import MuseBrowser, MuseFailure
 from .video_tools import VideoError, needs_upscale, probe, size_for, stitch, target_size, upscale
 from .video_tools import request_spec
@@ -144,8 +146,8 @@ class Engine:
         thread.start()
 
     def start(self, limit, headless, automatic=True):
-        if type(limit) is not int or not 1 <= limit <= 20 or type(headless) is not bool or type(automatic) is not bool:
-            raise ValueError("Số tài khoản chạy đồng thời phải từ 1 đến 20.")
+        if type(limit) is not int or not 1 <= limit <= MAX_PARALLEL or type(headless) is not bool or type(automatic) is not bool:
+            raise ValueError(f"Số luồng (tài khoản chạy cùng lúc) tối đa {MAX_PARALLEL}.")
         destination = self.store.setting("output_folder")
         if not destination or not Path(destination).is_dir():
             raise ValueError("Chọn thư mục lưu trước khi chạy.")
@@ -316,9 +318,13 @@ class Engine:
             if job.get("resolution") or self.store.batch_stitch(job["batch"]):
                 self.post_requests.put(job["id"])  # nâng độ phân giải / ghép video chạy riêng, không giữ tài khoản Muse
         except Exception as error:
-            message = str(error) if isinstance(error, MuseFailure) else "Bộ chạy gặp lỗi Chrome hoặc đọc/ghi file. Kiểm tra Muse và quyền ghi thư mục; không tự gửi lại."
+            known = isinstance(error, MuseFailure)
+            technical = "" if known else self.log_error(job, account, error)
+            message = str(error) if known else (
+                f"Bộ chạy gặp lỗi Chrome/trang Muse ({technical}). Chi tiết trong data/logs/runner.log; không tự gửi lại.")
+            alive = bool(browser) and self.alive(browser)
             session_ready = False
-            if browser:
+            if alive:
                 try:
                     session_ready = browser.session_ready()
                 except Exception:
@@ -328,10 +334,32 @@ class Engine:
                     if self.browsers.get(account["id"]) is browser:
                         self.browsers.pop(account["id"])
                 browser.close()
-            account_state = error.state if isinstance(error, MuseFailure) else "ready"
-            if not session_ready:
-                account_state = "attention"
+            account_state = error.state if known else "ready"
+            if alive and not session_ready:
+                account_state = "attention"  # Chrome còn mở nhưng Muse đã đăng xuất: cần người dùng đăng nhập lại
+            # Chrome bị đóng / treo: lần sau mở Chrome mới, KHÔNG dừng tài khoản.
+            if not known and self.store.requeue_unsent(job["id"], f"lỗi Chrome trước khi gửi ({technical})", account_state):
+                return
             self.store.finish(job["id"], error=message, account_state=account_state)
+
+    def log_error(self, job, account, error):
+        """Ghi lỗi kỹ thuật (không ghi prompt, cookie hay OTP) vào data/logs/runner.log; trả về tên lỗi ngắn gọn."""
+        import traceback
+        name = type(error).__name__
+        first = (str(error).strip().splitlines() or [""])[0][:160]
+        try:
+            folder = self.data / "logs"
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / "runner.log"
+            if path.exists() and path.stat().st_size > 2_000_000:
+                path.replace(folder / "runner.old.log")
+            stack = "".join(traceback.format_exception(type(error), error, error.__traceback__, limit=12))
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] tác vụ {job['id']} · tài khoản "
+                             f"{account.get('label') or account['id']} · {name}: {first}\n{stack}")
+        except OSError:
+            pass
+        return f"{name}: {first}" if first else name
 
     def login(self, account_id, review=False, keep=True, slots=None):
         with self.lock:
@@ -357,8 +385,8 @@ class Engine:
     def login_all(self, parallel):
         """Đăng nhập lần lượt mọi tài khoản đang bật mà chưa sẵn sàng, tối đa `parallel` Chrome cùng lúc.
         Đăng nhập xong thì đóng Chrome (phiên lưu trong hồ sơ riêng) để không mở hàng trăm cửa sổ."""
-        if type(parallel) is not int or not 1 <= parallel <= 20:
-            raise ValueError("Số Chrome đăng nhập cùng lúc phải từ 1 đến 20.")
+        if type(parallel) is not int or not 1 <= parallel <= MAX_PARALLEL:
+            raise ValueError(f"Số Chrome đăng nhập cùng lúc tối đa {MAX_PARALLEL}.")
         with self.lock:
             if self.closing:
                 raise ValueError("Bộ chạy đang tắt.")

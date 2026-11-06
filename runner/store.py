@@ -119,6 +119,8 @@ class Store:
                 "resolution": "TEXT NOT NULL DEFAULT ''",
                 "post_status": "TEXT NOT NULL DEFAULT ''",
                 "upscaled_output": "TEXT",
+                # Số lần bộ chạy tự đưa lại hàng đợi vì lỗi Chrome TRƯỚC khi gửi (prompt chưa tới Muse).
+                "auto_retries": "INTEGER NOT NULL DEFAULT 0",
                 **JOB_COLUMNS,  # scene_id, images_origin (Character Master)
             }
             for name, declaration in migrations.items():
@@ -783,6 +785,24 @@ class Store:
             db.execute("""UPDATE batch_options SET stitch_status='',stitch_error='' WHERE stitch=1
                           AND batch=(SELECT batch FROM jobs WHERE id=?)""", (job_id,))
         self.plan_waiting()
+
+    AUTO_RETRIES = 2
+
+    def requeue_unsent(self, job_id, note, account_state="ready"):
+        """Lỗi Chrome/trang Muse TRƯỚC khi gửi (submitted=0, Muse chưa nhận prompt): tự đưa tác vụ về hàng đợi, cho tài
+        khoản khác nhận, tối đa AUTO_RETRIES lần. Trả về True nếu đã đưa lại; False nếu đã gửi hoặc hết lượt."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            job = db.execute("SELECT * FROM jobs WHERE id=? AND status='running'", (job_id,)).fetchone()
+            if not job or job["submitted"] or job["auto_retries"] >= self.AUTO_RETRIES:
+                return False
+            db.execute("UPDATE accounts SET budget=budget+?,state=?,detail=? WHERE id=?",
+                       (job["cost"], account_state, note, job["account_id"]))
+            assigned = job["assigned_account_id"] if job["assigned_manual"] else None
+            db.execute("""UPDATE jobs SET status='waiting',phase=?,progress=0,error='',account_id=NULL,
+                          assigned_account_id=?,auto_retries=auto_retries+1,updated=? WHERE id=?""",
+                       (f"Tự chạy lại (lần {job['auto_retries'] + 1}): {note}"[:300], assigned, time.time(), job_id))
+            return True
 
     def retry(self, job_id):
         with self.connect() as db:

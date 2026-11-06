@@ -336,7 +336,8 @@ class HealthHTTPTests(unittest.TestCase):
         self.assertEqual(self.post("/api/accounts/check", {"id": account_id}), (200, {"ok": True, "queued": 1, "busy": []}))
         self.assertEqual(self.requests, [[account_id]])
         self.assertEqual(self.post("/api/accounts/check-all", {"parallel": 9})[0], 400)
-        self.assertEqual(self.post("/api/accounts/check-all", {"parallel": 3})[0], 200)
+        self.assertEqual(self.post("/api/accounts/check-all", {"parallel": 3})[0], 400)
+        self.assertEqual(self.post("/api/accounts/check-all", {"parallel": 2})[0], 200)
 
     def test_state_exposes_health_but_no_secrets(self):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)

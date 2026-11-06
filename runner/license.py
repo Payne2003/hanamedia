@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -48,8 +49,9 @@ ROLE_DEFAULTS = {
 ROLE_RANK = {role: rank for rank, role in enumerate(ROLES)}  # số nhỏ = quyền cao
 ISSUE_PERMISSIONS = ("create_users", "renew")  # có một trong hai thì máy được cấp/gia hạn key cho người dưới
 MAX_CHAIN = 3
-PLANS = {"1m": 1, "1y": 12, "3y": 36}
-PLAN_NAMES = {"1m": "1 tháng", "1y": "1 năm", "3y": "3 năm"}
+PLANS = {"trial": 0, "1m": 1, "1y": 12, "3y": 36}  # số tháng; gói dùng thử tính theo ngày (PLAN_DAYS)
+PLAN_DAYS = {"trial": 2}
+PLAN_NAMES = {"trial": "Dùng thử 2 ngày", "1m": "1 tháng", "1y": "1 năm", "3y": "3 năm"}
 PREFIX = "HANA1"
 REV_PREFIX = "HANAREV1"
 CHECK_INTERVAL = 3600  # máy khách tải danh sách thu hồi mỗi giờ (và mỗi lần mở app)
@@ -57,6 +59,9 @@ RETRY_INTERVAL = 600  # đang mất kết nối: thử lại mỗi 10 phút
 GRACE_DAYS = 3  # không kiểm tra được quá số ngày này thì tạm khóa đến khi có mạng
 MACHINE = re.compile(r"^[0-9A-F]{4}(-[0-9A-F]{4}){3}$")
 PUBLIC = re.compile(r"^[A-Za-z0-9_-]{43}$")
+
+
+_KEY_LOCK = threading.Lock()
 
 
 class LicenseError(ValueError):
@@ -81,6 +86,13 @@ def add_months(start, months):
     year, month = start.year + month // 12, month % 12 + 1
     day = min(start.day, calendar.monthrange(year, month)[1])
     return date(year, month, day) - timedelta(days=1)
+
+
+def plan_end(start, plan):
+    """Ngày hết hạn của gói tính từ ngày bắt đầu (tính cả ngày bắt đầu): dùng thử 2 ngày 07/11 → 08/11."""
+    if plan in PLAN_DAYS:
+        return start + timedelta(days=PLAN_DAYS[plan] - 1)
+    return add_months(start, PLANS[plan])
 
 
 _MACHINE = None
@@ -318,14 +330,27 @@ class LicenseManager:
             return None
 
     def write_key(self, path):
+        """Tạo khóa mới; không ghi đè khóa đã có (nêu FileExistsError). Ghi file tạm rồi mới đặt tên thật để luồng khác
+        không bao giờ đọc phải file rỗng / ghi dở."""
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
         from cryptography.hazmat.primitives import serialization
         raw = Ed25519PrivateKey.generate().private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
                                                           serialization.NoEncryption())
         self.dir.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        temp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as handle:
             handle.write(b64(raw))
+        try:
+            os.link(temp, path)  # nguyên tử, lỗi nếu khóa đã tồn tại
+        except FileExistsError:
+            raise
+        except OSError:  # hệ thống file không hỗ trợ hard link
+            if path.exists():
+                raise FileExistsError(path) from None
+            os.replace(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
         return raw
 
     def signing_key(self):
@@ -338,10 +363,14 @@ class LicenseManager:
         raw = self.read_key(path)
         if raw:
             return raw
-        try:
-            return self.write_key(path)
-        except FileExistsError:
-            return self.read_key(path)
+        with _KEY_LOCK:
+            raw = self.read_key(path)
+            if raw:
+                return raw
+            try:
+                return self.write_key(path)
+            except FileExistsError:
+                return self.read_key(path)
 
     def device_public(self):
         return b64(public_from_private(self.device_key()))
@@ -615,7 +644,7 @@ class LicenseManager:
                     raise LicenseError("Không tìm thấy tài khoản.")
                 plan = data.get("plan") or row["plan"]
                 if plan not in PLANS:
-                    raise LicenseError("Chọn gói 1 tháng, 1 năm hoặc 3 năm.")
+                    raise LicenseError("Chọn gói dùng thử 2 ngày, 1 tháng, 1 năm hoặc 3 năm.")
                 start = parse_day(data.get("start"), date.fromisoformat(row["start"]))
                 expires = parse_day(data.get("expires"), date.fromisoformat(row["expires"]))
                 if expires < start:
@@ -635,9 +664,9 @@ class LicenseManager:
             else:
                 plan = data.get("plan")
                 if plan not in PLANS:
-                    raise LicenseError("Chọn gói 1 tháng, 1 năm hoặc 3 năm.")
+                    raise LicenseError("Chọn gói dùng thử 2 ngày, 1 tháng, 1 năm hoặc 3 năm.")
                 start = parse_day(data.get("start"), self.today())
-                expires = parse_day(data.get("expires"), add_months(start, PLANS[plan]))
+                expires = parse_day(data.get("expires"), plan_end(start, plan))
                 if expires < start:
                     raise LicenseError("Ngày hết hạn phải sau ngày bắt đầu.")
                 self.check_limits(context["limits"], record["role"], record["permissions"], expires, "create")
@@ -666,7 +695,7 @@ class LicenseManager:
         """Gia hạn: cộng thêm gói vào ngày hết hạn hiện tại (hoặc từ hôm nay nếu đã hết hạn), cấp key mới."""
         context = self.require_issuer()
         if plan not in PLANS:
-            raise LicenseError("Chọn gói 1 tháng, 1 năm hoặc 3 năm.")
+            raise LicenseError("Chọn gói dùng thử 2 ngày, 1 tháng, 1 năm hoặc 3 năm.")
         amount = self.amount(amount)
         with self.store.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -674,7 +703,7 @@ class LicenseManager:
             if not row:
                 raise LicenseError("Không tìm thấy tài khoản.")
             base = max(date.fromisoformat(row["expires"]) + timedelta(days=1), self.today())
-            expires = add_months(base, PLANS[plan])
+            expires = plan_end(base, plan)
             self.check_limits(context["limits"], None, None, expires, "renew")
             db.execute("UPDATE licenses SET plan=?,expires=?,locked=0,updated=? WHERE id=?",
                        (plan, expires.isoformat(), self.clock(), license_id))

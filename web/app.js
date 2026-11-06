@@ -1124,7 +1124,9 @@ function fillLicenseForm(account){
   $('ldKeyBox').hidden=true;
 }
 function renderPerms(selected){const allowed=licenseData.dashboard?.scope?.permissions||Object.keys(licenseData.permissions);$('ldPerms').innerHTML=Object.entries(licenseData.permissions).map(([k,v])=>`<label class="check${allowed.includes(k)?'':' disabled'}"><input type="checkbox" value="${k}" ${selected.includes(k)&&allowed.includes(k)?'checked':''} ${allowed.includes(k)?'':'disabled'}><span>${esc(v)}</span></label>`).join('');}
-function updateExpiryPreview(account){$('ldExpires').value=account?account.expires:addMonthsJs($('ldStart').value||new Date().toISOString().slice(0,10),{'1m':1,'1y':12,'3y':36}[licensePlan]);}
+function updateExpiryPreview(account){if(account){$('ldExpires').value=account.expires;return;}const start=$('ldStart').value||new Date().toISOString().slice(0,10);
+  if(licensePlan==='trial'){const [y,m,d]=start.split('-').map(Number);const e=new Date(y,m-1,d+1);$('ldExpires').value=`${e.getFullYear()}-${String(e.getMonth()+1).padStart(2,'0')}-${String(e.getDate()).padStart(2,'0')}`;return;}
+  $('ldExpires').value=addMonthsJs(start,{'1m':1,'1y':12,'3y':36}[licensePlan]);}
 function showKey(key,name){$('ldKey').value=key;$('ldKeyName').textContent=name?`Key gửi khách: ${name}`:'Key gửi khách';$('ldKeyBox').hidden=false;$('ldKey').select();}
 $('ldRole').onchange=()=>renderPerms(licenseData.defaults[$('ldRole').value]);
 $('ldPlans').onchange=e=>{licensePlan=e.target.value;updateExpiryPreview(null);};
@@ -1143,7 +1145,7 @@ $('ldSave').onclick=async()=>{
 };
 async function renewAccount(id){
   const a=licenseData.dashboard.accounts.find(x=>x.id===id);if(!a)return;
-  const plan=prompt(`Gia hạn "${a.name}" (hết hạn ${dmy(a.expires)}).\nNhập gói: 1m = 1 tháng, 1y = 1 năm, 3y = 3 năm`,'1y');if(plan===null)return;
+  const plan=prompt(`Gia hạn "${a.name}" (hết hạn ${dmy(a.expires)}).\nNhập gói: 1m = 1 tháng, 1y = 1 năm, 3y = 3 năm, trial = thêm 2 ngày dùng thử`,'1y');if(plan===null)return;
   const amount=prompt('Số tiền thu (VNĐ, để 0 nếu không tính):','0');if(amount===null)return;
   try{const r=await api('/api/license/renew',{id,plan:plan.trim(),amount:Number(amount)||0});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();showKey(r.key,r.account.name);toast(`Đã gia hạn tới ${dmy(r.account.expires)}. Gửi key mới cho khách.`);}catch(error){toast(error.message,true);}
 }
