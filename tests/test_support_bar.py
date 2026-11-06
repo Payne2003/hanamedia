@@ -15,7 +15,7 @@ PNG = b"\x89PNG\r\n\x1a\nqr-fixture"
 
 class SupportBarTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp()).resolve()
         self.store = Store(self.root / "t.db")
 
     def tearDown(self):

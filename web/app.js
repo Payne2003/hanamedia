@@ -2,6 +2,11 @@ const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let state=null,key='',filter='all',busy=false,pendingBatch=null,toastTimer,visibleJobs=[],mode='text',libraryImages=[];
 const selectedJobs=new Set(),promptImages=new Map();
+let licenseData=null,licenseEditing=null,licensePlan='1y';
+const licenseStates={not_enforced:['Chưa bật khóa bản quyền','approved'],owner:['Super Admin','approved'],active:['Đang hoạt động','approved'],expiring:['Sắp hết hạn','review'],expired:['Hết hạn','error'],missing:['Chưa kích hoạt','error'],invalid:['Key không hợp lệ','error'],wrong_device:['Sai máy','error'],clock:['Sai đồng hồ','error'],not_started:['Chưa tới ngày','review']};
+const accountStates={active:['Đang hoạt động','approved'],expiring:['Sắp hết hạn','review'],expired:['Hết hạn','error'],locked:['Đã khóa','error']};
+const vnd=n=>Number(n||0).toLocaleString('vi-VN')+' đ';
+const dmy=d=>d?d.split('-').reverse().join('/'):'—';
 let communitySig='';
 const VIDEO_KEY='hana-video-settings';
 let fixedCharacters=[];
@@ -63,7 +68,7 @@ function renderJobs(){
     const thumbnail=job.status==='done'&&job.output
       ?`<button class="video-thumb" type="button" data-play="${job.id}" aria-label="Xem video ${esc(job.name)}"><video data-thumb-job="${job.id}" data-video-src="/api/media/${job.id}" muted playsinline preload="none"></video><span class="thumb-play">▶</span><span class="thumb-placeholder">▶</span></button>`
       :job.image_count?`<img src="/api/image/${job.id}/0" alt="Ảnh tham chiếu" loading="lazy">`:'<span class="thumb-placeholder">▣</span>';
-    return `<tr class="${job.status==='running'?'is-running':''}"><td class="select-col"><input class="job-select" data-select-job="${job.id}" type="checkbox" aria-label="Chọn ${esc(job.name)}" ${selectedJobs.has(job.id)?'checked':''} ${job.status==='running'?'disabled':''}></td><td>${esc(job.name.replace('Prompt ','')||'—')}</td><td class="thumb-col"><div class="job-thumb">${thumbnail}</div></td><td class="prompt-cell"><strong>${esc(job.name)}</strong>${job.status==='done'&&job.output?`<span class="job-filename">${esc(job.output.split(/[\\\\/]/).pop())}</span>`:''}<div class="prompt-text" title="${esc(job.prompt)}">${esc(job.prompt)}</div></td><td><span class="type-label">${job.generation_mode==='image'?`▧ Ảnh → video · ${job.image_count} ảnh`:'▣ Video'}</span></td><td>${videoSpecCell(job)}</td><td><span class="account-chip">${esc(accounts.get(assigned)||(assigned&&job.status!=='waiting'?'TK đã xóa':'Chờ tài khoản'))}</span></td><td><span class="badge ${esc(job.status)}">${esc(statusNames[job.status])}</span><div class="job-progress ${esc(job.status)}" role="progressbar" aria-label="Tiến độ ${esc(job.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span data-progress="${progress}"></span></div><div class="progress-caption"><b>${estimated?'~':''}${progress}%</b><span class="detail ${job.error?'error':''}" title="${esc(job.error||job.phase)}">${esc(progressLabel)}</span></div></td><td><div class="row-actions"><button data-copy="${job.id}" title="Chép prompt" aria-label="Chép prompt">⧉</button>${job.status==='error'&&!job.submitted?`<button data-retry="${job.id}" title="Thử lại" aria-label="Thử lại">↻</button>`:''}${job.status==='done'?`<button data-play="${job.id}" title="Xem video" aria-label="Xem video">◉</button><a href="/api/video/${job.id}" title="Tải video" aria-label="Tải video">⇩</a>`:''}${job.account_id&&job.status==='error'?`<button data-review="${job.account_id}" title="Mở phiên Muse" aria-label="Mở phiên Muse">↗</button>`:''}</div></td></tr>`;
+    return `<tr class="${job.status==='running'?'is-running':''}"><td class="select-col"><input class="job-select" data-select-job="${job.id}" type="checkbox" aria-label="Chọn ${esc(job.name)}" ${selectedJobs.has(job.id)?'checked':''} ${job.status==='running'?'disabled':''}></td><td>${esc(job.name.replace('Prompt ','')||'—')}</td><td class="thumb-col"><div class="job-thumb">${thumbnail}</div></td><td class="prompt-cell"><strong>${esc(job.name)}</strong>${job.status==='done'&&job.output?`<span class="job-filename">${esc(job.output.split(/[\\\\/]/).pop())}</span>`:''}<div class="prompt-text" title="${esc(job.prompt)}">${esc(job.prompt)}</div></td><td><span class="type-label">${job.generation_mode==='image'?`▧ Ảnh → video<small>${job.image_count} ảnh tham chiếu</small>`:'▣ Prompt → video'}</span></td><td>${videoSpecCell(job)}</td><td><span class="account-chip">${esc(accounts.get(assigned)||(assigned&&job.status!=='waiting'?'TK đã xóa':'Chờ tài khoản'))}</span></td><td><span class="badge ${esc(job.status)}">${esc(statusNames[job.status])}</span><div class="job-progress ${esc(job.status)}" role="progressbar" aria-label="Tiến độ ${esc(job.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span data-progress="${progress}"></span></div><div class="progress-caption"><b>${estimated?'~':''}${progress}%</b><span class="detail ${job.error?'error':''}" title="${esc(job.error||job.phase)}">${esc(progressLabel)}</span></div></td><td><div class="row-actions"><button data-copy="${job.id}" title="Chép prompt" aria-label="Chép prompt">⧉</button>${job.status==='error'&&!job.submitted?`<button data-retry="${job.id}" title="Thử lại" aria-label="Thử lại">↻</button>`:''}${job.status==='done'?`<button data-play="${job.id}" title="Xem video" aria-label="Xem video">◉</button><a href="/api/video/${job.id}" title="Tải video" aria-label="Tải video">⇩</a>`:''}${job.account_id&&job.status==='error'?`<button data-review="${job.account_id}" title="Mở phiên Muse" aria-label="Mở phiên Muse">↗</button>`:''}</div></td></tr>`;
   }).join('');
   // Chính sách bảo mật (CSP) chặn style="..." trong HTML: đặt độ rộng thanh tiến độ bằng JS.
   $('rows').querySelectorAll('[data-progress]').forEach(bar=>bar.style.width=`${bar.dataset.progress}%`);
@@ -243,19 +248,20 @@ function renderScenes(){
 const CONTENT_VERSION='content-19';
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
-  const isContent=view==='content',isSettings=view==='settings',isMedia=view==='media',isCommunity=view==='community';
-  $('jobView').hidden=true;$('studioView').hidden=isContent||isSettings||isMedia||isCommunity;$('communityView').hidden=!isCommunity;$('contentView').hidden=!isContent;$('settingsView').hidden=!isSettings;$('mediaView').hidden=!isMedia;
+  const isContent=view==='content',isSettings=view==='settings',isMedia=view==='media',isCommunity=view==='community',isLicense=view==='license';
+  $('jobView').hidden=true;$('studioView').hidden=isContent||isSettings||isMedia||isCommunity||isLicense;$('communityView').hidden=!isCommunity;$('licenseView').hidden=!isLicense;$('contentView').hidden=!isContent;$('settingsView').hidden=!isSettings;$('mediaView').hidden=!isMedia;
   if(isMedia)loadMedia();
   if(isCommunity)renderCommunity();
+  if(isLicense)loadLicense();
   if(isSettings){applyAutoSettings(true);renderSettings(true);}
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
   if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);renderEnglishEngine();openCharacters();}
-  const hash=isContent?'#content':isSettings?'#settings':isMedia?'#media':isCommunity?'#community':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
+  const hash=isContent?'#content':isSettings?'#settings':isMedia?'#media':isCommunity?'#community':isLicense?'#license':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);markSidebar();
 }
 document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>showView(b.dataset.nav));
 $('closeContent').onclick=()=>showView('studio');
-window.addEventListener('hashchange',()=>{if(/^#job=/.test(location.hash))return;showView(location.hash==='#content'?'content':location.hash==='#settings'?'settings':location.hash==='#media'?'media':location.hash==='#community'?'community':'studio');});
+window.addEventListener('hashchange',()=>{if(/^#job=/.test(location.hash))return;showView(location.hash==='#content'?'content':location.hash==='#settings'?'settings':location.hash==='#media'?'media':location.hash==='#community'?'community':location.hash==='#license'?'license':'studio');});
 $('contentBrief').oninput=()=>{content.brief=$('contentBrief').value;saveContent();};
 $('contentVideo').oninput=()=>{content.video=$('contentVideo').value.trim();saveContent();};
 $('contentLanguage').onchange=()=>{content.language=$('contentLanguage').value;saveContent();};
@@ -423,7 +429,7 @@ $('downloadEnglish').onclick=()=>{const blob=new Blob([$('englishOutput').value]
 let studioJob=null,studioEditing=false,studioImages=[],studioMode='text';
 const statusLabel={waiting:'Chờ',running:'Đang chạy',done:'Xong',error:'Lỗi'};
 function jobViewShown(){return !$('jobView').hidden;}
-function setJobView(show){$('jobView').hidden=!show;if(show){$('studioView').hidden=true;$('communityView').hidden=true;$('contentView').hidden=true;$('mediaView').hidden=true;document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav==='studio'));window.scrollTo(0,0);}}
+function setJobView(show){$('jobView').hidden=!show;if(show){$('studioView').hidden=true;$('communityView').hidden=true;$('licenseView').hidden=true;$('contentView').hidden=true;$('mediaView').hidden=true;document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav==='studio'));window.scrollTo(0,0);}}
 async function openJob(id){
   try{
     const response=await fetch('/api/job/'+id+(charPrefs.projectId?'?project='+charPrefs.projectId:''));const data=await response.json();if(!response.ok)throw Error(data.error||'Không mở được prompt.');
@@ -666,8 +672,8 @@ function renderOverview(){
   $('overviewStats').innerHTML=tiles.map(([label,value,note])=>`<div class="overview-tile"><small>${esc(label)}</small><b>${esc(String(value))}</b><span>${esc(note)}</span></div>`).join('');
 }
 function markSidebar(){
-  const content=!$('contentView').hidden,settings=!$('settingsView').hidden,media=!$('mediaView').hidden,community=!$('communityView').hidden;
-  $('navStudio').classList.toggle('active',!content&&!settings&&!media&&!community);$('navCommunity').classList.toggle('active',community);$('openLibrary').classList.toggle('active',media);$('navSettings').classList.toggle('active',settings);$('openContent').classList.toggle('active',content);
+  const content=!$('contentView').hidden,settings=!$('settingsView').hidden,media=!$('mediaView').hidden,community=!$('communityView').hidden,licensePage=!$('licenseView').hidden;
+  $('navStudio').classList.toggle('active',!content&&!settings&&!media&&!community&&!licensePage);$('navCommunity').classList.toggle('active',community);$('navLicense').classList.toggle('active',licensePage);$('openLibrary').classList.toggle('active',media);$('navSettings').classList.toggle('active',settings);$('openContent').classList.toggle('active',content);
 }
 document.querySelectorAll('.stepper [data-step]').forEach(b=>b.onclick=()=>setStep(Number(b.dataset.step)));
 document.addEventListener('click',e=>{const go=e.target.closest('[data-goto-step]');if(go)setStep(Number(go.dataset.gotoStep));});
@@ -711,7 +717,7 @@ $('sharedAccount').onchange=()=>{const enabled=$('sharedAccount').checked;
   if(enabled&&!confirm('Dùng một tài khoản Google cho Gemini, ChatGPT và Google Flow?\n\nTool sẽ đóng các cửa sổ Chrome đang rảnh và dùng một hồ sơ chung. Lần đầu cần đăng nhập lại một lần.')){$('sharedAccount').checked=false;return;}
   action(async()=>{try{await api('/api/settings/shared-account',{enabled});toast(enabled?'Đã bật tài khoản chung. Bấm “Đăng nhập tài khoản chung”.':'Đã tắt tài khoản chung: mỗi phần dùng lại hồ sơ riêng.');}catch(error){$('sharedAccount').checked=!enabled;throw error;}renderSettings(true);});};
 $('sharedLogin').onclick=()=>action(async()=>{await api('/api/shared-login',{});$('sharedLogin').blur();toast('Đã mở Chrome thường với 3 tab: Google, ChatGPT, Flow. Đăng nhập xong thì đóng hẳn cửa sổ đó.');});
-renderMode();await refresh();if(state?.content?.web?.busy)autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(state?.content?.chatgpt?.busy)chatJob={id:state.content.chatgpt.id,kind:state.content.chatgpt.kind};for(const [engine,web] of [['gemini',state?.content?.web],['chatgpt',state?.content?.chatgpt]])if(web?.busy&&web.kind==='characters')charJob={id:web.id,engine};if(location.hash==='#content')showView('content');else if(location.hash==='#media')showView('media');else if(location.hash==='#community')showView('community');else if(location.hash==='#settings')showView('settings');{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(m)openJob(m[1]);}setInterval(refresh,2000);
+renderMode();await refresh();if(state?.content?.web?.busy)autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(state?.content?.chatgpt?.busy)chatJob={id:state.content.chatgpt.id,kind:state.content.chatgpt.kind};for(const [engine,web] of [['gemini',state?.content?.web],['chatgpt',state?.content?.chatgpt]])if(web?.busy&&web.kind==='characters')charJob={id:web.id,engine};if(location.hash==='#content')showView('content');else if(location.hash==='#media')showView('media');else if(location.hash==='#community')showView('community');else if(location.hash==='#license')showView('license');else if(location.hash==='#settings')showView('settings');{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(m)openJob(m[1]);}setInterval(refresh,2000);
 
 document.addEventListener('click',e=>{const b=e.target.closest('[data-review],[data-close-review]');if(!b)return;action(async()=>{await api(b.dataset.review?'/api/review':'/api/review-close',{id:b.dataset.review||b.dataset.closeReview});b.blur();toast(b.dataset.review?'Đang mở đúng phiên tài khoản. Đóng phiên trong mục Tài khoản khi kiểm tra xong.':'Đang đóng phiên kiểm tra.');});});
 
@@ -973,7 +979,7 @@ function renderFixedCharacters(){
 }
 function renderNickOptions(){
   const select=$('vAccount'),want=select.dataset.want??select.value;delete select.dataset.want;
-  const options='<option value="">🔄 Xoay vòng các nick sẵn sàng</option>'+state.accounts.map((a,i)=>`<option value="${a.id}">Nick ${i+1} · ${esc(a.email)}${a.state==='ready'?'':a.state==='attention'?' (cần kiểm tra)':''}</option>`).join('');
+  const options='<option value="">🔄 Xoay vòng nick</option>'+state.accounts.map((a,i)=>`<option value="${a.id}">Nick ${i+1} · ${esc(a.email)}${a.state==='ready'?'':a.state==='attention'?' (cần kiểm tra)':''}</option>`).join('');
   if(select.dataset.sig!==options){select.innerHTML=options;select.dataset.sig=options;}
   select.value=state.accounts.some(a=>a.id===want)?want:'';
 }
@@ -1037,3 +1043,96 @@ for(const [form,kind] of [['communityGroupForm','groups'],['communityVideoForm',
 }
 $('communityCopyPhone').onclick=()=>$('copySupportPhone').click();
 setInterval(()=>{if(!$('communityView').hidden)renderCommunity(false);},1000);
+
+// ===== Bản quyền & phân quyền (key ký số) =====
+function addMonthsJs(iso,months){const [y,m,d]=iso.split('-').map(Number);const t=new Date(y,m-1+months,1);const last=new Date(t.getFullYear(),t.getMonth()+1,0).getDate();const e=new Date(t.getFullYear(),t.getMonth(),Math.min(d,last));e.setDate(e.getDate()-1);return `${e.getFullYear()}-${String(e.getMonth()+1).padStart(2,'0')}-${String(e.getDate()).padStart(2,'0')}`;}
+function renderLicenseBanner(){
+  const l=state?.license;if(!l)return;const ok=['not_enforced','owner','active'].includes(l.state);
+  $('licenseBanner').hidden=ok&&l.state!=='expiring';
+  $('licenseBanner').className='license-banner'+(l.state==='expiring'?' warn':'');
+  $('licenseBannerText').textContent=`🔑 ${l.message}`;
+  if(l.state==='expiring')$('licenseBanner').hidden=false;
+}
+setInterval(renderLicenseBanner,1500);
+async function loadLicense(){
+  try{const r=await fetch('/api/license');licenseData=await r.json();if(!r.ok)throw Error(licenseData.error);renderLicense();}catch(error){toast(error.message||'Không tải được thông tin bản quyền.',true);}
+}
+function renderLicense(){
+  const d=licenseData,st=d.status,[label,cls]=licenseStates[st.state]||[st.state,''];
+  $('licenseChip').textContent=label;$('licenseChip').className='status-chip '+cls;$('licenseMessage').textContent=st.message;
+  $('licenseMachine').textContent=st.machine;
+  const rows=st.id?[['Tài khoản',st.name],['Role',d.roles[st.role]||st.role],['Gói',d.plans[st.plan]||st.plan],['Bắt đầu',dmy(st.start)],['Hết hạn',dmy(st.expires)],['Quota video',st.quota?`${st.used}/${st.quota}`:'Không giới hạn']]:[];
+  $('licenseInfo').innerHTML=rows.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
+  $('licenseActivate').hidden=!st.enforced||st.state==='owner';
+  $('licenseRemove').hidden=!st.id;
+  $('issuerInit').hidden=st.issuer;$('issuerPanel').hidden=!st.issuer;
+  if(!st.issuer)return;
+  $('issuerTrust').hidden=st.issuer_trusted;
+  $('issuerTrust').innerHTML=st.issuer_trusted?'':`<b>Khóa công khai của bạn chưa được gắn cứng vào app.</b> Key bạn tạo đã ký được, nhưng app phát cho khách chỉ chấp nhận khi khóa công khai dưới đây được gắn vào bản đóng gói. Sao chép và gửi chuỗi này cho người đóng gói app:<code class="pubkey">${esc(st.public_key)}</code><button type="button" id="copyPubkey">📋 Sao chép khóa công khai</button>`;
+  const db=d.dashboard,s=db.stats;
+  $('licenseStats').innerHTML=[['👥','Tổng tài khoản',s.total,''],['👑','Tài khoản Admin',s.admins,''],['⚠','Sắp hết hạn (≤ 7 ngày)',s.expiring,'warn'],['▶','Đang hoạt động',s.active,'ok'],['💰','Doanh thu',vnd(s.revenue),'']].map(([i,l,v,c])=>`<div class="license-stat ${c}"><span>${i}</span><div><small>${esc(l)}</small><b>${esc(String(v))}</b></div></div>`).join('');
+  renderLicenseRows();
+  $('licenseRenewals').innerHTML=db.events.filter(e=>e.action==='create'||e.action==='renew').map(e=>`<tr><td>${new Date(e.at*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'})}</td><td>${esc(e.name||'—')}</td><td>${esc(d.plans[e.plan]||e.plan)} · ${e.action==='create'?'Tạo mới':'Gia hạn'}</td><td>${dmy(e.expires)}</td><td>${vnd(e.amount)}</td></tr>`).join('')||'<tr><td colspan="5" class="detail">Chưa có giao dịch.</td></tr>';
+  const perms=Object.keys(d.permissions);
+  $('matrixHead').innerHTML=`<tr><th>ROLE</th>${perms.map(p=>`<th>${esc(d.permissions[p])}</th>`).join('')}</tr>`;
+  $('matrixRows').innerHTML=Object.keys(d.roles).map(r=>`<tr><td>${esc(d.roles[r])}</td>${perms.map(p=>`<td class="${d.defaults[r].includes(p)?'yes':'no'}">${d.defaults[r].includes(p)?'✓':'—'}</td>`).join('')}</tr>`).join('');
+  $('licenseRevenue').innerHTML=db.revenue.length?db.revenue.map(r=>`<div class="rev-row"><span>${esc(r.month)}</span><b>${vnd(r.total)}</b><small>${r.count} giao dịch</small></div>`).join(''):'<p class="detail">Chưa có doanh thu. Nhập số tiền khi tạo hoặc gia hạn tài khoản.</p>';
+  $('licenseAudit').innerHTML=db.events.slice(0,60).map(e=>`<div><time>${new Date(e.at*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'})}</time><span>${esc(e.detail||e.action)}</span></div>`).join('')||'<p class="detail">Chưa có nhật ký.</p>';
+  if(!licenseEditing)fillLicenseForm(null);
+}
+function renderLicenseRows(){
+  const d=licenseData,q=$('licenseSearch').value.trim().toLowerCase();
+  const list=d.dashboard.accounts.filter(a=>!q||a.name.toLowerCase().includes(q)||a.email.includes(q));
+  $('licenseRows').innerHTML=list.map((a,i)=>{const [label,cls]=accountStates[a.state];return `<tr class="${licenseEditing===a.id?'selected':''}"><td>${i+1}</td><td><b>${esc(a.name)}</b><small>${esc(a.email)}</small></td><td><span class="role-chip ${a.role}">${esc(d.roles[a.role])}</span></td><td>${esc(d.plans[a.plan]||a.plan)}</td><td>${dmy(a.expires)}</td><td>${a.quota?a.quota.toLocaleString('vi-VN'):'∞'}</td><td>${a.devices.length||'Mọi máy'}</td><td><span class="status-chip ${cls}">${label}</span></td><td class="row-actions"><button type="button" data-license-edit="${a.id}" title="Xem / sửa chi tiết">✎</button><button type="button" data-license-renew="${a.id}" title="Gia hạn">↻</button><button type="button" data-license-key="${a.id}" title="Sao chép key">📋</button></td></tr>`;}).join('')||'<tr><td colspan="9" class="detail">Chưa có tài khoản. Bấm “+ Thêm tài khoản”.</td></tr>';
+  const scroller=$('licenseRows').closest('.table-scroll');if(scroller)scroller.scrollLeft=0;
+}
+function fillLicenseForm(account){
+  const d=licenseData;licenseEditing=account?.id||null;
+  $('ldTitle').textContent=account?'Chi tiết tài khoản':'Thêm tài khoản';
+  $('ldRole').innerHTML=Object.entries(d.roles).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('');
+  $('ldName').value=account?.name||'';$('ldEmail').value=account?.email||'';$('ldRole').value=account?.role||'user';
+  licensePlan=account?.plan||'1y';
+  $('ldPlans').innerHTML=Object.entries(d.plans).map(([k,v])=>`<label class="ld-plan-opt"><input type="radio" name="ldPlan" value="${k}" ${k===licensePlan?'checked':''} ${account?'disabled':''}> ${esc(v)}</label>`).join('');
+  $('ldStart').value=account?.start||new Date().toISOString().slice(0,10);$('ldStart').disabled=Boolean(account);
+  $('ldDevices').value=(account?.devices||[]).join('\n');$('ldQuota').value=account?.quota||0;$('ldAmount').value=0;$('ldAmountWrap').hidden=Boolean(account);
+  renderPerms(account?.permissions||d.defaults[$('ldRole').value]);
+  updateExpiryPreview(account);
+  $('ldRenew').disabled=$('ldLock').disabled=!account;$('ldLock').textContent=account?.state==='locked'?'🔓 Mở khóa':'🔒 Khóa';
+  $('ldSave').textContent=account?'💾 Lưu thay đổi & tạo key mới':'💾 Lưu & tạo key';
+  $('ldKeyBox').hidden=true;
+}
+function renderPerms(selected){$('ldPerms').innerHTML=Object.entries(licenseData.permissions).map(([k,v])=>`<label class="check"><input type="checkbox" value="${k}" ${selected.includes(k)?'checked':''}><span>${esc(v)}</span></label>`).join('');}
+function updateExpiryPreview(account){$('ldExpires').value=account?account.expires:addMonthsJs($('ldStart').value||new Date().toISOString().slice(0,10),{'1m':1,'1y':12,'3y':36}[licensePlan]);}
+function showKey(key){$('ldKey').value=key;$('ldKeyBox').hidden=false;$('ldKey').select();}
+$('ldRole').onchange=()=>renderPerms(licenseData.defaults[$('ldRole').value]);
+$('ldPlans').onchange=e=>{licensePlan=e.target.value;updateExpiryPreview(null);};
+$('ldStart').onchange=()=>updateExpiryPreview(null);
+$('licenseAdd').onclick=()=>{fillLicenseForm(null);$('ldName').focus();};
+$('licenseSearch').oninput=renderLicenseRows;
+$('ldSave').onclick=async()=>{
+  const body={id:licenseEditing,name:$('ldName').value,email:$('ldEmail').value,role:$('ldRole').value,plan:licensePlan,start:$('ldStart').value,
+    devices:$('ldDevices').value,quota:Number($('ldQuota').value)||0,amount:Number($('ldAmount').value)||0,
+    permissions:[...$('ldPerms').querySelectorAll('input:checked')].map(x=>x.value)};
+  try{const r=await api('/api/license/accounts',body);await loadLicense();fillLicenseForm(r.account);renderLicenseRows();showKey(r.key);toast('Đã lưu và tạo key. Sao chép key gửi cho khách.');}catch(error){toast(error.message,true);}
+};
+async function renewAccount(id){
+  const a=licenseData.dashboard.accounts.find(x=>x.id===id);if(!a)return;
+  const plan=prompt(`Gia hạn "${a.name}" (hết hạn ${dmy(a.expires)}).\nNhập gói: 1m = 1 tháng, 1y = 1 năm, 3y = 3 năm`,'1y');if(plan===null)return;
+  const amount=prompt('Số tiền thu (VNĐ, để 0 nếu không tính):','0');if(amount===null)return;
+  try{const r=await api('/api/license/renew',{id,plan:plan.trim(),amount:Number(amount)||0});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();showKey(r.key);toast(`Đã gia hạn tới ${dmy(r.account.expires)}. Gửi key mới cho khách.`);}catch(error){toast(error.message,true);}
+}
+$('ldRenew').onclick=()=>licenseEditing&&renewAccount(licenseEditing);
+$('ldLock').onclick=async()=>{const a=licenseData.dashboard.accounts.find(x=>x.id===licenseEditing);if(!a)return;
+  try{const r=await api('/api/license/lock',{id:a.id,locked:a.state!=='locked'});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();toast(r.account.state==='locked'?'Đã khóa: sẽ không gia hạn tài khoản này.':'Đã mở khóa.');}catch(error){toast(error.message,true);}};
+$('licenseRows').onclick=e=>{const edit=e.target.closest('[data-license-edit]'),renew=e.target.closest('[data-license-renew]'),key=e.target.closest('[data-license-key]');
+  const find=id=>licenseData.dashboard.accounts.find(a=>a.id===id);
+  if(edit){fillLicenseForm(find(edit.dataset.licenseEdit));renderLicenseRows();$('licenseDetail').scrollIntoView({behavior:'smooth',block:'start'});}
+  if(renew)renewAccount(renew.dataset.licenseRenew);
+  if(key){const a=find(key.dataset.licenseKey);navigator.clipboard.writeText(a.token).then(()=>toast(`Đã sao chép key của ${a.name}.`)).catch(()=>{fillLicenseForm(a);showKey(a.token);});}};
+$('ldCopyKey').onclick=()=>navigator.clipboard.writeText($('ldKey').value).then(()=>toast('Đã sao chép key.')).catch(()=>toast('Chọn và sao chép key trong ô.',true));
+$('copyMachine').onclick=()=>navigator.clipboard.writeText($('licenseMachine').textContent).then(()=>toast('Đã sao chép mã máy.')).catch(()=>toast('Chọn và sao chép mã máy.',true));
+document.addEventListener('click',e=>{if(e.target.id==='copyPubkey')navigator.clipboard.writeText(licenseData.status.public_key).then(()=>toast('Đã sao chép khóa công khai.')).catch(()=>toast('Chọn và sao chép chuỗi khóa.',true));});
+$('licenseActivate').onsubmit=e=>{e.preventDefault();action(async()=>{const r=await api('/api/license/activate',{key:$('licenseKey').value});$('licenseKey').value='';await loadLicense();toast(r.status.message);});};
+$('licenseRemove').onclick=()=>{if(!confirm('Gỡ key bản quyền khỏi máy này?'))return;action(async()=>{await api('/api/license/deactivate',{});await loadLicense();toast('Đã gỡ key.');});};
+$('issuerInitButton').onclick=()=>{if(!confirm('Khởi tạo khóa Super Admin trên máy này?\n\nChỉ làm trên máy của người bán. Khóa ký được lưu trong thư mục dữ liệu: hãy sao lưu và KHÔNG gửi cho ai.'))return;
+  action(async()=>{await api('/api/license/init-signing',{confirm:true});await loadLicense();toast('Đã tạo khóa Super Admin. Sao chép khóa công khai để gắn vào app.');});};

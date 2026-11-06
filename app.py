@@ -24,6 +24,7 @@ from runner.profiles import SharedProfile
 from runner.engine import Engine
 from runner.characters import NeedsConfirm
 from runner.media import MediaError, MediaInUse
+from runner import license as licensing
 from runner.store import Store
 from runner.instance import InstanceLock
 from runner.paths import data_root, frozen, resource_root
@@ -46,6 +47,11 @@ class AppServer(ThreadingHTTPServer):
         if store.setting("gemini_api_key"):  # Chế độ Gemini API đã bỏ: không giữ khóa API cũ trên máy.
             store.save_setting("gemini_api_key", "")
         self.data_dir = Path(store.path).parent
+        self.license = licensing.LicenseManager(store, self.data_dir)
+        try:  # hết hạn trong lúc đang chạy: bộ chạy ngừng nhận tác vụ mới (tác vụ đang chạy vẫn làm xong)
+            engine.license_ok = lambda: self.license.allows("create_jobs")
+        except AttributeError:
+            pass
         self.gemini_web = GeminiWebRunner(self.data_dir / "profiles" / "gemini-web")
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
         # Tài khoản chung: Gemini, ChatGPT, Flow dùng một hồ sơ Chrome (đăng nhập Google một lần).
@@ -236,14 +242,78 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             return self.reply({"error": "Không ghi được file vào thư mục dữ liệu. Kiểm tra dung lượng ổ đĩa và quyền ghi."}, 500)
 
+    # Bản quyền: chạy video / tải media cần quyền tương ứng còn hạn. Xem dữ liệu, cài đặt, kích hoạt luôn được phép.
+    JOB_PATHS = {"/api/jobs", "/api/start", "/api/jobs/update", "/api/jobs/rerun", "/api/retry", "/api/batch/stitch",
+                 "/api/jobs/characters", "/api/jobs/attach-characters", "/api/login", "/api/accounts/login-all",
+                 "/api/review", "/api/accounts/check", "/api/accounts/check-all"}
+    MEDIA_PATHS = {"/api/media/upload", "/api/media/delete-batch", "/api/library/image-upload", "/api/image-upload",
+                   "/api/library/delete", "/api/library/import-flow"}
+
+    def required_permission(self, method, path):
+        if method in ("PATCH", "DELETE") and path.startswith("/api/media/item/"):
+            return "upload_media"
+        if path in self.MEDIA_PATHS:
+            return "upload_media"
+        if path in self.JOB_PATHS or path.startswith("/api/content/") and path not in (
+                "/api/content/web-settings", "/api/content/web-stop"):
+            return "create_jobs"
+        return None
+
+    def license_blocked(self, method, path):
+        """Trả về True (và đã trả lời 403) nếu bản quyền không cho thao tác này."""
+        permission = self.required_permission(method, path)
+        if not permission:
+            return False
+        try:
+            self.server.license.check(permission)
+        except PermissionError as error:
+            self.reply({"error": str(error), "license": True}, 403)
+            return True
+        return False
+
+    def license_action(self, path):
+        """POST /api/license/*: kích hoạt key (máy khách) và sổ bản quyền (máy Super Admin)."""
+        manager = self.server.license
+        size = int(self.headers.get("Content-Length", "0"))
+        if self.headers.get_content_type() != "application/json" or not 0 <= size <= 100_000:
+            return self.reply({"error": "Yêu cầu phải là JSON."}, 400)
+        try:
+            body = json.loads(self.rfile.read(size) or b"{}")
+            if not isinstance(body, dict):
+                raise licensing.LicenseError("Dữ liệu không hợp lệ.")
+            if path == "/api/license/activate":
+                return self.reply({"ok": True, "status": manager.activate(body.get("key"))})
+            if path == "/api/license/deactivate":
+                manager.deactivate()
+                return self.reply({"ok": True})
+            if path == "/api/license/init-signing":
+                if body.get("confirm") is not True:
+                    raise licensing.LicenseError("Cần xác nhận.")
+                return self.reply({"ok": True, "public_key": manager.init_signing_key()})
+            if path == "/api/license/accounts":
+                account, token = manager.save_account(body)
+                return self.reply({"ok": True, "account": account, "key": token})
+            if path == "/api/license/renew":
+                account, token = manager.renew(str(body.get("id")), body.get("plan"), body.get("amount"))
+                return self.reply({"ok": True, "account": account, "key": token})
+            if path == "/api/license/lock":
+                return self.reply({"ok": True, "account": manager.set_locked(str(body.get("id")), body.get("locked") is True)})
+            return self.reply({"error": "Không tìm thấy thao tác."}, 404)
+        except (licensing.LicenseError, ValueError, TypeError) as error:
+            return self.reply({"error": str(error) if isinstance(error, licensing.LicenseError) else "Dữ liệu không hợp lệ."}, 400)
+
     def do_PATCH(self):
         if not self.allowed(True):
             return self.reply({"error": "Yêu cầu không hợp lệ. Mở tool tại địa chỉ 127.0.0.1."}, 403)
+        if self.license_blocked("PATCH", urlsplit(self.path).path):
+            return
         self.media_mutate("PATCH", urlsplit(self.path).path)
 
     def do_DELETE(self):
         if not self.allowed(True):
             return self.reply({"error": "Yêu cầu không hợp lệ. Mở tool tại địa chỉ 127.0.0.1."}, 403)
+        if self.license_blocked("DELETE", urlsplit(self.path).path):
+            return
         self.media_mutate("DELETE", urlsplit(self.path).path)
 
     def allowed(self, mutate=False):
@@ -267,6 +337,9 @@ class Handler(BaseHTTPRequestHandler):
             data["engine"] = self.server.engine.snapshot()
             data["key"] = self.server.secret
             data["app_version"] = APP_VERSION
+            status = self.server.license.status()
+            data["license"] = {k: status.get(k) for k in ("state", "message", "allowed", "enforced", "role", "name",
+                                                           "expires", "days_left", "issuer")}
             data["support"] = self.server.store.support_bar()
             data["community"] = self.server.store.community()
             shared = self.server.shared
@@ -298,6 +371,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"error": "Video ghép không còn trên máy."}, 404)
             download = "download" in parse_qs(urlsplit(self.path).query)
             return self.send_file(file, "video/mp4", "attachment" if download else "inline", file.name)
+        if path == "/api/license":
+            manager = self.server.license
+            data = {"status": manager.status(), "roles": licensing.ROLE_NAMES, "permissions": licensing.PERMISSION_NAMES,
+                    "defaults": licensing.ROLE_DEFAULTS, "plans": licensing.PLAN_NAMES}
+            if manager.signing_key():
+                data["dashboard"] = manager.dashboard()
+            return self.reply(data)
         if path == "/api/library":
             return self.reply({"images": self.server.store.library_images()})
         if path.startswith("/api/media") and self.media_get(path):
@@ -389,6 +469,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             path = urlsplit(self.path).path
             store, engine = self.server.store, self.server.engine
+            if self.license_blocked("POST", path):
+                return
+            if path.startswith("/api/license/"):
+                return self.license_action(path)
             if path.startswith("/api/media/"):
                 return self.media_mutate("POST", path)
             if path in ("/api/image-upload", "/api/library/image-upload"):
@@ -436,9 +520,21 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/review-close":
                 engine.close_review(body["id"])
             elif path == "/api/jobs":
-                store.enqueue(body["prompts"], body["cost"], body["batch"],
-                              body.get("images"), body.get("mode", "text"), body.get("sources"),
-                              body.get("scene_ids"), body.get("options"))
+                count = len(body["prompts"]) if isinstance(body.get("prompts"), list) else 0
+                before = len(store.snapshot()["jobs"])
+                try:
+                    reserved = self.server.license.reserve_jobs(count)
+                except PermissionError as error:
+                    return self.reply({"error": str(error), "license": True}, 403)
+                try:
+                    store.enqueue(body["prompts"], body["cost"], body["batch"],
+                                  body.get("images"), body.get("mode", "text"), body.get("sources"),
+                                  body.get("scene_ids"), body.get("options"))
+                except Exception:
+                    self.server.license.refund_jobs(reserved, count)
+                    raise
+                if len(store.snapshot()["jobs"]) == before:  # gửi lại cùng mã yêu cầu: không tính quota lần nữa
+                    self.server.license.refund_jobs(reserved, count)
                 engine.changed.set()
             elif path == "/api/batch/stitch":
                 if not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", str(body.get("batch", ""))):

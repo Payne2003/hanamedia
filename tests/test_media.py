@@ -41,7 +41,7 @@ def webp(width=300, height=200, seed=b""):
 
 class MediaBase(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp()).resolve()
         self.db = self.root / "studio.sqlite3"
         self.store = Store(self.db)
         self.media = self.store.media
@@ -145,7 +145,7 @@ class MediaStoreTests(MediaBase):
         self.account()
         self.store.enqueue(["A", "B"], 1, uuid.uuid4().hex, [[running["id"]], [waiting["id"]]], "image")
         job, _ = self.store.claim(1)
-        self.assertEqual(job["images"][0].rsplit("/", 1)[-1].split(".")[0], running["id"])
+        self.assertEqual(Path(job["images"][0]).stem, running["id"])
         with self.assertRaisesRegex(MediaError, "đang được tác vụ chạy"):
             self.media.delete([running["id"], waiting["id"]])
         with self.assertRaises(MediaInUse) as caught:
@@ -237,7 +237,7 @@ class MediaStoreTests(MediaBase):
     def test_files_outside_media_root_are_never_served(self):
         item, _ = self.media.add_image(png(seed=b"t"), "t.png")
         secret = self.root / "secret.txt"
-        secret.write_text("bí mật")
+        secret.write_text("bí mật", encoding="utf-8")
         with self.store.connect() as db:
             db.execute("UPDATE media SET relative_path='../secret.txt' WHERE media_id=?", (item["id"],))
         with self.assertRaises(MediaError):
