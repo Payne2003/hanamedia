@@ -469,7 +469,7 @@ button.cd-thumb{padding:0;background:none;cursor:pointer}button.cd-thumb:disable
 .license-audit{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;font-size:12px}
 .license-audit div{display:flex;gap:10px}.license-audit time{color:var(--muted);white-space:nowrap}
 @media(max-width:1100px){.license-grid,.license-grid2{grid-template-columns:1fr}.license-detail{position:static}}
-.license-list .license-table{min-width:780px}
+.license-list .license-table{min-width:680px}
 .license-list .license-table td,.license-list .license-table th{white-space:nowrap}
 .license-list .license-table td:nth-child(2){min-width:170px;max-width:220px;white-space:normal;overflow-wrap:anywhere}
 .license-list .row-actions{flex-wrap:nowrap}
