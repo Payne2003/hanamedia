@@ -124,11 +124,14 @@ class LicenseTests(unittest.TestCase):
         for broken in ("", "hello", "HANA1.abc", good[:-10] + "AAAAAAAAAA"):
             with self.assertRaises(LicenseError):
                 self.client.activate(broken)
-        # Một khách tự tạo khóa ký riêng trên máy mình: không được app tin cậy nên không thành Super Admin.
+        # App đã gắn khóa gốc: máy khách không tạo được khóa Super Admin, và dù tự đặt một file khóa vào thư mục dữ liệu
+        # thì khóa đó cũng không được tin cậy nên không thành Super Admin.
         rogue = LicenseManager(self.client_store, self.root / "client", trusted=[self.public])
-        rogue.init_signing_key()
+        with self.assertRaisesRegex(LicenseError, "Chỉ máy Super Admin"):
+            rogue.init_signing_key()
+        rogue.write_key(rogue.key_file)
         self.assertFalse(rogue.issuer_trusted())
-        self.assertEqual(rogue.status()["state"], "missing")
+        self.assertEqual((rogue.status()["state"], rogue.status()["issuer"]), ("missing", False))
 
     def test_clock_rollback_and_not_started(self):
         _, token = self.create(start="2025-04-01")
@@ -173,6 +176,112 @@ class LicenseTests(unittest.TestCase):
             self.admin.save_account({"name": "x", "role": "user", "plan": "1y", "devices": "not-a-code"})
         with self.assertRaises(LicenseError):
             self.client.save_account({"name": "x", "role": "user", "plan": "1y"})  # máy khách không có khóa ký
+
+
+class DelegationTests(unittest.TestCase):
+    """Super Admin cấp role quản lý cho máy khác; máy đó cấp key cho khách của mình trong giới hạn được giao."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()).resolve()
+        self.clock = Clock(date(2026, 1, 1))
+        managers = {}
+        root_dir = self.root / "root"
+        root_dir.mkdir()
+        root = LicenseManager(Store(root_dir / "t.db"), root_dir, trusted=[], today=self.clock.today, clock=self.clock.time)
+        self.public = root.init_signing_key()
+        for name in ("root", "agent", "customer", "third"):
+            folder = self.root / name
+            folder.mkdir(exist_ok=True)
+            managers[name] = LicenseManager(Store(folder / "t.db"), folder, trusted=[self.public],
+                                            today=self.clock.today, clock=self.clock.time)
+        self.root_m, self.agent, self.customer, self.third = (managers[n] for n in ("root", "agent", "customer", "third"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def grant_agent(self, role="admin", plan="1y", permissions=None):
+        data = {"name": "Đại lý A", "role": role, "plan": plan, "start": "2026-01-01",
+                "devices": [self.agent.request_code()]}
+        if permissions is not None:
+            data["permissions"] = permissions
+        _, token = self.root_m.save_account(data)
+        return self.agent.activate(token)
+
+    def test_request_code_and_root_owner(self):
+        code = self.customer.request_code()
+        self.assertRegex(code, r"^[0-9A-F]{4}(-[0-9A-F]{4}){3}\.[A-Za-z0-9_-]{43}$")
+        self.assertEqual(code, self.customer.request_code())  # ổn định qua các lần gọi
+        status = self.root_m.status()
+        self.assertEqual((status["state"], status["issuer_mode"]), ("owner", "root"))
+        self.assertEqual(self.customer.status()["issuer"], False)
+
+    def test_agent_becomes_its_role_and_issues_keys_within_limits(self):
+        status = self.grant_agent()
+        self.assertEqual((status["state"], status["role"], status["issuer"], status["issuer_mode"]),
+                         ("active", "admin", True, "delegate"))
+        scope = self.agent.dashboard()["scope"]
+        self.assertEqual(scope["roles"], ["admin", "manager", "user", "viewer"])
+        self.assertEqual(scope["max_expires"], "2026-12-31")
+        _, token = self.agent.save_account({"name": "Khách B", "role": "user", "plan": "1m", "start": "2026-01-01",
+                                            "devices": [self.customer.request_code()]})
+        status = self.customer.activate(token)  # máy khách chỉ tin khóa gốc, vẫn chấp nhận vì có chuỗi ủy quyền
+        self.assertEqual((status["state"], status["role"], status["issued_by"], status["issuer"]),
+                         ("active", "user", "Đại lý A", False))
+        with self.assertRaisesRegex(LicenseError, "role từ Admin"):
+            self.agent.save_account({"name": "X", "role": "super_admin", "plan": "1m", "start": "2026-02-01"})
+        with self.assertRaisesRegex(LicenseError, "Hạn tối đa"):
+            self.agent.save_account({"name": "X", "role": "user", "plan": "3y", "start": "2026-02-01"})
+        with self.assertRaisesRegex(LicenseError, "những quyền"):
+            self.agent.save_account({"name": "X", "role": "user", "plan": "1m", "start": "2026-02-01",
+                                     "permissions": ["view_audit"]})
+
+    def test_super_admin_role_can_be_granted_and_grant_on(self):
+        self.grant_agent(role="super_admin", plan="3y")
+        self.assertIn("super_admin", self.agent.dashboard()["scope"]["roles"])
+        _, token = self.agent.save_account({"name": "Super 2", "role": "super_admin", "plan": "1y",
+                                            "start": "2026-01-01", "devices": [self.customer.request_code()]})
+        self.assertEqual(self.customer.activate(token)["issuer_mode"], "delegate")
+        _, grandchild = self.customer.save_account({"name": "Khách C", "role": "viewer", "plan": "1m",
+                                                    "start": "2026-01-01"})
+        self.assertEqual(self.third.activate(grandchild)["role"], "viewer")  # chuỗi 2 tầng về khóa gốc
+
+    def test_roles_without_issue_rights_or_without_device_key_cannot_issue(self):
+        self.grant_agent(role="user")
+        self.assertFalse(self.agent.status()["issuer"])
+        with self.assertRaises(LicenseError):
+            self.agent.dashboard()
+        _, token = self.root_m.save_account({"name": "Admin không mã", "role": "admin", "plan": "1y",
+                                             "start": "2026-01-01", "devices": [machine_code()]})
+        self.agent.activate(token)
+        self.assertFalse(self.agent.status()["issuer"])  # không có khóa của máy trong key: chỉ dùng tool
+
+    def test_forged_delegation_is_rejected(self):
+        self.grant_agent(role="manager")
+        own = self.agent.device_key()
+        parent = self.agent.store.setting("license_token")
+        from runner.license import key_id, public_from_private
+        base = {"v": 1, "kid": key_id(public_from_private(own)), "id": "x", "name": "Giả", "plan": "1m",
+                "start": "2026-01-01", "expires": "2026-02-01", "devices": [], "chain": parent}
+        for bad in ({"role": "admin", "permissions": ["create_jobs"]},           # role cao hơn người cấp
+                    {"role": "user", "permissions": ["manage_roles"]},          # quyền vượt phạm vi
+                    {"role": "user", "permissions": [], "expires": "2099-01-01"}):  # hạn vượt
+            with self.subTest(bad=bad), self.assertRaises(LicenseError):
+                self.customer.activate(sign(own, {**base, **bad}))
+        stranger = self.customer.device_key()  # ký bằng khóa không có trong key của người cấp
+        with self.assertRaises(LicenseError):
+            self.customer.activate(sign(stranger, {**base, "kid": key_id(public_from_private(stranger)),
+                                                   "role": "user", "permissions": []}))
+        self.assertEqual(self.customer.activate(sign(own, {**base, "role": "user", "permissions": ["create_jobs"]}))["state"],
+                         "active")
+
+    def test_default_trust_only_applies_to_packaged_app(self):
+        from unittest import mock
+        from runner import license as licensing
+        folder = self.root / "default"
+        folder.mkdir()
+        self.assertFalse(LicenseManager(Store(folder / "t.db"), folder).enforced())  # chạy từ mã nguồn / test
+        with mock.patch.object(licensing, "frozen", return_value=True):
+            self.assertTrue(LicenseManager(Store(folder / "t.db"), folder).enforced())  # bản .exe
 
 
 class LicenseHTTPTests(unittest.TestCase):

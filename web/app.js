@@ -1047,7 +1047,10 @@ setInterval(()=>{if(!$('communityView').hidden)renderCommunity(false);},1000);
 // ===== Bản quyền & phân quyền (key ký số) =====
 function addMonthsJs(iso,months){const [y,m,d]=iso.split('-').map(Number);const t=new Date(y,m-1+months,1);const last=new Date(t.getFullYear(),t.getMonth()+1,0).getDate();const e=new Date(t.getFullYear(),t.getMonth(),Math.min(d,last));e.setDate(e.getDate()-1);return `${e.getFullYear()}-${String(e.getMonth()+1).padStart(2,'0')}-${String(e.getDate()).padStart(2,'0')}`;}
 function renderLicenseBanner(){
-  const l=state?.license;if(!l)return;const ok=['not_enforced','owner','active'].includes(l.state);
+  const l=state?.license;if(!l)return;
+  const roleNames={super_admin:'Super Admin',admin:'Admin',manager:'Manager',user:'User',viewer:'Viewer'};
+  const showRole=l.enforced&&(l.state==='owner'||['active','expiring'].includes(l.state));
+  $('sideRole').hidden=!showRole;$('sideRole').textContent=showRole?`🔑 ${roleNames[l.role]||l.role}${l.expires?` · đến ${l.expires.split('-').reverse().join('/')}`:''}`:'';const ok=['not_enforced','owner','active'].includes(l.state);
   $('licenseBanner').hidden=ok&&l.state!=='expiring';
   $('licenseBanner').className='license-banner'+(l.state==='expiring'?' warn':'');
   $('licenseBannerText').textContent=`🔑 ${l.message}`;
@@ -1060,16 +1063,19 @@ async function loadLicense(){
 function renderLicense(){
   const d=licenseData,st=d.status,[label,cls]=licenseStates[st.state]||[st.state,''];
   $('licenseChip').textContent=label;$('licenseChip').className='status-chip '+cls;$('licenseMessage').textContent=st.message;
-  $('licenseMachine').textContent=st.machine;
+  $('licenseMachine').textContent=st.request_code||st.machine;
   const rows=st.id?[['Tài khoản',st.name],['Role',d.roles[st.role]||st.role],['Gói',d.plans[st.plan]||st.plan],['Bắt đầu',dmy(st.start)],['Hết hạn',dmy(st.expires)],['Quota video',st.quota?`${st.used}/${st.quota}`:'Không giới hạn']]:[];
   $('licenseInfo').innerHTML=rows.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
   $('licenseActivate').hidden=!st.enforced||st.state==='owner';
   $('licenseRemove').hidden=!st.id;
-  $('issuerInit').hidden=st.issuer;$('issuerPanel').hidden=!st.issuer;
+  $('issuerInit').hidden=st.enforced||st.issuer;$('issuerPanel').hidden=!st.issuer;
   if(!st.issuer)return;
-  $('issuerTrust').hidden=st.issuer_trusted;
+  $('issuerTrust').hidden=st.issuer_trusted||st.issuer_mode!=='root'||st.enforced;
   $('issuerTrust').innerHTML=st.issuer_trusted?'':`<b>Khóa công khai của bạn chưa được gắn cứng vào app.</b> Key bạn tạo đã ký được, nhưng app phát cho khách chỉ chấp nhận khi khóa công khai dưới đây được gắn vào bản đóng gói. Sao chép và gửi chuỗi này cho người đóng gói app:<code class="pubkey">${esc(st.public_key)}</code><button type="button" id="copyPubkey">📋 Sao chép khóa công khai</button>`;
-  const db=d.dashboard,s=db.stats;
+  const db=d.dashboard,s=db.stats,scope=db.scope;
+  $('issuerScope').hidden=scope.mode!=='delegate';
+  $('issuerScope').innerHTML=scope.mode==='delegate'?`<b>Bạn đang dùng quyền ${esc(d.roles[scope.role])}${st.issued_by?` do ${esc(st.issued_by)} cấp`:''}.</b> Bạn cấp được role từ ${esc(d.roles[scope.role])} trở xuống, chỉ những quyền mình đang có, hạn tối đa ${dmy(scope.max_expires)}.${scope.can_create?'':' Tài khoản của bạn không được tạo tài khoản mới.'}${scope.can_renew?'':' Tài khoản của bạn không được gia hạn.'}`:'';
+  $('licenseAdd').disabled=!scope.can_create;
   $('licenseStats').innerHTML=[['👥','Tổng tài khoản',s.total,''],['👑','Tài khoản Admin',s.admins,''],['⚠','Sắp hết hạn (≤ 7 ngày)',s.expiring,'warn'],['▶','Đang hoạt động',s.active,'ok'],['💰','Doanh thu',vnd(s.revenue),'']].map(([i,l,v,c])=>`<div class="license-stat ${c}"><span>${i}</span><div><small>${esc(l)}</small><b>${esc(String(v))}</b></div></div>`).join('');
   renderLicenseRows();
   $('licenseRenewals').innerHTML=db.events.filter(e=>e.action==='create'||e.action==='renew').map(e=>`<tr><td>${new Date(e.at*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'})}</td><td>${esc(e.name||'—')}</td><td>${esc(d.plans[e.plan]||e.plan)} · ${e.action==='create'?'Tạo mới':'Gia hạn'}</td><td>${dmy(e.expires)}</td><td>${vnd(e.amount)}</td></tr>`).join('')||'<tr><td colspan="5" class="detail">Chưa có giao dịch.</td></tr>';
@@ -1083,25 +1089,25 @@ function renderLicense(){
 function renderLicenseRows(){
   const d=licenseData,q=$('licenseSearch').value.trim().toLowerCase();
   const list=d.dashboard.accounts.filter(a=>!q||a.name.toLowerCase().includes(q)||a.email.includes(q));
-  $('licenseRows').innerHTML=list.map((a,i)=>{const [label,cls]=accountStates[a.state];return `<tr class="${licenseEditing===a.id?'selected':''}"><td>${i+1}</td><td><b>${esc(a.name)}</b><small>${esc(a.email)}</small></td><td><span class="role-chip ${a.role}">${esc(d.roles[a.role])}</span></td><td>${esc(d.plans[a.plan]||a.plan)}</td><td>${dmy(a.expires)}</td><td>${a.quota?a.quota.toLocaleString('vi-VN'):'∞'}</td><td>${a.devices.length||'Mọi máy'}</td><td><span class="status-chip ${cls}">${label}</span></td><td class="row-actions"><button type="button" data-license-edit="${a.id}" title="Xem / sửa chi tiết">✎</button><button type="button" data-license-renew="${a.id}" title="Gia hạn">↻</button><button type="button" data-license-key="${a.id}" title="Sao chép key">📋</button></td></tr>`;}).join('')||'<tr><td colspan="9" class="detail">Chưa có tài khoản. Bấm “+ Thêm tài khoản”.</td></tr>';
+  $('licenseRows').innerHTML=list.map((a,i)=>{const [label,cls]=accountStates[a.state];return `<tr class="${licenseEditing===a.id?'selected':''}"><td>${i+1}</td><td><b>${esc(a.name)}</b><small>${esc(a.email)}</small></td><td><span class="role-chip ${a.role}">${esc(d.roles[a.role])}</span></td><td>${esc(d.plans[a.plan]||a.plan)}</td><td>${dmy(a.expires)}</td><td>${a.quota?a.quota.toLocaleString('vi-VN'):'∞'}</td><td>${a.devices.length||'Mọi máy'}${a.can_issue?' · <span class="role-chip admin" title="Máy này được tự cấp key cho khách của mình">quản lý</span>':''}</td><td><span class="status-chip ${cls}">${label}</span></td><td class="row-actions"><button type="button" data-license-edit="${a.id}" title="Xem / sửa chi tiết">✎</button><button type="button" data-license-renew="${a.id}" title="Gia hạn">↻</button><button type="button" data-license-key="${a.id}" title="Sao chép key">📋</button></td></tr>`;}).join('')||'<tr><td colspan="9" class="detail">Chưa có tài khoản. Bấm “+ Thêm tài khoản”.</td></tr>';
   const scroller=$('licenseRows').closest('.table-scroll');if(scroller)scroller.scrollLeft=0;
 }
 function fillLicenseForm(account){
   const d=licenseData;licenseEditing=account?.id||null;
   $('ldTitle').textContent=account?'Chi tiết tài khoản':'Thêm tài khoản';
-  $('ldRole').innerHTML=Object.entries(d.roles).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('');
-  $('ldName').value=account?.name||'';$('ldEmail').value=account?.email||'';$('ldRole').value=account?.role||'user';
+  const scope=d.dashboard.scope;$('ldRole').innerHTML=Object.entries(d.roles).filter(([k])=>scope.roles.includes(k)).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('');
+  $('ldName').value=account?.name||'';$('ldEmail').value=account?.email||'';$('ldRole').value=account?.role&&scope.roles.includes(account.role)?account.role:(scope.roles.includes('user')?'user':scope.roles[scope.roles.length-1]);
   licensePlan=account?.plan||'1y';
   $('ldPlans').innerHTML=Object.entries(d.plans).map(([k,v])=>`<label class="ld-plan-opt"><input type="radio" name="ldPlan" value="${k}" ${k===licensePlan?'checked':''} ${account?'disabled':''}> ${esc(v)}</label>`).join('');
   $('ldStart').value=account?.start||new Date().toISOString().slice(0,10);$('ldStart').disabled=Boolean(account);
-  $('ldDevices').value=(account?.devices||[]).join('\n');$('ldQuota').value=account?.quota||0;$('ldAmount').value=0;$('ldAmountWrap').hidden=Boolean(account);
-  renderPerms(account?.permissions||d.defaults[$('ldRole').value]);
+  $('ldDevices').value=(account?.device_codes||account?.devices||[]).join('\n');$('ldQuota').value=account?.quota||0;$('ldAmount').value=0;$('ldAmountWrap').hidden=Boolean(account);
+  renderPerms(account?.permissions||d.defaults[$('ldRole').value].filter(p=>scope.permissions.includes(p)));
   updateExpiryPreview(account);
-  $('ldRenew').disabled=$('ldLock').disabled=!account;$('ldLock').textContent=account?.state==='locked'?'🔓 Mở khóa':'🔒 Khóa';
+  $('ldRenew').disabled=!account||!scope.can_renew;$('ldLock').disabled=!account;$('ldLock').textContent=account?.state==='locked'?'🔓 Mở khóa':'🔒 Khóa';
   $('ldSave').textContent=account?'💾 Lưu thay đổi & tạo key mới':'💾 Lưu & tạo key';
   $('ldKeyBox').hidden=true;
 }
-function renderPerms(selected){$('ldPerms').innerHTML=Object.entries(licenseData.permissions).map(([k,v])=>`<label class="check"><input type="checkbox" value="${k}" ${selected.includes(k)?'checked':''}><span>${esc(v)}</span></label>`).join('');}
+function renderPerms(selected){const allowed=licenseData.dashboard?.scope?.permissions||Object.keys(licenseData.permissions);$('ldPerms').innerHTML=Object.entries(licenseData.permissions).map(([k,v])=>`<label class="check${allowed.includes(k)?'':' disabled'}"><input type="checkbox" value="${k}" ${selected.includes(k)&&allowed.includes(k)?'checked':''} ${allowed.includes(k)?'':'disabled'}><span>${esc(v)}</span></label>`).join('');}
 function updateExpiryPreview(account){$('ldExpires').value=account?account.expires:addMonthsJs($('ldStart').value||new Date().toISOString().slice(0,10),{'1m':1,'1y':12,'3y':36}[licensePlan]);}
 function showKey(key){$('ldKey').value=key;$('ldKeyBox').hidden=false;$('ldKey').select();}
 $('ldRole').onchange=()=>renderPerms(licenseData.defaults[$('ldRole').value]);
