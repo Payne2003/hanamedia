@@ -425,3 +425,61 @@ button.cd-thumb{padding:0;background:none;cursor:pointer}button.cd-thumb:disable
 .community-contact{font-size:14px}.community-contact b{color:#ffd166}
 .community-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 @media(max-width:1000px){.community-grid{grid-template-columns:1fr}}
+/* ===== Bản quyền & phân quyền ===== */
+.license-banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;border:1px solid #a75c70;border-radius:10px;background:#39202a;color:#ffd7de;font-size:13px}
+.license-banner.warn{border-color:#8a6b2b;background:#3a2f10;color:#ffe3a3}
+.license-banner span{flex:1 1 260px}.license-banner button{padding:6px 10px;font-size:12px}
+.license-page{display:flex;flex-direction:column;gap:16px}
+.license-me{padding:18px;display:flex;flex-direction:column;gap:10px}
+.lm-head{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.license-info{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px 16px;margin:0}
+.license-info dt{font-size:11px;color:var(--muted)}.license-info dd{margin:0 0 4px;font-weight:600}
+.lm-machine{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
+.lm-machine code{font-size:15px;color:#ffd166;letter-spacing:1px}.lm-machine button{padding:5px 10px;font-size:12px}.lm-machine small{color:var(--muted)}
+.lm-activate{display:flex;gap:10px;flex-wrap:wrap;border:0;padding:0;margin:0}
+.lm-activate textarea{flex:1 1 320px;min-height:70px;font:12px/1.4 ui-monospace,Consolas,monospace}
+.lm-activate div{display:flex;flex-direction:column;gap:8px}
+.license-init{padding:14px 18px}.license-init summary{cursor:pointer;font-weight:600}
+.pubkey{display:block;margin:8px 0;padding:8px;border-radius:8px;background:#0e1019;color:#ffd166;overflow-wrap:anywhere;font-size:12px}
+.license-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+.license-stat{display:flex;gap:12px;align-items:center;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--panel)}
+.license-stat>span{font-size:24px}.license-stat small{display:block;color:var(--muted);font-size:12px}.license-stat b{font-size:22px}
+.license-stat.warn b{color:#ffcf6b}.license-stat.ok b{color:var(--green)}
+.license-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+.license-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.license-grid2 .card,.license-list{padding:16px;min-width:0}
+.ll-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.ll-head h2{flex:1 1 auto}.ll-head input{max-width:220px}
+.license-table{min-width:0;width:100%}.license-table td small{display:block;color:var(--muted);font-size:10px}
+.license-table tr.selected td{background:#1d1a33}
+.license-table.matrix td.yes{color:var(--green);text-align:center}.license-table.matrix td.no{color:#5f6380;text-align:center}
+.role-chip{display:inline-block;padding:2px 8px;border-radius:12px;background:#24243a;font-size:11px;white-space:nowrap}
+.role-chip.super_admin{background:#3a2f10;color:#ffd166}.role-chip.admin{background:#2b2150;color:#cdb5ff}.role-chip.manager{background:#14372d;color:var(--green)}
+.license-detail{padding:16px;display:flex;flex-direction:column;gap:10px;position:sticky;top:12px}
+.license-detail label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.license-detail label small{color:#6f758e}
+.ld-plan>span,.ld-perms>span{font-size:12px;color:var(--muted)}
+.ld-plans{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.ld-plan-opt{flex-direction:row!important;align-items:center;gap:6px!important;padding:8px 10px;border:1px solid var(--border);border-radius:10px;color:var(--text)!important}
+.ld-dates{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ld-perms #ldPerms{display:flex;flex-direction:column;gap:4px;margin-top:4px;padding:8px;border:1px solid var(--border);border-radius:10px}
+.ld-perms .check{flex-direction:row!important;font-size:12px!important;color:var(--text)!important}
+.ld-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ld-key{display:flex;flex-direction:column;gap:6px}.ld-key textarea{min-height:90px;font:11px/1.4 ui-monospace,Consolas,monospace}
+.rev-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #202331;font-size:13px}.rev-row b{margin-left:auto;color:var(--green)}.rev-row small{color:var(--muted)}
+.license-audit{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;font-size:12px}
+.license-audit div{display:flex;gap:10px}.license-audit time{color:var(--muted);white-space:nowrap}
+@media(max-width:1100px){.license-grid,.license-grid2{grid-template-columns:1fr}.license-detail{position:static}}
+.license-list .license-table{min-width:780px}
+.license-list .license-table td,.license-list .license-table th{white-space:nowrap}
+.license-list .license-table td:nth-child(2){min-width:170px;max-width:220px;white-space:normal;overflow-wrap:anywhere}
+.license-list .row-actions{flex-wrap:nowrap}
+.license-detail textarea{min-height:60px}
+.ld-plan-opt{white-space:nowrap;font-size:12px}
+.license-table.matrix{min-width:620px}.license-table.matrix th{white-space:normal;font-size:9px;text-align:center}
+/* Bảng bản quyền: bỏ độ rộng cột cố định của bảng hàng đợi Studio */
+.license-table th,.license-table td{width:auto!important;min-width:0!important;max-width:none!important;text-align:left;color:var(--text);font-size:12px;overflow-wrap:normal;padding:10px 8px}
+.license-table th{color:var(--muted);font-size:10px}
+.license-list .license-table td:nth-child(2){min-width:170px!important;max-width:240px!important;white-space:normal;overflow-wrap:anywhere}
+.license-table.matrix td:not(:first-child),.license-table.matrix th:not(:first-child){text-align:center}
+.license-table{table-layout:auto}
+.license-list .row-actions button{width:auto;height:auto;padding:5px 8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:11px;white-space:nowrap}

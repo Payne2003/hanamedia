@@ -16,6 +16,7 @@
       <button type="button" data-nav="content" id="openContent"><i>✎</i>Content Studio</button>
       <button type="button" data-nav="media" id="openLibrary"><i>▧</i>Thư viện Video &amp; Ảnh</button>
       <button type="button" id="accountsButton"><i>♙</i>Tài khoản Muse <b id="accountCount" class="nav-badge">0</b></button>
+      <button type="button" data-nav="license" id="navLicense"><i>🔑</i>Bản quyền</button>
       <button type="button" data-nav="community" id="navCommunity"><i>👥</i>Cộng đồng</button>
       <button type="button" data-nav="settings" id="navSettings"><i>⚙</i>Cài đặt</button>
     </nav>
@@ -28,6 +29,7 @@
     <button type="button" id="copySupportPhone" class="support-copy">📋 Sao chép SĐT</button>
   </div>
   <main>
+    <div id="licenseBanner" class="license-banner" hidden><span id="licenseBannerText"></span><button type="button" data-nav="license">🔑 Mở trang Bản quyền</button></div>
     <div id="studioView">
     <section class="studio-toolbar">
       <div class="project-controls"><button id="pickFolder" class="project-button"><span>▰</span><span><b>Mặc định</b><small id="folderPath">Chưa chọn thư mục lưu</small></span><span>⌄</span></button><button id="openFolder" class="icon-button" aria-label="Mở thư mục kết quả" title="Mở thư mục kết quả">↗</button></div>
@@ -114,6 +116,51 @@
       <div id="mediaUploads" class="media-uploads" hidden></div>
       <div id="mediaSelection" class="media-selection" hidden><span><b id="mediaSelectedCount">0</b> đã chọn</span><button id="mediaSelectAll" type="button">Chọn tất cả đang hiện</button><button id="mediaClearSelection" type="button">Bỏ chọn</button><button id="mediaDeleteSelected" type="button" class="danger-outline">✕ Xóa đã chọn</button></div>
       <div id="mediaGrid" class="media-grid" aria-live="polite"></div>
+    </section>
+    <section id="licenseView" class="license-page" hidden aria-labelledby="licenseTitle">
+      <div class="content-topbar"><h1 id="licenseTitle">Bản quyền &amp; phân quyền</h1><span class="crumb">/</span><span class="detail">Key ký số · gói 1 tháng / 1 năm / 3 năm · không cần máy chủ</span></div>
+      <section class="card license-me">
+        <div class="lm-head"><h2>Bản quyền của máy này</h2><span id="licenseChip" class="status-chip">—</span></div>
+        <p id="licenseMessage" class="detail"></p>
+        <dl id="licenseInfo" class="license-info"></dl>
+        <div class="lm-machine">Mã máy: <code id="licenseMachine">—</code><button type="button" id="copyMachine">📋 Sao chép mã máy</button><small>Gửi mã máy cho người bán để nhận key.</small></div>
+        <form id="licenseActivate" class="lm-activate"><textarea id="licenseKey" rows="3" spellcheck="false" placeholder="Dán key HANA1.… vào đây"></textarea><div><button type="submit" class="primary">Kích hoạt</button><button type="button" id="licenseRemove" class="danger-outline">Gỡ key</button></div></form>
+      </section>
+      <details id="issuerInit" class="card license-init" hidden><summary>Dành cho Super Admin: khởi tạo khóa ký trên máy này</summary>
+        <p class="detail">Chỉ làm <b>một lần</b>, trên máy của người bán. Tool tạo khóa ký (lưu trong thư mục dữ liệu, <b>sao lưu cẩn thận, không gửi ai</b>) và một <b>khóa công khai</b> để gắn cứng vào app phát cho khách.</p>
+        <button type="button" id="issuerInitButton" class="primary">Khởi tạo khóa Super Admin</button>
+      </details>
+      <div id="issuerPanel" hidden>
+        <div id="issuerTrust" class="notice" hidden></div>
+        <div id="licenseStats" class="license-stats"></div>
+        <div class="license-grid">
+          <section class="card license-list"><div class="ll-head"><h2>Danh sách tài khoản</h2><input id="licenseSearch" type="search" placeholder="Tìm theo tên, email…"><button type="button" id="licenseAdd" class="primary">+ Thêm tài khoản</button></div>
+            <div class="table-scroll"><table class="license-table"><thead><tr><th>#</th><th>TÊN / EMAIL</th><th>ROLE</th><th>GÓI</th><th>BẮT ĐẦU</th><th>HẾT HẠN</th><th>QUOTA</th><th>MÁY</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody id="licenseRows"></tbody></table></div>
+          </section>
+          <aside class="card license-detail" id="licenseDetail">
+            <h2 id="ldTitle">Thêm tài khoản</h2>
+            <label>Tên tài khoản<input id="ldName" maxlength="80"></label>
+            <label>Email<input id="ldEmail" type="email" maxlength="120"></label>
+            <label>Role<select id="ldRole"></select></label>
+            <div class="ld-plan"><span>Gói sử dụng</span><div id="ldPlans" class="ld-plans"></div></div>
+            <div class="ld-dates"><label>Ngày bắt đầu<input id="ldStart" type="date"></label><label>Ngày hết hạn<input id="ldExpires" type="date" disabled></label></div>
+            <label>Mã máy được dùng <small>(mỗi dòng một mã; để trống = máy nào cũng được)</small><textarea id="ldDevices" rows="2" spellcheck="false" placeholder="ABCD-1234-EF56-7890"></textarea></label>
+            <label>Quota video <small>(0 = không giới hạn)</small><input id="ldQuota" type="number" min="0" step="1" value="0"></label>
+            <label id="ldAmountWrap">Số tiền thu (VNĐ)<input id="ldAmount" type="number" min="0" step="1000" value="0"></label>
+            <div class="ld-perms"><span>Quyền (Permissions)</span><div id="ldPerms"></div></div>
+            <button type="button" id="ldSave" class="primary">💾 Lưu &amp; tạo key</button>
+            <div class="ld-actions"><button type="button" id="ldRenew">↻ Gia hạn ngay</button><button type="button" id="ldLock" class="danger-outline">🔒 Khóa</button></div>
+            <div id="ldKeyBox" class="ld-key" hidden><b>Key gửi khách</b><textarea id="ldKey" rows="4" readonly spellcheck="false"></textarea><button type="button" id="ldCopyKey">📋 Sao chép key</button></div>
+            <p class="detail">Khóa chỉ có tác dụng khi không gia hạn: key đã cấp vẫn chạy tới ngày hết hạn (không có máy chủ để thu hồi ngay).</p>
+          </aside>
+        </div>
+        <div class="license-grid2">
+          <section class="card"><h2>Lịch sử gia hạn</h2><div class="table-scroll"><table class="license-table"><thead><tr><th>THỜI GIAN</th><th>TÀI KHOẢN</th><th>GÓI</th><th>HẾT HẠN MỚI</th><th>SỐ TIỀN</th></tr></thead><tbody id="licenseRenewals"></tbody></table></div></section>
+          <section class="card"><h2>Ma trận phân quyền theo role</h2><div class="table-scroll"><table class="license-table matrix"><thead id="matrixHead"></thead><tbody id="matrixRows"></tbody></table></div></section>
+          <section class="card"><h2>Doanh thu theo tháng</h2><div id="licenseRevenue"></div></section>
+          <section class="card"><h2>Audit logs</h2><div id="licenseAudit" class="license-audit"></div></section>
+        </div>
+      </div>
     </section>
     <section id="communityView" class="community-page" hidden aria-labelledby="communityTitle">
       <div class="content-topbar"><h1 id="communityTitle">Cộng đồng</h1><span class="crumb">/</span><span class="detail">Nhóm trải nghiệm, video demo và hỗ trợ trực tiếp.</span></div>

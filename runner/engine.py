@@ -38,6 +38,7 @@ class Engine:
         self.flow_launcher = subprocess.Popen
         self.flow_closed = threading.Event()
         self.gate = None  # SharedProfile khi bật "Tài khoản chung"
+        self.license_ok = lambda: True  # AppServer thay bằng kiểm tra bản quyền
         self.flow_busy = False
         self.flow_status = ("Sẵn sàng mở Flow · hồ sơ Chrome riêng của tool" if (self.flow_profile.parent / "Local State").exists()
                             else "Chưa đăng nhập Google Flow: vào Cài đặt → Google Flow → Đăng nhập")
@@ -244,7 +245,7 @@ class Engine:
     def supervise(self):
         while not self.closing:
             with self.lock:
-                pair = self.store.claim(self.limit) if self.enabled else None
+                pair = self.store.claim(self.limit) if self.enabled and self.license_ok() else None
                 if pair:
                     self.launch(self.work, *pair, self.headless, self.store.setting("output_folder"), self.automatic)
             if not pair:

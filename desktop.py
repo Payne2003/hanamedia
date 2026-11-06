@@ -44,6 +44,14 @@ def self_check():
         from runner.video_tools import ffmpeg, run
         if run([ffmpeg(), "-version"], 30).returncode != 0:  # nâng 4K / ghép video cần ffmpeg chạy được
             raise RuntimeError("ffmpeg không chạy được")
+        from runner import license as licensing  # bản quyền: ký và kiểm tra key Ed25519 phải chạy được trong .exe
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives import serialization
+        raw = Ed25519PrivateKey.generate().private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
+                                                          serialization.NoEncryption())
+        public = licensing.public_from_private(raw)
+        token = licensing.sign(raw, {"kid": licensing.key_id(public), "id": "self-check"})
+        licensing.verify(token, {licensing.key_id(public): public})
         import tkinter  # noqa: F401  hộp chọn thư mục
         import webview  # noqa: F401  cửa sổ app
         import app  # noqa: F401
