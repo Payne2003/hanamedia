@@ -1114,8 +1114,8 @@ function fillLicenseForm(account){
   const scope=d.dashboard.scope;$('ldRole').innerHTML=Object.entries(d.roles).filter(([k])=>scope.roles.includes(k)).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('');
   $('ldName').value=account?.name||'';$('ldEmail').value=account?.email||'';$('ldRole').value=account?.role&&scope.roles.includes(account.role)?account.role:(scope.roles.includes('user')?'user':scope.roles[scope.roles.length-1]);
   licensePlan=account?.plan||'1y';
-  $('ldPlans').innerHTML=Object.entries(d.plans).map(([k,v])=>`<label class="ld-plan-opt"><input type="radio" name="ldPlan" value="${k}" ${k===licensePlan?'checked':''} ${account?'disabled':''}> ${esc(v)}</label>`).join('');
-  $('ldStart').value=account?.start||new Date().toISOString().slice(0,10);$('ldStart').disabled=Boolean(account);
+  $('ldPlans').innerHTML=Object.entries(d.plans).map(([k,v])=>`<label class="ld-plan-opt"><input type="radio" name="ldPlan" value="${k}" ${k===licensePlan?'checked':''}> ${esc(v)}</label>`).join('');
+  $('ldStart').value=account?.start||new Date().toISOString().slice(0,10);$('ldStart').disabled=false;$('ldExpires').disabled=false;
   $('ldDevices').value=(account?.device_codes||account?.devices||[]).join('\n');$('ldQuota').value=account?.quota||0;$('ldAmount').value=0;$('ldAmountWrap').hidden=Boolean(account);
   renderPerms(account?.permissions||d.defaults[$('ldRole').value].filter(p=>scope.permissions.includes(p)));
   updateExpiryPreview(account);
@@ -1132,7 +1132,7 @@ $('ldStart').onchange=()=>updateExpiryPreview(null);
 $('licenseAdd').onclick=()=>{fillLicenseForm(null);$('ldName').focus();};
 $('licenseSearch').oninput=renderLicenseRows;
 $('ldSave').onclick=async()=>{
-  const body={id:licenseEditing,name:$('ldName').value,email:$('ldEmail').value,role:$('ldRole').value,plan:licensePlan,start:$('ldStart').value,
+  const body={id:licenseEditing,name:$('ldName').value,email:$('ldEmail').value,role:$('ldRole').value,plan:licensePlan,start:$('ldStart').value,expires:$('ldExpires').value,
     devices:$('ldDevices').value,quota:Number($('ldQuota').value)||0,amount:Number($('ldAmount').value)||0,
     permissions:[...$('ldPerms').querySelectorAll('input:checked')].map(x=>x.value)};
   const old=licenseEditing&&licenseData.dashboard.accounts.find(a=>a.id===licenseEditing);

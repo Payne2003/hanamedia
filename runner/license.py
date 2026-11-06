@@ -613,22 +613,33 @@ class LicenseManager:
                 row = db.execute("SELECT * FROM licenses WHERE id=?", (str(data["id"]),)).fetchone()
                 if not row:
                     raise LicenseError("Không tìm thấy tài khoản.")
-                self.check_limits(context["limits"], record["role"], record["permissions"],
-                                  date.fromisoformat(row["expires"]), "create")
+                plan = data.get("plan") or row["plan"]
+                if plan not in PLANS:
+                    raise LicenseError("Chọn gói 1 tháng, 1 năm hoặc 3 năm.")
+                start = parse_day(data.get("start"), date.fromisoformat(row["start"]))
+                expires = parse_day(data.get("expires"), date.fromisoformat(row["expires"]))
+                if expires < start:
+                    raise LicenseError("Ngày hết hạn phải sau ngày bắt đầu.")
+                if context["limits"] and expires.isoformat() > row["expires"] and not context["limits"]["can_renew"]:
+                    raise LicenseError("Tài khoản của bạn không có quyền gia hạn (kéo dài ngày hết hạn).")
+                self.check_limits(context["limits"], record["role"], record["permissions"], expires, "create")
                 db.execute("""UPDATE licenses SET name=?,email=?,role=?,permissions=?,devices=?,delegates=?,quota=?,
-                              updated=? WHERE id=?""", (record["name"], record["email"], record["role"],
-                                                        json.dumps(record["permissions"]), json.dumps(record["devices"]),
-                                                        json.dumps(record["delegates"]), record["quota"], now, row["id"]))
+                              plan=?,start=?,expires=?,updated=? WHERE id=?""",
+                           (record["name"], record["email"], record["role"], json.dumps(record["permissions"]),
+                            json.dumps(record["devices"]), json.dumps(record["delegates"]), record["quota"], plan,
+                            start.isoformat(), expires.isoformat(), now, row["id"]))
                 db.execute("INSERT INTO license_events(license_id,at,action,actor,detail) VALUES(?,?,?,?,?)",
                            (row["id"], now, "update", self.actor(context),
-                            f"Sửa {record['name']}: role {ROLE_NAMES[record['role']]}"))
+                            f"Sửa {record['name']}: role {ROLE_NAMES[record['role']]}, hạn {expires:%d/%m/%Y}"))
                 license_id = row["id"]
             else:
                 plan = data.get("plan")
                 if plan not in PLANS:
                     raise LicenseError("Chọn gói 1 tháng, 1 năm hoặc 3 năm.")
                 start = parse_day(data.get("start"), self.today())
-                expires = add_months(start, PLANS[plan])
+                expires = parse_day(data.get("expires"), add_months(start, PLANS[plan]))
+                if expires < start:
+                    raise LicenseError("Ngày hết hạn phải sau ngày bắt đầu.")
                 self.check_limits(context["limits"], record["role"], record["permissions"], expires, "create")
                 license_id = uuid.uuid4().hex[:16]
                 db.execute("""INSERT INTO licenses(id,name,email,role,permissions,plan,start,expires,devices,delegates,
