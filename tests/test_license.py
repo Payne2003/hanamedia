@@ -168,6 +168,13 @@ class LicenseTests(unittest.TestCase):
         self.assertEqual([e["action"] for e in dashboard["events"][:3]], ["create", "lock", "renew"])
         self.client.activate(token)
         self.assertEqual(self.client.status()["expires"], "2027-02-28")
+        edited, token = self.admin.save_account({**self.admin.account(account["id"]), "plan": "3y", "start": "2027-01-01",
+                                                 "expires": "2029-12-31"})
+        self.assertEqual((edited["plan"], edited["start"], edited["expires"]), ("3y", "2027-01-01", "2029-12-31"))
+        with self.assertRaisesRegex(LicenseError, "sau ngày bắt đầu"):
+            self.admin.save_account({**edited, "expires": "2026-12-31"})
+        manual, _ = self.create(name="Hạn tùy chọn", expires="2025-04-15")
+        self.assertEqual(manual["expires"], "2025-04-15")
         with self.assertRaises(LicenseError):
             self.admin.save_account({"name": "", "role": "user", "plan": "1y"})
         with self.assertRaises(LicenseError):
@@ -420,6 +427,15 @@ class DelegationTests(unittest.TestCase):
         with self.assertRaisesRegex(LicenseError, "những quyền"):
             self.agent.save_account({"name": "X", "role": "user", "plan": "1m", "start": "2026-02-01",
                                      "permissions": ["view_audit"]})
+
+    def test_agent_without_renew_cannot_extend_by_editing(self):
+        self.grant_agent(permissions=["create_users", "create_jobs"])
+        account, _ = self.agent.save_account({"name": "Khách", "role": "user", "plan": "1m", "start": "2026-01-01",
+                                              "permissions": ["create_jobs"]})
+        with self.assertRaisesRegex(LicenseError, "gia hạn"):
+            self.agent.save_account({**account, "expires": "2026-06-30"})
+        shorter, _ = self.agent.save_account({**account, "expires": "2026-01-20"})
+        self.assertEqual(shorter["expires"], "2026-01-20")
 
     def test_super_admin_role_can_be_granted_and_grant_on(self):
         self.grant_agent(role="super_admin", plan="3y")

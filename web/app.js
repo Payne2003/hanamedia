@@ -1110,12 +1110,12 @@ function renderLicenseRows(){
 }
 function fillLicenseForm(account){
   const d=licenseData;licenseEditing=account?.id||null;
-  $('ldTitle').textContent=account?'Chi tiết tài khoản':'Thêm tài khoản';
+  $('ldTitle').textContent=account?`Đang sửa: ${account.name}`:'Thêm tài khoản mới';
   const scope=d.dashboard.scope;$('ldRole').innerHTML=Object.entries(d.roles).filter(([k])=>scope.roles.includes(k)).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('');
   $('ldName').value=account?.name||'';$('ldEmail').value=account?.email||'';$('ldRole').value=account?.role&&scope.roles.includes(account.role)?account.role:(scope.roles.includes('user')?'user':scope.roles[scope.roles.length-1]);
   licensePlan=account?.plan||'1y';
-  $('ldPlans').innerHTML=Object.entries(d.plans).map(([k,v])=>`<label class="ld-plan-opt"><input type="radio" name="ldPlan" value="${k}" ${k===licensePlan?'checked':''} ${account?'disabled':''}> ${esc(v)}</label>`).join('');
-  $('ldStart').value=account?.start||new Date().toISOString().slice(0,10);$('ldStart').disabled=Boolean(account);
+  $('ldPlans').innerHTML=Object.entries(d.plans).map(([k,v])=>`<label class="ld-plan-opt"><input type="radio" name="ldPlan" value="${k}" ${k===licensePlan?'checked':''}> ${esc(v)}</label>`).join('');
+  $('ldStart').value=account?.start||new Date().toISOString().slice(0,10);$('ldStart').disabled=false;$('ldExpires').disabled=false;
   $('ldDevices').value=(account?.device_codes||account?.devices||[]).join('\n');$('ldQuota').value=account?.quota||0;$('ldAmount').value=0;$('ldAmountWrap').hidden=Boolean(account);
   renderPerms(account?.permissions||d.defaults[$('ldRole').value].filter(p=>scope.permissions.includes(p)));
   updateExpiryPreview(account);
@@ -1125,23 +1125,27 @@ function fillLicenseForm(account){
 }
 function renderPerms(selected){const allowed=licenseData.dashboard?.scope?.permissions||Object.keys(licenseData.permissions);$('ldPerms').innerHTML=Object.entries(licenseData.permissions).map(([k,v])=>`<label class="check${allowed.includes(k)?'':' disabled'}"><input type="checkbox" value="${k}" ${selected.includes(k)&&allowed.includes(k)?'checked':''} ${allowed.includes(k)?'':'disabled'}><span>${esc(v)}</span></label>`).join('');}
 function updateExpiryPreview(account){$('ldExpires').value=account?account.expires:addMonthsJs($('ldStart').value||new Date().toISOString().slice(0,10),{'1m':1,'1y':12,'3y':36}[licensePlan]);}
-function showKey(key){$('ldKey').value=key;$('ldKeyBox').hidden=false;$('ldKey').select();}
+function showKey(key,name){$('ldKey').value=key;$('ldKeyName').textContent=name?`Key gửi khách: ${name}`:'Key gửi khách';$('ldKeyBox').hidden=false;$('ldKey').select();}
 $('ldRole').onchange=()=>renderPerms(licenseData.defaults[$('ldRole').value]);
 $('ldPlans').onchange=e=>{licensePlan=e.target.value;updateExpiryPreview(null);};
 $('ldStart').onchange=()=>updateExpiryPreview(null);
 $('licenseAdd').onclick=()=>{fillLicenseForm(null);$('ldName').focus();};
 $('licenseSearch').oninput=renderLicenseRows;
 $('ldSave').onclick=async()=>{
-  const body={id:licenseEditing,name:$('ldName').value,email:$('ldEmail').value,role:$('ldRole').value,plan:licensePlan,start:$('ldStart').value,
+  const body={id:licenseEditing,name:$('ldName').value,email:$('ldEmail').value,role:$('ldRole').value,plan:licensePlan,start:$('ldStart').value,expires:$('ldExpires').value,
     devices:$('ldDevices').value,quota:Number($('ldQuota').value)||0,amount:Number($('ldAmount').value)||0,
     permissions:[...$('ldPerms').querySelectorAll('input:checked')].map(x=>x.value)};
-  try{const r=await api('/api/license/accounts',body);await loadLicense();fillLicenseForm(r.account);renderLicenseRows();showKey(r.key);toast('Đã lưu và tạo key. Sao chép key gửi cho khách.');}catch(error){toast(error.message,true);}
+  const old=licenseEditing&&licenseData.dashboard.accounts.find(a=>a.id===licenseEditing);
+  if(old&&old.name.trim()!==body.name.trim()&&!confirm(`Bạn đang SỬA tài khoản “${old.name}” thành “${body.name.trim()}”, KHÔNG tạo tài khoản mới.\n\nMuốn thêm khách mới: bấm Hủy rồi bấm “+ Thêm tài khoản”.\n\nVẫn đổi tên tài khoản này?`))return;
+  try{const r=await api('/api/license/accounts',body);await loadLicense();
+    if(old)fillLicenseForm(r.account);else fillLicenseForm(null);  // tạo xong: khung trở về "Thêm tài khoản" để nhập khách tiếp theo
+    renderLicenseRows();showKey(r.key,r.account.name);toast(old?'Đã lưu thay đổi và tạo key mới.':`Đã tạo tài khoản ${r.account.name}. Sao chép key gửi cho khách.`);}catch(error){toast(error.message,true);}
 };
 async function renewAccount(id){
   const a=licenseData.dashboard.accounts.find(x=>x.id===id);if(!a)return;
   const plan=prompt(`Gia hạn "${a.name}" (hết hạn ${dmy(a.expires)}).\nNhập gói: 1m = 1 tháng, 1y = 1 năm, 3y = 3 năm`,'1y');if(plan===null)return;
   const amount=prompt('Số tiền thu (VNĐ, để 0 nếu không tính):','0');if(amount===null)return;
-  try{const r=await api('/api/license/renew',{id,plan:plan.trim(),amount:Number(amount)||0});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();showKey(r.key);toast(`Đã gia hạn tới ${dmy(r.account.expires)}. Gửi key mới cho khách.`);}catch(error){toast(error.message,true);}
+  try{const r=await api('/api/license/renew',{id,plan:plan.trim(),amount:Number(amount)||0});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();showKey(r.key,r.account.name);toast(`Đã gia hạn tới ${dmy(r.account.expires)}. Gửi key mới cho khách.`);}catch(error){toast(error.message,true);}
 }
 $('ldRenew').onclick=()=>licenseEditing&&renewAccount(licenseEditing);
 $('ldLock').onclick=async()=>{const a=licenseData.dashboard.accounts.find(x=>x.id===licenseEditing);if(!a)return;
@@ -1159,7 +1163,7 @@ $('licenseRows').onclick=e=>{const edit=e.target.closest('[data-license-edit]'),
   const find=id=>licenseData.dashboard.accounts.find(a=>a.id===id);
   if(edit){fillLicenseForm(find(edit.dataset.licenseEdit));renderLicenseRows();$('licenseDetail').scrollIntoView({behavior:'smooth',block:'start'});}
   if(renew)renewAccount(renew.dataset.licenseRenew);
-  if(key){const a=find(key.dataset.licenseKey);navigator.clipboard.writeText(a.token).then(()=>toast(`Đã sao chép key của ${a.name}.`)).catch(()=>{fillLicenseForm(a);showKey(a.token);});}};
+  if(key){const a=find(key.dataset.licenseKey);navigator.clipboard.writeText(a.token).then(()=>toast(`Đã sao chép key của ${a.name}.`)).catch(()=>{fillLicenseForm(a);showKey(a.token,a.name);});}};
 $('ldCopyKey').onclick=()=>navigator.clipboard.writeText($('ldKey').value).then(()=>toast('Đã sao chép key.')).catch(()=>toast('Chọn và sao chép key trong ô.',true));
 $('copyMachine').onclick=()=>navigator.clipboard.writeText($('licenseMachine').textContent).then(()=>toast('Đã sao chép mã máy.')).catch(()=>toast('Chọn và sao chép mã máy.',true));
 document.addEventListener('click',e=>{if(e.target.id==='copyPubkey')navigator.clipboard.writeText(licenseData.status.public_key).then(()=>toast('Đã sao chép khóa công khai.')).catch(()=>toast('Chọn và sao chép chuỗi khóa.',true));});

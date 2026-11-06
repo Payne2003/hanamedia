@@ -158,14 +158,14 @@
             <label>Email<input id="ldEmail" type="email" maxlength="120"></label>
             <label>Role<select id="ldRole"></select></label>
             <div class="ld-plan"><span>Gói sử dụng</span><div id="ldPlans" class="ld-plans"></div></div>
-            <div class="ld-dates"><label>Ngày bắt đầu<input id="ldStart" type="date"></label><label>Ngày hết hạn<input id="ldExpires" type="date" disabled></label></div>
+            <div class="ld-dates"><label>Ngày bắt đầu<input id="ldStart" type="date"></label><label>Ngày hết hạn<input id="ldExpires" type="date"></label></div>
             <label>Mã máy được dùng <small>(dán nguyên chuỗi khách gửi, mỗi dòng một máy; để trống = máy nào cũng được, nhưng khi đó máy đó không được quyền quản lý)</small><textarea id="ldDevices" rows="2" spellcheck="false" placeholder="ABCD-1234-EF56-7890.xxxxxxxxxxxxxxxx"></textarea></label>
             <label>Quota video <small>(0 = không giới hạn)</small><input id="ldQuota" type="number" min="0" step="1" value="0"></label>
             <label id="ldAmountWrap">Số tiền thu (VNĐ)<input id="ldAmount" type="number" min="0" step="1000" value="0"></label>
             <div class="ld-perms"><span>Quyền (Permissions)</span><div id="ldPerms"></div></div>
             <button type="button" id="ldSave" class="primary">💾 Lưu &amp; tạo key</button>
             <div class="ld-actions"><button type="button" id="ldRenew">↻ Gia hạn ngay</button><button type="button" id="ldLock" class="danger-outline">🔒 Khóa</button><button type="button" id="ldDelete" class="danger-outline">🗑 Xóa</button></div>
-            <div id="ldKeyBox" class="ld-key" hidden><b>Key gửi khách</b><textarea id="ldKey" rows="4" readonly spellcheck="false"></textarea><button type="button" id="ldCopyKey">📋 Sao chép key</button></div>
+            <div id="ldKeyBox" class="ld-key" hidden><b id="ldKeyName">Key gửi khách</b><textarea id="ldKey" rows="4" readonly spellcheck="false"></textarea><button type="button" id="ldCopyKey">📋 Sao chép key</button></div>
             <p id="ldRevokeNote" class="detail"></p>
           </aside>
         </div>
