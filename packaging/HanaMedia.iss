@@ -45,3 +45,11 @@ Name: "{autodesktop}\HANA MEDIA"; Filename: "{app}\HanaMedia.exe"; Tasks: deskto
 
 [Run]
 Filename: "{app}\HanaMedia.exe"; Description: "Mở HANA MEDIA"; Flags: nowait postinstall skipifsilent
+; Tự cập nhật trong app: bộ cài chạy im lặng với /RELAUNCH=1 rồi mở lại app khi chép xong.
+Filename: "{app}\HanaMedia.exe"; Flags: nowait; Check: ShouldRelaunch
+
+[Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:RELAUNCH|0}') = '1');
+end;

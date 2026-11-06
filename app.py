@@ -52,6 +52,8 @@ class AppServer(ThreadingHTTPServer):
             engine.license_ok = lambda: self.license.allows("create_jobs")
         except AttributeError:
             pass
+        from runner.updater import Updater
+        self.updater = Updater(self.data_dir, busy=self.jobs_running, exit_app=self.exit_for_update)
         threading.Thread(target=self.license_watch, name="license-check", daemon=True).start()
         self.gemini_web = GeminiWebRunner(self.data_dir / "profiles" / "gemini-web")
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
@@ -67,16 +69,36 @@ class AppServer(ThreadingHTTPServer):
             self.apply_shared(True)
 
     def license_watch(self):
-        """Máy khách: tải danh sách thu hồi khi mở app rồi mỗi giờ (lỗi mạng thì thử lại sau 10 phút)."""
+        """Máy khách: tải danh sách thu hồi khi mở app rồi mỗi giờ (lỗi mạng thì thử lại sau 10 phút).
+        Cùng luồng: kiểm tra bản cập nhật app khi mở app rồi mỗi 6 giờ (chỉ kiểm tra, không tự cài)."""
         stop = threading.Event()
         stop.wait(3)
+        self.updater.clean_old()  # bộ cài của lần cập nhật trước (đã cài xong)
         while True:
             try:
                 if self.license.needs_check():
                     self.license.check_revocations()
             except Exception:  # không để luồng kiểm tra chết vì lỗi lạ (ví dụ CSDL đang bận)
                 pass
+            try:
+                if self.updater.status()["supported"] and self.updater.due():
+                    self.updater.check()
+            except Exception:
+                pass
             stop.wait(60)
+
+    def jobs_running(self):
+        with self.store.connect() as db:
+            return db.execute("SELECT COUNT(*) FROM jobs WHERE status='running'").fetchone()[0] > 0
+
+    def exit_for_update(self):
+        """Bộ cài đã chạy: đóng Chrome của tool rồi tắt app để bộ cài chép đè (bộ cài tự mở lại app)."""
+        for close in (self.engine.close_browsers, self.gemini_web.close, self.chatgpt_web.close):
+            try:
+                close()
+            except Exception:
+                pass
+        os._exit(0)
 
     def apply_shared(self, enabled):
         """Bật/tắt tài khoản chung. Chỉ đổi khi không phần nào đang chạy; đóng mọi Chrome tự động đang rảnh."""
@@ -366,6 +388,8 @@ class Handler(BaseHTTPRequestHandler):
             data["license"] = {k: status.get(k) for k in ("state", "message", "allowed", "enforced", "role", "name",
                                                            "expires", "days_left", "issuer", "issuer_mode",
                                                            "online_check", "checked_at", "check_error")}
+            update = self.server.updater.status()
+            data["update"] = {k: update.get(k) for k in ("supported", "available", "latest", "phase", "progress", "error")}
             data["support"] = self.server.store.support_bar()
             data["community"] = self.server.store.community()
             shared = self.server.shared
@@ -397,6 +421,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"error": "Video ghép không còn trên máy."}, 404)
             download = "download" in parse_qs(urlsplit(self.path).query)
             return self.send_file(file, "video/mp4", "attachment" if download else "inline", file.name)
+        if path == "/api/update":
+            return self.reply(self.server.updater.status())
         if path == "/api/license":
             manager = self.server.license
             data = {"status": manager.status(), "roles": licensing.ROLE_NAMES, "permissions": licensing.PERMISSION_NAMES,
@@ -499,6 +525,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path.startswith("/api/license/"):
                 return self.license_action(path)
+            if path in ("/api/update/check", "/api/update/install"):
+                self.rfile.read(min(int(self.headers.get("Content-Length", "0") or 0), 10_000))
+            if path == "/api/update/check":
+                return self.reply({"ok": True, "update": self.server.updater.check()})
+            if path == "/api/update/install":
+                try:
+                    return self.reply({"ok": True, "update": self.server.updater.start_install()})
+                except ValueError as error:
+                    return self.reply({"error": str(error)}, 400)
             if path.startswith("/api/media/"):
                 return self.media_mutate("POST", path)
             if path in ("/api/image-upload", "/api/library/image-upload"):
