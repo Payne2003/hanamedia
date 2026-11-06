@@ -3,7 +3,7 @@ const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;
 let state=null,key='',filter='all',busy=false,pendingBatch=null,toastTimer,visibleJobs=[],mode='text',libraryImages=[];
 const selectedJobs=new Set(),promptImages=new Map();
 let licenseData=null,licenseEditing=null,licensePlan='1y';
-const licenseStates={not_enforced:['Chưa bật khóa bản quyền','approved'],owner:['Super Admin','approved'],active:['Đang hoạt động','approved'],expiring:['Sắp hết hạn','review'],expired:['Hết hạn','error'],missing:['Chưa kích hoạt','error'],invalid:['Key không hợp lệ','error'],wrong_device:['Sai máy','error'],clock:['Sai đồng hồ','error'],not_started:['Chưa tới ngày','review']};
+const licenseStates={not_enforced:['Chưa bật khóa bản quyền','approved'],owner:['Super Admin','approved'],active:['Đang hoạt động','approved'],expiring:['Sắp hết hạn','review'],expired:['Hết hạn','error'],missing:['Chưa kích hoạt','error'],invalid:['Key không hợp lệ','error'],wrong_device:['Sai máy','error'],clock:['Sai đồng hồ','error'],not_started:['Chưa tới ngày','review'],revoked:['Đã bị thu hồi','error'],offline:['Cần kết nối mạng','error']};
 const accountStates={active:['Đang hoạt động','approved'],expiring:['Sắp hết hạn','review'],expired:['Hết hạn','error'],locked:['Đã khóa','error']};
 const vnd=n=>Number(n||0).toLocaleString('vi-VN')+' đ';
 const dmy=d=>d?d.split('-').reverse().join('/'):'—';
@@ -1068,6 +1068,8 @@ function renderLicense(){
   $('licenseInfo').innerHTML=rows.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
   $('licenseActivate').hidden=!st.enforced||st.state==='owner';
   $('licenseRemove').hidden=!st.id;
+  $('licenseOnline').hidden=!st.online_check||!st.id;
+  $('licenseOnlineText').textContent=st.checked_at?`Kiểm tra thu hồi online lần cuối: ${new Date(st.checked_at*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'})}${st.check_error?` · lần thử gần nhất lỗi: ${st.check_error}`:''}`:`Chưa kiểm tra được thu hồi online${st.check_error?`: ${st.check_error}`:''}.`;
   $('issuerInit').hidden=st.enforced||st.issuer;$('issuerPanel').hidden=!st.issuer;
   if(!st.issuer)return;
   $('issuerTrust').hidden=st.issuer_trusted||st.issuer_mode!=='root'||st.enforced;
@@ -1084,12 +1086,26 @@ function renderLicense(){
   $('matrixRows').innerHTML=Object.keys(d.roles).map(r=>`<tr><td>${esc(d.roles[r])}</td>${perms.map(p=>`<td class="${d.defaults[r].includes(p)?'yes':'no'}">${d.defaults[r].includes(p)?'✓':'—'}</td>`).join('')}</tr>`).join('');
   $('licenseRevenue').innerHTML=db.revenue.length?db.revenue.map(r=>`<div class="rev-row"><span>${esc(r.month)}</span><b>${vnd(r.total)}</b><small>${r.count} giao dịch</small></div>`).join(''):'<p class="detail">Chưa có doanh thu. Nhập số tiền khi tạo hoặc gia hạn tài khoản.</p>';
   $('licenseAudit').innerHTML=db.events.slice(0,60).map(e=>`<div><time>${new Date(e.at*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'})}</time><span>${esc(e.detail||e.action)}</span></div>`).join('')||'<p class="detail">Chưa có nhật ký.</p>';
+  renderRevocation(db.revocation,scope);
   if(!licenseEditing)fillLicenseForm(null);
 }
+function renderRevocation(r,scope){
+  const root=scope.mode==='root';
+  $('ldRevokeNote').textContent=!r.enabled?'Bản chạy từ mã nguồn: khóa / xóa chỉ lưu trên máy này.':root?'Khóa hoặc xóa: máy khách ngừng dùng được trong khoảng 1 giờ (hoặc ngay khi mở lại app). Xóa là thu hồi vĩnh viễn.':'Khóa / xóa chỉ lưu trên máy bạn: key đã cấp vẫn chạy tới ngày hết hạn. Muốn chặn ngay, nhờ Super Admin khóa tài khoản đại lý của bạn.';
+  $('revokeCard').hidden=!root||!r.enabled;if(!root||!r.enabled)return;
+  const bad=Boolean(r.error)||r.pending;
+  $('revokeChip').textContent=!r.has_token?'Chưa cài token':bad?'Chưa đăng được':'Đã đồng bộ';$('revokeChip').className='status-chip '+(!r.has_token||bad?'error':'approved');
+  const when=r.published_at?new Date(r.published_at*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'}):'chưa đăng lần nào';
+  $('revokeText').textContent=`Đang thu hồi ${r.revoked} key (đã khóa hoặc đã xóa). Đăng gần nhất: ${when}${r.published_at?` (${r.count} key)`:''}.${r.pending?' Có thay đổi chưa đăng: máy khách đó vẫn dùng được cho tới khi đăng xong.':''}${r.error?` Lỗi: ${r.error}`:''}`;
+  $('revokeRepo').textContent=r.repo||'';$('revokePublish').hidden=!r.has_token;$('revokeTokenRemove').hidden=!r.has_token;
+  $('revokeSetupTitle').textContent=r.has_token?'Đổi / xóa token GitHub':'Cài token GitHub để đăng danh sách thu hồi';
+  if(!r.has_token)$('revokeSetup').open=true;
+}
+function revokeToast(r,done){if(!r)return toast(done);if(r.local)return toast(done+' '+r.message);if(r.error)return toast(`${done} Nhưng chưa đăng thu hồi online: ${r.error}`,true);toast(done+' Đã đăng danh sách thu hồi online.');}
 function renderLicenseRows(){
   const d=licenseData,q=$('licenseSearch').value.trim().toLowerCase();
   const list=d.dashboard.accounts.filter(a=>!q||a.name.toLowerCase().includes(q)||a.email.includes(q));
-  $('licenseRows').innerHTML=list.map((a,i)=>{const [label,cls]=accountStates[a.state];return `<tr class="${licenseEditing===a.id?'selected':''}"><td>${i+1}</td><td><b>${esc(a.name)}</b><small>${esc(a.email)}</small></td><td><span class="role-chip ${a.role}">${esc(d.roles[a.role])}</span></td><td>${esc(d.plans[a.plan]||a.plan)}</td><td>${dmy(a.expires)}</td><td>${a.quota?a.quota.toLocaleString('vi-VN'):'∞'}</td><td>${a.devices.length||'Mọi máy'}${a.can_issue?' · <span class="role-chip admin" title="Máy này được tự cấp key cho khách của mình">quản lý</span>':''}</td><td><span class="status-chip ${cls}">${label}</span></td><td class="row-actions"><button type="button" data-license-edit="${a.id}" title="Xem / sửa chi tiết">✎</button><button type="button" data-license-renew="${a.id}" title="Gia hạn">↻</button><button type="button" data-license-key="${a.id}" title="Sao chép key">📋</button></td></tr>`;}).join('')||'<tr><td colspan="9" class="detail">Chưa có tài khoản. Bấm “+ Thêm tài khoản”.</td></tr>';
+  $('licenseRows').innerHTML=list.map((a,i)=>{const [label,cls]=accountStates[a.state];return `<tr class="${licenseEditing===a.id?'selected':''}"><td>${i+1}</td><td><b>${esc(a.name)}</b><small>${esc(a.email)}</small></td><td><span class="role-chip ${a.role}">${esc(d.roles[a.role])}</span></td><td>${esc(d.plans[a.plan]||a.plan)}</td><td>${dmy(a.expires)}</td><td>${a.quota?a.quota.toLocaleString('vi-VN'):'∞'}</td><td>${a.devices.length||'Mọi máy'}${a.can_issue?' · <span class="role-chip admin" title="Máy này được tự cấp key cho khách của mình">quản lý</span>':''}</td><td><span class="status-chip ${cls}">${label}</span></td><td class="row-actions"><button type="button" data-license-edit="${a.id}" title="Xem / sửa chi tiết">✎</button><button type="button" data-license-renew="${a.id}" title="Gia hạn">↻</button><button type="button" data-license-key="${a.id}" title="Sao chép key">📋</button><button type="button" data-license-delete="${a.id}" title="Xóa tài khoản">🗑</button></td></tr>`;}).join('')||'<tr><td colspan="9" class="detail">Chưa có tài khoản. Bấm “+ Thêm tài khoản”.</td></tr>';
   const scroller=$('licenseRows').closest('.table-scroll');if(scroller)scroller.scrollLeft=0;
 }
 function fillLicenseForm(account){
@@ -1103,7 +1119,7 @@ function fillLicenseForm(account){
   $('ldDevices').value=(account?.device_codes||account?.devices||[]).join('\n');$('ldQuota').value=account?.quota||0;$('ldAmount').value=0;$('ldAmountWrap').hidden=Boolean(account);
   renderPerms(account?.permissions||d.defaults[$('ldRole').value].filter(p=>scope.permissions.includes(p)));
   updateExpiryPreview(account);
-  $('ldRenew').disabled=!account||!scope.can_renew;$('ldLock').disabled=!account;$('ldLock').textContent=account?.state==='locked'?'🔓 Mở khóa':'🔒 Khóa';
+  $('ldRenew').disabled=!account||!scope.can_renew;$('ldLock').disabled=!account;$('ldDelete').disabled=!account;$('ldLock').textContent=account?.state==='locked'?'🔓 Mở khóa':'🔒 Khóa';
   $('ldSave').textContent=account?'💾 Lưu thay đổi & tạo key mới':'💾 Lưu & tạo key';
   $('ldKeyBox').hidden=true;
 }
@@ -1129,8 +1145,17 @@ async function renewAccount(id){
 }
 $('ldRenew').onclick=()=>licenseEditing&&renewAccount(licenseEditing);
 $('ldLock').onclick=async()=>{const a=licenseData.dashboard.accounts.find(x=>x.id===licenseEditing);if(!a)return;
-  try{const r=await api('/api/license/lock',{id:a.id,locked:a.state!=='locked'});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();toast(r.account.state==='locked'?'Đã khóa: sẽ không gia hạn tài khoản này.':'Đã mở khóa.');}catch(error){toast(error.message,true);}};
-$('licenseRows').onclick=e=>{const edit=e.target.closest('[data-license-edit]'),renew=e.target.closest('[data-license-renew]'),key=e.target.closest('[data-license-key]');
+  try{const r=await api('/api/license/lock',{id:a.id,locked:a.state!=='locked'});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();revokeToast(r.revocation,r.account.state==='locked'?'Đã khóa tài khoản.':'Đã mở khóa.');}catch(error){toast(error.message,true);}};
+async function deleteAccount(id){const a=licenseData.dashboard.accounts.find(x=>x.id===id);if(!a)return;
+  if(!confirm(`Xóa tài khoản “${a.name}”?\n\nKey của tài khoản này bị thu hồi vĩnh viễn, không mở lại được (muốn dùng lại phải tạo tài khoản mới).`))return;
+  try{const r=await api('/api/license/delete',{id,confirm:true});await loadLicense();if(licenseEditing===id)fillLicenseForm(null);renderLicenseRows();revokeToast(r.revocation,`Đã xóa ${a.name}.`);}catch(error){toast(error.message,true);}}
+$('ldDelete').onclick=()=>licenseEditing&&deleteAccount(licenseEditing);
+$('revokePublish').onclick=()=>action(async()=>{const r=await api('/api/license/publish',{});await loadLicense();r.revocation.error?toast(r.revocation.error,true):toast('Đã đăng danh sách thu hồi.');});
+$('revokeTokenForm').onsubmit=e=>{e.preventDefault();const token=$('revokeToken').value.trim();if(!token)return toast('Dán token GitHub.',true);action(async()=>{const r=await api('/api/license/publisher',{token});$('revokeToken').value='';await loadLicense();r.revocation.error?toast('Đã lưu token nhưng chưa đăng được: '+r.revocation.error,true):toast('Đã lưu token và đăng danh sách thu hồi.');});};
+$('revokeTokenRemove').onclick=()=>{if(!confirm('Xóa token GitHub khỏi máy này? Sau đó khóa / xóa tài khoản sẽ không đăng thu hồi online được.'))return;action(async()=>{await api('/api/license/publisher',{token:''});await loadLicense();toast('Đã xóa token.');});};
+$('licenseCheck').onclick=()=>action(async()=>{const r=await api('/api/license/check',{});await loadLicense();r.check.ok?toast(r.status.message):toast('Chưa kiểm tra được: '+r.check.error,true);});
+$('licenseRows').onclick=e=>{const edit=e.target.closest('[data-license-edit]'),renew=e.target.closest('[data-license-renew]'),key=e.target.closest('[data-license-key]'),del=e.target.closest('[data-license-delete]');
+  if(del)return deleteAccount(del.dataset.licenseDelete);
   const find=id=>licenseData.dashboard.accounts.find(a=>a.id===id);
   if(edit){fillLicenseForm(find(edit.dataset.licenseEdit));renderLicenseRows();$('licenseDetail').scrollIntoView({behavior:'smooth',block:'start'});}
   if(renew)renewAccount(renew.dataset.licenseRenew);

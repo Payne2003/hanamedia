@@ -125,6 +125,7 @@
         <dl id="licenseInfo" class="license-info"></dl>
         <div class="lm-machine"><span>Mã máy</span><code id="licenseMachine">—</code><button type="button" id="copyMachine">📋 Sao chép mã máy</button><small>Gửi nguyên chuỗi này cho người bán để nhận key. Nếu được cấp role quản lý, máy này sẽ tự cấp key được cho khách của mình.</small></div>
         <form id="licenseActivate" class="lm-activate"><textarea id="licenseKey" rows="3" spellcheck="false" placeholder="Dán key HANA1.… vào đây"></textarea><div><button type="submit" class="primary">Kích hoạt</button><button type="button" id="licenseRemove" class="danger-outline">Gỡ key</button></div></form>
+        <div id="licenseOnline" class="lm-online" hidden><span id="licenseOnlineText"></span><button type="button" id="licenseCheck">↻ Kiểm tra lại</button></div>
       </section>
       <details id="issuerInit" class="card license-init" hidden><summary>Dành cho Super Admin: khởi tạo khóa ký trên máy này</summary>
         <p class="detail">Chỉ làm <b>một lần</b>, trên máy của người bán. Tool tạo khóa ký (lưu trong thư mục dữ liệu, <b>sao lưu cẩn thận, không gửi ai</b>) và một <b>khóa công khai</b> để gắn cứng vào app phát cho khách.</p>
@@ -134,6 +135,19 @@
         <div id="issuerTrust" class="notice" hidden></div>
         <div id="issuerScope" class="notice" hidden></div>
         <div id="licenseStats" class="license-stats"></div>
+        <section id="revokeCard" class="card revoke-card" hidden>
+          <div class="rc-head"><h2>Thu hồi online</h2><span id="revokeChip" class="status-chip">—</span></div>
+          <p id="revokeText" class="detail"></p>
+          <div id="revokeActions" class="rc-actions"><button type="button" id="revokePublish" class="primary">⇪ Đăng lại danh sách ngay</button></div>
+          <details id="revokeSetup" class="rc-setup"><summary id="revokeSetupTitle">Cài token GitHub để đăng danh sách thu hồi</summary>
+            <ol class="detail">
+              <li>Mở <b>github.com → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token</b>.</li>
+              <li>Repository access: <b>Only select repositories</b> → chọn kho <b id="revokeRepo"></b>. Permissions → Repository permissions → <b>Contents: Read and write</b>. Expiration: chọn dài (ví dụ 1 năm).</li>
+              <li>Sao chép token (bắt đầu bằng <code>github_pat_</code>) rồi dán vào ô dưới. Token chỉ lưu trên máy này, không hiện lại, không gửi đi đâu ngoài GitHub.</li>
+            </ol>
+            <form id="revokeTokenForm" class="rc-token"><input id="revokeToken" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"><button type="submit" class="primary">Lưu token &amp; đăng</button><button type="button" id="revokeTokenRemove" class="danger-outline">Xóa token</button></form>
+          </details>
+        </section>
         <div class="license-grid">
           <section class="card license-list"><div class="ll-head"><h2>Danh sách tài khoản</h2><input id="licenseSearch" type="search" placeholder="Tìm theo tên, email…"><button type="button" id="licenseAdd" class="primary">+ Thêm tài khoản</button></div>
             <div class="table-scroll"><table class="license-table"><thead><tr><th>#</th><th>TÊN / EMAIL</th><th>ROLE</th><th>GÓI</th><th>HẾT HẠN</th><th>QUOTA</th><th>MÁY</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody id="licenseRows"></tbody></table></div>
@@ -150,9 +164,9 @@
             <label id="ldAmountWrap">Số tiền thu (VNĐ)<input id="ldAmount" type="number" min="0" step="1000" value="0"></label>
             <div class="ld-perms"><span>Quyền (Permissions)</span><div id="ldPerms"></div></div>
             <button type="button" id="ldSave" class="primary">💾 Lưu &amp; tạo key</button>
-            <div class="ld-actions"><button type="button" id="ldRenew">↻ Gia hạn ngay</button><button type="button" id="ldLock" class="danger-outline">🔒 Khóa</button></div>
+            <div class="ld-actions"><button type="button" id="ldRenew">↻ Gia hạn ngay</button><button type="button" id="ldLock" class="danger-outline">🔒 Khóa</button><button type="button" id="ldDelete" class="danger-outline">🗑 Xóa</button></div>
             <div id="ldKeyBox" class="ld-key" hidden><b>Key gửi khách</b><textarea id="ldKey" rows="4" readonly spellcheck="false"></textarea><button type="button" id="ldCopyKey">📋 Sao chép key</button></div>
-            <p class="detail">Khóa chỉ có tác dụng khi không gia hạn: key đã cấp vẫn chạy tới ngày hết hạn (không có máy chủ để thu hồi ngay).</p>
+            <p id="ldRevokeNote" class="detail"></p>
           </aside>
         </div>
         <div class="license-grid2">

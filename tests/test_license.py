@@ -160,7 +160,7 @@ class LicenseTests(unittest.TestCase):
         self.clock.day = date(2027, 6, 1)
         late, _ = self.admin.renew(account["id"], "1m")
         self.assertEqual(late["expires"], "2027-06-30")  # đã hết hạn: tính từ hôm nay
-        self.assertEqual(self.admin.set_locked(account["id"], True)["state"], "locked")
+        self.assertEqual(self.admin.set_locked(account["id"], True)[0]["state"], "locked")
         self.create(name="Reseller", role="admin", plan="3y", amount=5_000_000)
         dashboard = self.admin.dashboard()
         self.assertEqual((dashboard["stats"]["total"], dashboard["stats"]["admins"]), (2, 1))
@@ -176,6 +176,192 @@ class LicenseTests(unittest.TestCase):
             self.admin.save_account({"name": "x", "role": "user", "plan": "1y", "devices": "not-a-code"})
         with self.assertRaises(LicenseError):
             self.client.save_account({"name": "x", "role": "user", "plan": "1y"})  # máy khách không có khóa ký
+
+
+REVOCATION = {"repo": "Owner/app", "branch": "license-revocations", "file": "revoked.txt"}
+TOKEN = "github_pat_" + "A1" * 20
+
+
+class FakeGitHub:
+    """Giả lập GitHub: API ghi file (cần token) và raw.githubusercontent.com để máy khách đọc."""
+
+    def __init__(self):
+        self.files, self.branches, self.offline, self.calls = {}, {"main"}, False, []
+
+    def __call__(self, method, url, headers=None, body=None, timeout=15):
+        self.calls.append((method, url, dict(headers or {})))
+        if self.offline:
+            raise OSError("mất mạng")
+        if url.startswith("https://raw.githubusercontent.com/Owner/app/"):
+            branch, _, name = url.split("?")[0][len("https://raw.githubusercontent.com/Owner/app/"):].partition("/")
+            text = self.files.get((branch, name))
+            return (200, text.encode()) if text is not None else (404, b"404: Not Found")
+        if (headers or {}).get("Authorization") != f"Bearer {TOKEN}":
+            return 401, b'{"message":"Bad credentials"}'
+        path = url[len("https://api.github.com"):]
+        if path == "/repos/Owner/app":
+            return 200, b'{"default_branch":"main"}'
+        if path.startswith("/repos/Owner/app/git/ref/heads/"):
+            name = path.rsplit("/", 1)[1]
+            return (200, b'{"object":{"sha":"abc"}}') if name in self.branches else (404, b"{}")
+        if path == "/repos/Owner/app/git/refs" and method == "POST":
+            self.branches.add(json.loads(body)["ref"].rsplit("/", 1)[1])
+            return 201, b"{}"
+        if path.startswith("/repos/Owner/app/contents/"):
+            import base64
+            name = path.split("?")[0].rsplit("/", 1)[1]
+            if method == "GET":
+                branch = path.split("ref=")[1]
+                if branch not in self.branches:
+                    return 404, b'{"message":"No commit found for the ref"}'
+                return (200, b'{"sha":"s1"}') if (branch, name) in self.files else (404, b"{}")
+            data = json.loads(body)
+            if data["branch"] not in self.branches or (((data["branch"], name) in self.files) != bool(data.get("sha"))):
+                return 409, b"{}"
+            self.files[(data["branch"], name)] = base64.b64decode(data["content"]).decode()
+            return 201, b"{}"
+        return 404, b"{}"
+
+
+class RevocationTests(unittest.TestCase):
+    """Khóa / xóa trên máy Super Admin thì máy khách ngừng dùng được (danh sách thu hồi ký số trên GitHub)."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()).resolve()
+        self.clock = Clock(date(2026, 1, 1))
+        self.github = FakeGitHub()
+        folder = self.root / "root"
+        folder.mkdir()
+        self.public = LicenseManager(Store(folder / "t.db"), folder, trusted=[]).init_signing_key()
+        self.root_m, self.agent, self.customer = (self.manager(n) for n in ("root", "agent", "customer"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def manager(self, name, trusted=None):
+        folder = self.root / name
+        folder.mkdir(exist_ok=True)
+        return LicenseManager(Store(folder / "t.db"), folder, trusted=trusted or [self.public], today=self.clock.today,
+                              clock=self.clock.time, revocation=REVOCATION, http=self.github)
+
+    def give(self, issuer, who, role="user", **extra):
+        account, token = issuer.save_account({"name": "Khách " + role, "role": role, "plan": "1y",
+                                              "start": "2026-01-01", "devices": [who.request_code()], **extra})
+        return account, who.activate(token)
+
+    def test_lock_unlock_and_delete_reach_the_customer(self):
+        self.assertEqual(self.root_m.set_publisher_token(TOKEN)["has_token"], True)
+        self.assertIn("license-revocations", self.github.branches)  # nhánh riêng được tạo ở lần đăng đầu tiên
+        account, status = self.give(self.root_m, self.customer)
+        self.assertEqual(status["state"], "active")
+        _, info = self.root_m.set_locked(account["id"], True)
+        self.assertEqual((info["error"], info["count"], info["pending"]), ("", 1, False))
+        self.assertNotIn(TOKEN, json.dumps(self.root_m.dashboard()))  # token không bao giờ ra giao diện
+        self.assertTrue(self.customer.check_revocations()["ok"])
+        status = self.customer.status()
+        self.assertEqual((status["state"], status["allowed"]), ("revoked", []))
+        self.root_m.set_locked(account["id"], False)
+        self.customer.check_revocations()
+        self.assertEqual(self.customer.status()["state"], "active")
+        self.root_m.delete_account(account["id"])
+        self.assertEqual(self.root_m.dashboard()["accounts"], [])
+        self.customer.check_revocations()
+        self.assertEqual(self.customer.status()["state"], "revoked")
+        with self.assertRaises(LicenseError):
+            self.root_m.delete_account(account["id"])
+
+    def test_renewing_a_locked_account_unrevokes_it(self):
+        self.root_m.set_publisher_token(TOKEN)
+        account, _ = self.give(self.root_m, self.customer)
+        self.root_m.set_locked(account["id"], True)
+        _, token = self.root_m.renew(account["id"], "1m")
+        self.customer.activate(token)
+        self.assertEqual(self.customer.status()["state"], "active")
+
+    def test_without_token_change_is_pending(self):
+        account, _ = self.give(self.root_m, self.customer)
+        _, info = self.root_m.set_locked(account["id"], True)
+        self.assertTrue(info["pending"])
+        self.assertIn("token GitHub", info["error"])
+        self.customer.check_revocations()
+        self.assertEqual(self.customer.status()["state"], "active")  # chưa đăng thì khách chưa bị chặn
+        with self.assertRaisesRegex(LicenseError, "github_pat_"):
+            self.root_m.set_publisher_token("mật khẩu")
+        info = self.root_m.set_publisher_token(TOKEN)
+        self.assertEqual((info["pending"], info["error"]), (False, ""))
+        self.customer.check_revocations()
+        self.assertEqual(self.customer.status()["state"], "revoked")
+
+    def test_offline_grace_then_recovers(self):
+        account, status = self.give(self.root_m, self.customer)
+        self.assertEqual(status["state"], "active")  # chưa có danh sách (404): coi như chưa thu hồi gì
+        self.github.offline = True
+        self.clock.day = date(2026, 1, 3)
+        self.assertFalse(self.customer.check_revocations()["ok"])
+        self.assertEqual(self.customer.status()["state"], "active")  # còn trong 3 ngày
+        self.clock.day = date(2026, 1, 5)
+        self.assertEqual(self.customer.status()["state"], "offline")
+        self.assertTrue(self.customer.needs_check())
+        self.github.offline = False
+        self.customer.check_revocations()
+        self.assertEqual(self.customer.status()["state"], "active")
+
+    def test_forged_old_or_deleted_lists_are_rejected(self):
+        self.root_m.set_publisher_token(TOKEN)
+        account, _ = self.give(self.root_m, self.customer)
+        self.root_m.set_locked(account["id"], True)
+        self.customer.check_revocations()
+        signed = self.github.files[("license-revocations", "revoked.txt")]
+        from runner.license import REV_PREFIX
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives import serialization
+        other = Ed25519PrivateKey.generate().private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
+                                                           serialization.NoEncryption())
+        self.github.files[("license-revocations", "revoked.txt")] = sign(other, {"kid": self.customer_kid(), "seq": 10**15,
+                                                                               "ids": []}, REV_PREFIX)
+        self.assertIn("không hợp lệ", self.customer.check_revocations()["error"])
+        self.assertEqual(self.customer.status()["state"], "revoked")
+        self.root_m.set_locked(account["id"], False)
+        self.github.files[("license-revocations", "revoked.txt")] = signed  # phát lại bản cũ (vẫn đang thu hồi)
+        self.root_m.publish()
+        newer = self.github.files[("license-revocations", "revoked.txt")]
+        self.customer.check_revocations()
+        self.assertEqual(self.customer.status()["state"], "active")
+        self.github.files[("license-revocations", "revoked.txt")] = signed
+        self.assertIn("cũ hơn", self.customer.check_revocations()["error"])
+        self.assertEqual(self.customer.status()["state"], "active")
+        del self.github.files[("license-revocations", "revoked.txt")]  # đã từng có danh sách: 404 là lỗi
+        self.assertFalse(self.customer.check_revocations()["ok"])
+        self.github.files[("license-revocations", "revoked.txt")] = newer
+
+    def customer_kid(self):
+        from runner.license import key_id
+        return key_id(unb64(self.public))
+
+    def test_revoking_an_agent_stops_its_customers(self):
+        self.root_m.set_publisher_token(TOKEN)
+        agent_account, status = self.give(self.root_m, self.agent, role="admin")
+        self.assertEqual(status["issuer_mode"], "delegate")
+        customer_account, status = self.give(self.agent, self.customer)
+        self.assertEqual(status["state"], "active")
+        _, info = self.agent.set_locked(customer_account["id"], True)
+        self.assertTrue(info["local"])  # đại lý khóa: chỉ trên máy đại lý
+        with self.assertRaises(LicenseError):
+            self.agent.publish()
+        self.agent.delete_account(customer_account["id"])
+        self.root_m.set_locked(agent_account["id"], True)
+        for machine in (self.agent, self.customer):
+            machine.check_revocations()
+            self.assertEqual(machine.status()["state"], "revoked")
+        self.assertFalse(self.agent.status()["issuer"])
+
+    def test_owner_machine_never_checks(self):
+        self.assertFalse(self.root_m.needs_check())
+        self.assertFalse(self.customer.needs_check())  # chưa kích hoạt key
+        self.give(self.root_m, self.customer)
+        self.assertFalse(self.customer.needs_check())  # vừa kiểm tra lúc kích hoạt
+        self.clock.day = date(2026, 1, 2)
+        self.assertTrue(self.customer.needs_check())
 
 
 class DelegationTests(unittest.TestCase):
@@ -354,6 +540,13 @@ class LicenseHTTPTests(unittest.TestCase):
         self.assertEqual((dashboard["stats"]["total"], dashboard["stats"]["revenue"]), (1, 3_100_000))
         self.assertEqual(self.call("POST", "/api/license/renew", {"id": account["id"], "plan": "5y"})[0], 400)
         self.assertEqual(self.call("POST", "/api/license/init-signing", {"confirm": True})[0], 400)
+        status, body = self.call("POST", "/api/license/lock", {"id": account["id"], "locked": True})
+        self.assertEqual((status, body["account"]["state"]), (200, "locked"))
+        self.assertIn("revocation", body)
+        self.assertEqual(self.call("POST", "/api/license/delete", {"id": account["id"]})[0], 400)  # thiếu xác nhận
+        self.assertEqual(self.call("POST", "/api/license/delete", {"id": account["id"], "confirm": True})[0], 200)
+        self.assertEqual(self.call("GET", "/api/license")[1]["dashboard"]["accounts"], [])
+        self.assertEqual(self.call("POST", "/api/license/check", {})[0], 200)
 
 
 class EngineGateTests(unittest.TestCase):

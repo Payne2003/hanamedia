@@ -8,3 +8,7 @@ KHÔNG BAO GIỜ đưa khóa ký (signing.key) vào đây hay vào kho mã.
 TRUSTED_KEYS = [
     "y0UGCTQNhS5ZBtpDaHAq0O_VOGwZF9eON4k7ba8m40s",  # Super Admin HANA MEDIA (khóa ký nằm trên máy của chủ app)
 ]
+
+# Nơi đăng danh sách thu hồi (kho GitHub công khai, nhánh riêng không kích hoạt build). Máy khách đọc file qua
+# https://raw.githubusercontent.com/<repo>/<branch>/<file>; máy Super Admin ghi bằng token GitHub của chủ kho.
+REVOCATION = {"repo": "Payne2003/hanamedia", "branch": "license-revocations", "file": "revoked.txt"}

@@ -8,8 +8,11 @@ Máy khách dán key; tool kiểm tra chữ ký bằng khóa công khai GẮN C�
 hạn dùng và đồng hồ máy. Hết hạn / sai máy / key giả: khóa chạy video và tải media, vẫn xem được dữ liệu.
 Chưa gắn khóa công khai nào (TRUSTED_KEYS rỗng) thì chưa bật khóa bản quyền: tool chạy như trước.
 
-Giới hạn (nói rõ với người dùng): không có máy chủ nên không thu hồi key đã cấp ngay lập tức (khóa = không gia hạn);
-người rành kỹ thuật vẫn có thể sửa mã app trên máy họ để bỏ kiểm tra.
+Thu hồi online: khi Super Admin khóa/xóa tài khoản, tool ký một "danh sách thu hồi" (HANAREV1.…) và đăng lên kho GitHub
+(runner/license_trust.py). Máy khách tải danh sách đó khi mở app và mỗi giờ; key nằm trong danh sách thì ngừng ngay.
+Danh sách có chữ ký nên không làm giả được; không kiểm tra được quá GRACE_DAYS ngày (tắt mạng để né) thì tạm khóa.
+
+Giới hạn (nói rõ với người dùng): người rành kỹ thuật vẫn có thể sửa mã app trên máy họ để bỏ kiểm tra.
 """
 import base64
 import calendar
@@ -18,6 +21,8 @@ import json
 import os
 import re
 import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import date, timedelta
 from pathlib import Path
@@ -46,6 +51,10 @@ MAX_CHAIN = 3
 PLANS = {"1m": 1, "1y": 12, "3y": 36}
 PLAN_NAMES = {"1m": "1 tháng", "1y": "1 năm", "3y": "3 năm"}
 PREFIX = "HANA1"
+REV_PREFIX = "HANAREV1"
+CHECK_INTERVAL = 3600  # máy khách tải danh sách thu hồi mỗi giờ (và mỗi lần mở app)
+RETRY_INTERVAL = 600  # đang mất kết nối: thử lại mỗi 10 phút
+GRACE_DAYS = 3  # không kiểm tra được quá số ngày này thì tạm khóa đến khi có mạng
 MACHINE = re.compile(r"^[0-9A-F]{4}(-[0-9A-F]{4}){3}$")
 PUBLIC = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
@@ -111,11 +120,44 @@ def public_from_private(private_raw):
     return key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
 
-def sign(private_raw, payload):
+def sign(private_raw, payload, prefix=PREFIX):
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     body = b64(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode())
-    signature = Ed25519PrivateKey.from_private_bytes(private_raw).sign(f"{PREFIX}.{body}".encode())
-    return f"{PREFIX}.{body}.{b64(signature)}"
+    signature = Ed25519PrivateKey.from_private_bytes(private_raw).sign(f"{prefix}.{body}".encode())
+    return f"{prefix}.{body}.{b64(signature)}"
+
+
+def verify_revocations(text, trusted):
+    """Danh sách thu hồi phải do chính khóa gốc Super Admin ký (máy đại lý không ký được). Nêu LicenseError."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    parts = re.sub(r"\s+", "", str(text or "")).split(".")
+    if len(parts) != 3 or parts[0] != REV_PREFIX:
+        raise LicenseError("Danh sách thu hồi không đúng định dạng.")
+    try:
+        payload, signature = json.loads(unb64(parts[1])), unb64(parts[2])
+    except (ValueError, TypeError):
+        raise LicenseError("Danh sách thu hồi bị hỏng.") from None
+    public = trusted.get(payload.get("kid")) if isinstance(payload, dict) else None
+    if not public:
+        raise LicenseError("Danh sách thu hồi không do Super Admin ký.")
+    try:
+        Ed25519PublicKey.from_public_bytes(public).verify(signature, f"{REV_PREFIX}.{parts[1]}".encode())
+    except InvalidSignature:
+        raise LicenseError("Chữ ký danh sách thu hồi không hợp lệ.") from None
+    if type(payload.get("seq")) is not int or not isinstance(payload.get("ids"), list):
+        raise LicenseError("Danh sách thu hồi bị hỏng.")
+    return payload
+
+
+def http_request(method, url, headers=None, body=None, timeout=15):
+    """Gọi HTTP đơn giản (urllib, theo proxy của máy). Trả về (mã trạng thái, nội dung bytes); lỗi mạng nêu OSError."""
+    request = urllib.request.Request(url, data=body, method=method, headers={"User-Agent": "HanaMedia", **(headers or {})})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, response.read(2_000_000)
+    except urllib.error.HTTPError as error:
+        return error.code, error.read(200_000)
 
 
 def verify(token, trusted, depth=0):
@@ -161,7 +203,8 @@ def verify(token, trusted, depth=0):
             raise LicenseError("Key có quyền vượt quá quyền của người cấp.")
         if str(payload.get("expires")) > str(parent.get("expires")):
             raise LicenseError("Key có hạn dùng vượt quá hạn của người cấp.")
-        payload = {**payload, "issued_by": parent.get("name"), "issued_by_role": parent.get("role")}
+        payload = {**payload, "issued_by": parent.get("name"), "issued_by_role": parent.get("role"),
+                   "chain_ids": [*(parent.get("chain_ids") or []), parent.get("id")]}
     return payload
 
 
@@ -237,9 +280,10 @@ class LicenseManager:
         plan TEXT NOT NULL DEFAULT '', expires TEXT NOT NULL DEFAULT '', amount INTEGER NOT NULL DEFAULT 0,
         actor TEXT NOT NULL DEFAULT 'Super Admin', detail TEXT NOT NULL DEFAULT '');
     CREATE INDEX IF NOT EXISTS license_events_at ON license_events(at);
+    CREATE TABLE IF NOT EXISTS license_revoked (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', at REAL NOT NULL);
     """
 
-    def __init__(self, store, data, trusted=None, today=None, clock=time.time):
+    def __init__(self, store, data, trusted=None, today=None, clock=time.time, revocation=None, http=None):
         """trusted: khóa công khai gốc được tin cậy. Mặc định: danh sách gắn cứng, chỉ áp dụng cho bản app đã đóng gói
         (.exe phát cho khách); chạy từ mã nguồn thì chưa khóa (ai có mã nguồn cũng sửa được phần kiểm tra)."""
         self.store = store
@@ -249,6 +293,11 @@ class LicenseManager:
         if trusted is None:
             trusted = license_trust.TRUSTED_KEYS if frozen() else []
         self.trusted = {key_id(unb64(k)): unb64(k) for k in trusted}
+        # Nơi đăng danh sách thu hồi: {"repo","branch","file"}; trống = không kiểm tra online (chạy từ mã nguồn).
+        if revocation is None:
+            revocation = license_trust.REVOCATION if frozen() else {}
+        self.revocation = revocation or {}
+        self.http = http or http_request
         with store.connect() as db:
             db.executescript(self.SCHEMA)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(licenses)")}
@@ -353,6 +402,9 @@ class LicenseManager:
         if not self.clock_ok():
             return {**info, "state": "clock", "allowed": [],
                     "message": "Đồng hồ máy bị chỉnh lùi. Chỉnh lại ngày giờ đúng."}, payload
+        revoked = self.revoked_reason(payload)
+        if revoked:
+            return {**info, **revoked, "allowed": []}, payload
         today = self.today()
         start, expires = parse_day(payload.get("start"), today), parse_day(payload.get("expires"), today)
         if today < start:
@@ -396,7 +448,10 @@ class LicenseManager:
         else:
             status, _ = self.license_status()
         context = self.issuer_context()
-        return {**base, **status, "issuer": bool(context), "issuer_mode": context["mode"] if context else None}
+        rev = self.store.setting("license_rev", {}) or {}
+        return {**base, **status, "issuer": bool(context), "issuer_mode": context["mode"] if context else None,
+                "online_check": bool(self.revocation_url()) and status["state"] not in ("owner", "not_enforced"),
+                "checked_at": rev.get("ok_at"), "check_error": rev.get("error") or ""}
 
     def allows(self, permission):
         return permission in self.status()["allowed"]
@@ -416,10 +471,68 @@ class LicenseManager:
         if payload.get("devices") and machine_code() not in payload["devices"]:
             raise LicenseError("Key không cấp cho máy này. Gửi mã máy của máy này cho người bán.")
         self.store.save_setting("license_token", re.sub(r"\s+", "", token))
+        self.store.save_setting("license_activated_at", self.clock())
+        if self.revocation_url():
+            self.check_revocations()
         return self.status()
 
     def deactivate(self):
         self.store.save_setting("license_token", None)
+
+    # ---- thu hồi online (máy khách) ------------------------------------------------------------------------------
+    def revocation_url(self):
+        r = self.revocation
+        if not r.get("repo") or not r.get("branch") or not r.get("file"):
+            return ""
+        return f"https://raw.githubusercontent.com/{r['repo']}/{r['branch']}/{r['file']}"
+
+    def revoked_reason(self, payload):
+        """Key (hoặc người cấp key) nằm trong danh sách thu hồi, hoặc quá lâu không kiểm tra được."""
+        if not self.revocation_url():
+            return None
+        state = self.store.setting("license_rev", {}) or {}
+        ids = set(state.get("ids") or [])
+        if payload.get("id") in ids:
+            return {"state": "revoked", "message": "Bản quyền này đã bị thu hồi. Liên hệ người bán."}
+        if ids & set(payload.get("chain_ids") or []):
+            return {"state": "revoked", "message": "Đại lý cấp key cho bạn đã bị thu hồi. Liên hệ người bán."}
+        reference = max(float(state.get("ok_at") or 0), float(self.store.setting("license_activated_at", 0) or 0))
+        if self.clock() - reference > GRACE_DAYS * 86400:
+            return {"state": "offline",
+                    "message": f"Cần kết nối mạng để kiểm tra bản quyền (quá {GRACE_DAYS} ngày chưa kiểm tra được). "
+                               "Kết nối mạng rồi bấm “Kiểm tra lại”."}
+        return None
+
+    def needs_check(self):
+        if not self.revocation_url() or not self.enforced() or self.issuer_trusted() or not self.store.setting("license_token"):
+            return False
+        state = self.store.setting("license_rev", {}) or {}
+        wait = RETRY_INTERVAL if state.get("error") else CHECK_INTERVAL
+        return self.clock() - float(state.get("tried_at") or 0) >= wait
+
+    def check_revocations(self):
+        """Tải danh sách thu hồi đã ký. Trả về trạng thái kiểm tra (không nêu lỗi mạng)."""
+        url = self.revocation_url()
+        if not url:
+            return {"ok": False, "error": "Bản app này không kiểm tra thu hồi online."}
+        state = dict(self.store.setting("license_rev", {}) or {})
+        now = self.clock()
+        state["tried_at"] = now
+        try:
+            code, body = self.http("GET", f"{url}?t={int(now)}", {"Cache-Control": "no-cache"})
+            if code == 404 and not state.get("seq"):
+                state.update(ids=[], seq=0, ok_at=now, error="")  # Super Admin chưa thu hồi key nào
+            elif code != 200:
+                raise LicenseError(f"Máy chủ trả mã {code}.")
+            else:
+                payload = verify_revocations(body.decode("utf-8", "replace"), self.trusted)
+                if payload["seq"] < int(state.get("seq") or 0):
+                    raise LicenseError("Danh sách thu hồi cũ hơn bản đã có.")
+                state.update(ids=[str(i) for i in payload["ids"]][:100000], seq=payload["seq"], ok_at=now, error="")
+        except (OSError, LicenseError, ValueError) as error:
+            state["error"] = str(error)[:200] or "Không kết nối được."
+        self.store.save_setting("license_rev", state)
+        return {"ok": not state["error"], "error": state["error"], "checked_at": state.get("ok_at")}
 
     # ---- quota video ---------------------------------------------------------------------------------------------
     def used(self, license_id):
@@ -559,6 +672,9 @@ class LicenseManager:
                                                        amount, self.actor(context),
                                                        f"Gia hạn {row['name']} thêm {PLAN_NAMES[plan]}"))
             token = self.issue(db, db.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone(), context)
+            was_locked = bool(row["locked"])
+        if was_locked:  # gia hạn tài khoản đã khóa = mở khóa: gỡ khỏi danh sách thu hồi
+            self.after_change(context)
         return self.account(license_id), token
 
     def set_locked(self, license_id, locked):
@@ -571,7 +687,153 @@ class LicenseManager:
             db.execute("INSERT INTO license_events(license_id,at,action,actor,detail) VALUES(?,?,?,?,?)",
                        (license_id, self.clock(), "lock" if locked else "unlock", self.actor(context),
                         ("Khóa " if locked else "Mở khóa ") + row["name"]))
-        return self.account(license_id)
+        return self.account(license_id), self.after_change(context)
+
+    def delete_account(self, license_id):
+        """Xóa tài khoản khỏi sổ. Máy Super Admin: key của tài khoản bị thu hồi vĩnh viễn (đăng lên danh sách)."""
+        context = self.require_issuer()
+        with self.store.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT name FROM licenses WHERE id=?", (license_id,)).fetchone()
+            if not row:
+                raise LicenseError("Không tìm thấy tài khoản.")
+            db.execute("DELETE FROM licenses WHERE id=?", (license_id,))
+            if context["mode"] == "root":
+                db.execute("INSERT OR REPLACE INTO license_revoked(id,name,at) VALUES(?,?,?)",
+                           (license_id, row["name"], self.clock()))
+            db.execute("INSERT INTO license_events(license_id,at,action,actor,detail) VALUES(?,?,?,?,?)",
+                       (license_id, self.clock(), "delete", self.actor(context), "Xóa " + row["name"]))
+        return self.after_change(context)
+
+    # ---- đăng danh sách thu hồi (máy Super Admin) ------------------------------------------------------------------
+    @property
+    def token_file(self):
+        return self.dir / "github.token"
+
+    def publisher_token(self):
+        try:
+            return self.token_file.read_text().strip() or None
+        except OSError:
+            return None
+
+    def set_publisher_token(self, token):
+        """Lưu token GitHub (chỉ trên máy Super Admin, file riêng; không bao giờ trả về giao diện hay ghi log)."""
+        context = self.require_issuer()
+        if context["mode"] != "root":
+            raise LicenseError("Chỉ máy Super Admin đăng danh sách thu hồi.")
+        token = str(token or "").strip()
+        if not token:
+            self.token_file.unlink(missing_ok=True)
+            return self.revocation_info()
+        if not re.fullmatch(r"(ghp_|github_pat_)[A-Za-z0-9_]{20,250}", token):
+            raise LicenseError("Token GitHub phải bắt đầu bằng github_pat_ hoặc ghp_.")
+        self.dir.mkdir(parents=True, exist_ok=True)
+        temp = self.token_file.with_suffix(".tmp")
+        temp.unlink(missing_ok=True)
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as handle:
+            handle.write(token)
+        os.replace(temp, self.token_file)
+        self.audit("publisher", "Lưu token GitHub để đăng danh sách thu hồi")
+        return self.publish()
+
+    def revoked_ids(self):
+        with self.store.connect() as db:
+            ids = {r["id"] for r in db.execute("SELECT id FROM licenses WHERE locked=1")}
+            ids |= {r["id"] for r in db.execute("SELECT id FROM license_revoked")}
+        return sorted(ids)
+
+    def revocation_list(self):
+        """Danh sách thu hồi đã ký bằng khóa gốc (chuỗi HANAREV1.…)."""
+        context = self.require_issuer()
+        if context["mode"] != "root":
+            raise LicenseError("Chỉ máy Super Admin ký danh sách thu hồi.")
+        seq = max(int(self.clock() * 1000), int(self.store.setting("license_rev_published_seq", 0) or 0) + 1)
+        self.store.save_setting("license_rev_published_seq", seq)
+        ids = self.revoked_ids()
+        payload = {"v": 1, "kid": key_id(public_from_private(context["raw"])), "seq": seq, "issued": int(self.clock()),
+                   "ids": ids}
+        return sign(context["raw"], payload, REV_PREFIX), len(ids)
+
+    def after_change(self, context):
+        """Sau khi khóa/mở khóa/xóa/gia hạn: máy Super Admin đăng lại danh sách thu hồi."""
+        if context["mode"] != "root":
+            return {"ok": False, "local": True,
+                    "message": "Đã lưu trên máy bạn. Chỉ Super Admin thu hồi online được key đã cấp."}
+        info = self.store.setting("license_rev_publish", {}) or {}
+        self.store.save_setting("license_rev_publish", {**info, "pending": True})
+        return self.publish()
+
+    def github(self, method, path, token, body=None):
+        code, raw = self.http(method, "https://api.github.com" + path,
+                              {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+                               "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json"},
+                              json.dumps(body).encode() if body is not None else None)
+        try:
+            data = json.loads(raw or b"{}")
+        except ValueError:
+            data = {}
+        return code, data if isinstance(data, dict) else {}
+
+    def publish(self):
+        """Đăng danh sách thu hồi lên GitHub (kho/nhánh/file trong license_trust.REVOCATION)."""
+        context = self.require_issuer()
+        if context["mode"] != "root":
+            raise LicenseError("Chỉ máy Super Admin đăng danh sách thu hồi.")
+        info = dict(self.store.setting("license_rev_publish", {}) or {})
+        token, r = self.publisher_token(), self.revocation
+        if not self.revocation_url():
+            info.update(error="Bản app này chưa cấu hình nơi đăng danh sách thu hồi.")
+        elif not token:
+            info.update(error="Chưa nhập token GitHub nên chưa đăng được. Máy khách vẫn dùng được tới khi bạn đăng.")
+        else:
+            text, count = self.revocation_list()
+            try:
+                info.update(self.push_file(token, r, text, count), error="", pending=False, at=self.clock(), count=count)
+            except (OSError, LicenseError) as error:
+                info["error"] = str(error)[:300] or "Không kết nối được GitHub."
+        self.store.save_setting("license_rev_publish", info)
+        return self.revocation_info()
+
+    def push_file(self, token, r, text, count):
+        repo, branch, file = r["repo"], r["branch"], r["file"]
+        explain = {401: "Token GitHub sai hoặc đã hết hạn.",
+                   403: f"Token không có quyền ghi (Contents: Read and write) vào kho {repo}.",
+                   404: f"Token không truy cập được kho {repo}."}
+        code, data = self.github("GET", f"/repos/{repo}/contents/{file}?ref={branch}", token)
+        sha = data.get("sha") if code == 200 else None
+        if code == 404:
+            code, _ = self.github("GET", f"/repos/{repo}/git/ref/heads/{branch}", token)
+            if code == 404:  # lần đầu: tạo nhánh riêng cho danh sách thu hồi (không kích hoạt build app)
+                code, repo_info = self.github("GET", f"/repos/{repo}", token)
+                if code != 200:
+                    raise LicenseError(explain.get(code, f"GitHub trả mã {code}."))
+                code, ref = self.github("GET", f"/repos/{repo}/git/ref/heads/{repo_info.get('default_branch', 'main')}", token)
+                if code != 200:
+                    raise LicenseError(explain.get(code, f"GitHub trả mã {code}."))
+                code, _ = self.github("POST", f"/repos/{repo}/git/refs", token,
+                                      {"ref": f"refs/heads/{branch}", "sha": ref.get("object", {}).get("sha")})
+                if code != 201:
+                    raise LicenseError(explain.get(code, f"Không tạo được nhánh {branch} (mã {code})."))
+        elif code != 200:
+            raise LicenseError(explain.get(code, f"GitHub trả mã {code}."))
+        body = {"message": f"Cập nhật danh sách thu hồi bản quyền ({count} key)", "branch": branch,
+                "content": base64.b64encode((text + "\n").encode()).decode()}
+        if sha:
+            body["sha"] = sha
+        code, _ = self.github("PUT", f"/repos/{repo}/contents/{file}", token, body)
+        if code not in (200, 201):
+            raise LicenseError(explain.get(code, f"GitHub trả mã {code} khi đăng danh sách."))
+        return {"ok": True}
+
+    def revocation_info(self):
+        info = self.store.setting("license_rev_publish", {}) or {}
+        context = self.issuer_context()
+        root = bool(context) and context["mode"] == "root"
+        return {"enabled": bool(self.revocation_url()), "can_publish": root, "has_token": root and bool(self.publisher_token()),
+                "repo": self.revocation.get("repo"), "branch": self.revocation.get("branch"), "url": self.revocation_url(),
+                "published_at": info.get("at"), "count": info.get("count", 0), "pending": bool(info.get("pending")),
+                "error": info.get("error") or "", "revoked": len(self.revoked_ids()) if root else None}
 
     def account(self, license_id):
         with self.store.connect() as db:
@@ -612,4 +874,5 @@ class LicenseManager:
                  "role": limits["role"] if limits else "super_admin",
                  "can_create": True if not limits else limits["can_create"],
                  "can_renew": True if not limits else limits["can_renew"]}
-        return {"accounts": accounts, "events": events, "revenue": revenue, "stats": stats, "scope": scope}
+        return {"accounts": accounts, "events": events, "revenue": revenue, "stats": stats, "scope": scope,
+                "revocation": self.revocation_info()}
