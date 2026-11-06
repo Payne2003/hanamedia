@@ -1057,6 +1057,22 @@ function renderLicenseBanner(){
   if(l.state==='expiring')$('licenseBanner').hidden=false;
 }
 setInterval(renderLicenseBanner,1500);
+function renderUpdate(){
+  const u=state?.update;if(!u)return;
+  const busy=u.phase==='downloading'||u.phase==='installing';
+  const text=u.phase==='downloading'?`⟳ Đang tải bản ${u.latest}… ${u.progress||0}%`:u.phase==='installing'?`⟳ Đang cài bản ${u.latest}. App sẽ tự tắt rồi mở lại sau khoảng 1 phút.`:u.phase==='error'?`⚠ Cập nhật lỗi: ${u.error}`:`✨ Có bản mới ${u.latest} (đang dùng ${state.app_version}). Cập nhật ngay trên app, dữ liệu và bản quyền giữ nguyên.`;
+  $('updateBanner').hidden=!(u.supported&&(u.available||busy||u.phase==='error'));
+  $('updateBannerText').textContent=text;$('updateBannerButton').hidden=busy;$('updateBannerButton').textContent=u.phase==='error'?'Thử lại':'⟳ Cập nhật ngay';
+  $('updateChip').textContent=!u.supported?'Bản chạy thử':busy?'Đang cập nhật':u.available?`Có bản ${u.latest}`:'Mới nhất';
+  $('updateChip').className='status-chip '+(u.available?'review':'approved');
+  $('updateSummary').textContent=!u.supported?`Phiên bản ${state.app_version}. Tự cập nhật chỉ có ở bản đã cài trên Windows.`:u.available?`Đang dùng ${state.app_version} · bản mới ${u.latest}.`:`Đang dùng ${state.app_version}${u.error?` · ${u.error}`:' (mới nhất)'}.`;
+  $('updateInstall').hidden=!u.available||busy;$('updateCheck').disabled=busy||!u.supported;
+}
+setInterval(renderUpdate,1500);
+async function installUpdate(){if(!confirm(`Cập nhật lên bản ${state.update.latest}?\n\nApp sẽ tải bộ cài, tự tắt, cài đè rồi tự mở lại (khoảng 1–2 phút). Tài khoản, hàng đợi, video và bản quyền giữ nguyên.`))return;
+  action(async()=>{await api('/api/update/install',{});toast('Đang tải bản cập nhật…');});}
+$('updateBannerButton').onclick=installUpdate;$('updateInstall').onclick=installUpdate;
+$('updateCheck').onclick=()=>action(async()=>{const r=await api('/api/update/check',{});toast(r.update.available?`Có bản mới ${r.update.latest}.`:r.update.error||'Bạn đang dùng bản mới nhất.',Boolean(r.update.error));});
 async function loadLicense(){
   try{const r=await fetch('/api/license');licenseData=await r.json();if(!r.ok)throw Error(licenseData.error);renderLicense();}catch(error){toast(error.message||'Không tải được thông tin bản quyền.',true);}
 }

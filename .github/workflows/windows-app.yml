@@ -1,5 +1,6 @@
-# Build HANA MEDIA cho Windows mỗi lần cập nhật main (tải ở tab Actions → Artifacts)
-# và khi đẩy tag v* (ví dụ v1.0.1) thì đăng bộ cài lên mục Releases.
+# Build HANA MEDIA cho Windows mỗi lần cập nhật main (tải ở tab Actions → Artifacts).
+# Mỗi lần cập nhật main: tự đánh số phiên bản 1.1.<số lần build> và đăng bộ cài lên mục Releases;
+# app đã cài thấy "Có bản mới" và tự cập nhật từ đó (runner/updater.py). Đẩy tag v* thì dùng đúng số của tag.
 name: Windows app
 
 on:
@@ -24,6 +25,16 @@ jobs:
         run: python -m pip install -r requirements-app.txt
       - name: Kiểm thử
         run: python -m unittest discover -s tests
+      - name: Đặt số phiên bản
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref }}".StartsWith("refs/tags/v")) { $v = "${{ github.ref_name }}".TrimStart("v") } else { $v = "1.1.${{ github.run_number }}" }
+          $file = "runner/version.py"
+          $text = (Get-Content $file -Raw -Encoding utf8) -replace 'APP_VERSION = "[^"]*"', "APP_VERSION = `"$v`""
+          [IO.File]::WriteAllText((Resolve-Path $file), $text, (New-Object Text.UTF8Encoding $false))
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Phiên bản: $v"
       - name: Đóng gói app
         run: python -m PyInstaller --noconfirm --clean packaging/HanaMedia.spec
       - name: Kiểm tra thư viện trong bản đóng gói (Selenium, Chrome, cửa sổ app)
@@ -54,8 +65,18 @@ jobs:
         with:
           name: HanaMedia-Setup
           path: dist/HanaMedia-Setup-*.exe
-      - name: Đăng lên Releases
+      - name: Đăng lên Releases (bản tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          files: dist/HanaMedia-Setup-*.exe
+      - name: Đăng bản cập nhật lên Releases (mỗi lần cập nhật main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: HANA MEDIA ${{ steps.version.outputs.version }}
+          body: ${{ github.event.head_commit.message }}
+          make_latest: true
           files: dist/HanaMedia-Setup-*.exe

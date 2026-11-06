@@ -600,3 +600,6 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 .field-help summary{cursor:pointer;color:var(--purple);width:max-content}
 .field-help ul{margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:4px;line-height:1.45}
 .field-help b{color:var(--text)}
+
+/* Thanh báo có bản cập nhật */
+.update-banner{border-color:var(--c-accent-soft,#5b3fb0);background:linear-gradient(90deg,var(--c-surface-3,#1b1734),var(--c-surface,#141127))}

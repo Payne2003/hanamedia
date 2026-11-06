@@ -29,6 +29,7 @@
     <button type="button" id="copySupportPhone" class="support-copy">📋 Sao chép SĐT</button>
   </div>
   <main>
+    <div id="updateBanner" class="license-banner update-banner" hidden><span id="updateBannerText"></span><button type="button" id="updateBannerButton" class="primary">⟳ Cập nhật ngay</button></div>
     <div id="licenseBanner" class="license-banner" hidden><span id="licenseBannerText"></span><button type="button" data-nav="license">🔑 Mở trang Bản quyền</button></div>
     <div id="studioView">
     <section class="studio-toolbar">
@@ -227,6 +228,11 @@
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">▰</span><div><h3>Thư mục lưu video</h3><small>Video tải về được lưu ở đây</small></div></div>
           <p class="detail" id="settingsFolder">Chưa chọn thư mục lưu</p>
           <button type="button" class="full" data-pick-folder>Chọn thư mục lưu</button>
+        </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">⟳</span><div><h3>Cập nhật app</h3><small>Cập nhật ngay trên bản đang dùng, không cần tải bộ cài</small></div><span id="updateChip" class="status-chip">—</span></div>
+          <p class="detail" id="updateSummary"></p>
+          <button type="button" class="full" id="updateCheck">Kiểm tra cập nhật</button>
+          <button type="button" class="full primary" id="updateInstall" hidden>Cập nhật ngay</button>
         </div>
       </div>
       <div class="card guide-card" id="userGuide">
