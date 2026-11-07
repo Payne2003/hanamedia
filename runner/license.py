@@ -166,7 +166,8 @@ def http_request(method, url, headers=None, body=None, timeout=15):
     """Gọi HTTP đơn giản (urllib, theo proxy của máy). Trả về (mã trạng thái, nội dung bytes); lỗi mạng nêu OSError."""
     request = urllib.request.Request(url, data=body, method=method, headers={"User-Agent": "HanaMedia", **(headers or {})})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        from .net import urlopen  # dự phòng chứng chỉ certifi khi kho chứng chỉ Windows thiếu gốc
+        with urlopen(request, timeout=timeout) as response:
             return response.status, response.read(2_000_000)
     except urllib.error.HTTPError as error:
         return error.code, error.read(200_000)

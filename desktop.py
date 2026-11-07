@@ -7,6 +7,7 @@ Lần đầu chạy, tự chép dữ liệu cũ của bản mã nguồn (ví d�
 
 Chạy thử không có cửa sổ: HanaMedia.exe --server-only (mở trong trình duyệt, Ctrl+C để tắt).
 """
+import os
 import sys
 import threading
 import webbrowser
@@ -41,6 +42,9 @@ def self_check():
         manager = SeleniumManager()._get_binary()
         if not manager.exists():
             raise RuntimeError(f"Thiếu selenium-manager: {manager}")
+        import certifi  # bộ chứng chỉ dự phòng cho HTTPS (cập nhật app, thu hồi bản quyền)
+        if not os.path.isfile(certifi.where()):
+            raise RuntimeError("thiếu bộ chứng chỉ certifi")
         from runner.video_tools import ffmpeg, run
         if run([ffmpeg(), "-version"], 30).returncode != 0:  # nâng 4K / ghép video cần ffmpeg chạy được
             raise RuntimeError("ffmpeg không chạy được")
