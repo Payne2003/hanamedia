@@ -332,12 +332,63 @@ class StoreTests(unittest.TestCase):
         finally:
             engine.shutdown()
 
+    def test_slow_video_is_chased_automatically_before_next_prompt(self):
+        account = self.account()
+        self.store.set_account(account["id"], "ready")
+        self.jobs(2)
+        engine = Engine(self.store, self.root / "engine-data")
+        engine.chase_wait = 0
+        calls = {"generate": 0, "fetch": 0}
+
+        class SlowMuse:
+            def __init__(self, profile, downloads, headless, phase):
+                self.downloads = Path(downloads)
+                self.driver = type("Driver", (), {"current_url": "https://muse.ai/c/xyz", "window_handles": ["main"]})()
+
+            def login(self, account):
+                pass
+
+            def set_download_directory(self, downloads):
+                self.downloads = Path(downloads)
+
+            def session_ready(self):
+                return True
+
+            def generate(self, prompt, job_id, before_submit, automatic=True, images=None):
+                calls["generate"] += 1
+                before_submit()
+                raise MuseFailure("Muse chưa trả video.", pending=True)
+
+            def fetch_existing(self, job_id, url):
+                calls["fetch"] += 1
+                if calls["fetch"] < 3:
+                    raise MuseFailure("Muse vẫn chưa xong.", pending=True)
+                file = self.downloads / "late.mp4"
+                file.write_bytes(b"video")
+                return file
+
+            def close(self):
+                pass
+
+        try:
+            with patch("runner.engine.MuseBrowser", SlowMuse):
+                job, claimed = self.store.claim(1)
+                engine.work(job, claimed, False, str(self.root / "output"), True)
+            row = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]][0]
+            self.assertEqual(row["status"], "done")  # tự tải được, không cần bấm tay
+            self.assertEqual((calls["generate"], calls["fetch"]), (1, 3))  # gửi đúng 1 lần
+            waiting = [j for j in self.store.snapshot()["jobs"] if j["status"] == "waiting"]
+            self.assertEqual(len(waiting), 1)  # prompt kế tiếp chỉ chạy sau khi đã tải xong
+        finally:
+            engine.shutdown()
+
     def test_late_video_is_fetched_without_resending(self):
         account = self.account()
         self.store.set_account(account["id"], "ready")
         self.jobs(1)
         engine = Engine(self.store, self.root / "engine-data")
-        calls = {"generate": 0, "fetch": []}
+        engine.chase_wait, engine.CHASE_ATTEMPTS = 0, 2
+        calls = {"generate": 0, "fetch": [], "ready": False}
 
         class SlowMuse:
             def __init__(self, profile, downloads, headless, phase):
@@ -360,6 +411,8 @@ class StoreTests(unittest.TestCase):
 
             def fetch_existing(self, job_id, url):
                 calls["fetch"].append(url)
+                if not calls["ready"]:
+                    raise MuseFailure("Muse vẫn chưa xong.", pending=True)
                 file = self.downloads / "muse.mp4"
                 file.write_bytes(b"late video")
                 return file
@@ -376,12 +429,13 @@ class StoreTests(unittest.TestCase):
                 row = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]][0]
                 self.assertEqual((row["status"], row["submitted"], row["source_url"]), ("error", 1, "https://muse.ai/c/abc123"))
                 self.assertEqual(self.store.account(account["id"])["state"], "ready")
+                calls["ready"] = True  # Muse làm xong sau khi tool đã thôi tự kiểm tra
                 fetched, acc = self.store.begin_fetch(job["id"], 2)
                 engine.fetch_work(fetched, acc, False, str(self.root / "output"))
             row = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]][0]
             self.assertEqual(row["status"], "done")
             self.assertEqual(Path(row["output"]).name, "Prompt 1.mp4")
-            self.assertEqual((calls["generate"], calls["fetch"]), (1, ["https://muse.ai/c/abc123"]))  # không gửi lại
+            self.assertEqual((calls["generate"], calls["fetch"]), (1, ["https://muse.ai/c/abc123"] * 3))  # không gửi lại
             with self.assertRaises(ValueError):
                 self.store.begin_fetch(job["id"], 2)  # đã xong: không lấy lại
         finally:
