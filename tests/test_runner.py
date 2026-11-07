@@ -478,6 +478,7 @@ class StoreTests(unittest.TestCase):
 
     def test_at_most_two_parallel_accounts(self):
         engine = Engine(self.store, self.root / "engine-data")
+        engine.max_parallel = 2  # máy chỉ đủ sức 2 luồng
         try:
             self.store.save_setting("output_folder", str(self.root))
             for limit in (3, 5, 20):

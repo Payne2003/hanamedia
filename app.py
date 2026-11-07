@@ -647,6 +647,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/settings/support":
                 return self.reply({"ok": True, "support": store.save_support_bar(body.get("message"), body.get("phone"),
                                                                                   body.get("qr"))})
+            elif path == "/api/settings/gpu":
+                store.save_setting("gpu_encode", body.get("enabled") is True)
             elif path == "/api/settings/shared-account":
                 self.server.apply_shared(body.get("enabled") is True)
             elif path == "/api/shared-login":

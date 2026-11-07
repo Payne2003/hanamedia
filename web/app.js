@@ -1070,6 +1070,23 @@ function renderUpdate(){
   $('updateInstall').hidden=!u.available||busy;$('updateCheck').disabled=busy||!u.supported;
 }
 setInterval(renderUpdate,1500);
+// Số luồng tối đa theo cấu hình của máy đang chạy (tool tự đo RAM / CPU), GPU cho bước xử lý video.
+let parallelMax=0;
+function renderHardware(){const e=state?.engine,hw=e?.hardware;if(!hw)return;
+  const max=e.max_parallel||1;
+  if(max!==parallelMax){const sel=$('parallel'),prev=Number(sel.value)||0,first=!parallelMax;parallelMax=max;
+    sel.innerHTML=Array.from({length:max},(_,i)=>`<option value="${i+1}">${i+1} tài khoản</option>`).join('');
+    sel.value=String(first?max:Math.min(prev||max,max));
+    const login=$('loginParallel'),lp=Number(login.value)||2,loginMax=Math.min(max,5);
+    login.innerHTML=Array.from({length:loginMax},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('');login.value=String(Math.min(lp,loginMax));}
+  $('parallelLabel').textContent=`Số luồng (máy này chạy tối đa ${max} tài khoản cùng lúc)`;
+  const ram=hw.ram_gb?`RAM ${hw.ram_gb} GB`:'RAM ?';
+  $('machineInfo').textContent=`Máy này: ${ram}, CPU ${hw.cores} nhân${hw.gpu?`, GPU ${hw.gpu}`:''} → tối đa ${max} luồng.`;
+  $('hardwareSummary').textContent=`${ram} (còn trống ${hw.free_gb??'?'} GB) · CPU ${hw.cores} nhân · tối đa ${max} tài khoản chạy cùng lúc. ${hw.gpu?`Card đồ họa: ${hw.gpu}.`:'Không tìm thấy card đồ họa hỗ trợ mã hóa video: nâng 4K / ghép video dùng CPU.'}`;
+  $('gpuChip').textContent=hw.gpu?(hw.gpu_enabled?'GPU đang dùng':'GPU đang tắt'):'Dùng CPU';$('gpuChip').className='status-chip '+(hw.gpu&&hw.gpu_enabled?'approved':'');
+  const box=$('gpuEncode');if(document.activeElement!==box){box.checked=hw.gpu_enabled;box.disabled=!hw.gpu;}}
+setInterval(renderHardware,1500);
+$('gpuEncode').onchange=e=>action(async()=>{await api('/api/settings/gpu',{enabled:e.target.checked});toast(e.target.checked?'Đã bật tăng tốc GPU.':'Đã tắt GPU: dùng CPU.');});
 // Bảng báo có phiên bản mới: hiện ngay khi app phát hiện bản mới (mỗi lần mở app, mỗi phiên bản một lần).
 let updatePrompted='';
 function promptUpdate(){const u=state?.update;if(!u||!u.supported||!u.available||u.phase==='downloading'||u.phase==='installing'||updatePrompted===u.latest)return;
