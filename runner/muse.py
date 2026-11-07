@@ -12,9 +12,10 @@ from urllib.parse import urlparse
 
 
 class MuseFailure(Exception):
-    def __init__(self, message, state="ready", pending=False):
+    def __init__(self, message, state="ready", pending=False, region=False):
         super().__init__(message)
         self.state = state
+        self.region = region  # Muse chặn tính năng tạo video ở khu vực của tài khoản
         self.pending = pending  # đã gửi, Muse có thể vẫn đang tạo: lấy video sau bằng "Lấy video", không gửi lại
 
 
@@ -154,7 +155,7 @@ def reply_problem(text):
                             or (REGION_WORDS.search(text) and UNAVAILABLE.search(text))):
         return ("Muse báo tài khoản này không dùng được tính năng tạo video ở quốc gia/khu vực của tài khoản. "
                 "Đây là giới hạn của tài khoản, không phải do prompt; gửi lại cũng không được. Tài khoản đã tạm dừng — "
-                "dùng tài khoản Muse khác có tính năng tạo video.", "attention")
+                "dùng tài khoản Muse khác có tính năng tạo video.", "attention", False, True)
     if any(t in text for t in VIDEO_REFUSAL) or REFUSAL.search(text):
         return ("Muse trả lời bằng chữ và không tạo video cho prompt này (xem câu trả lời trên Muse). "
                 "Tool không tự gửi lại; sửa prompt rồi tạo lại.", "ready")
@@ -193,6 +194,7 @@ def valid_mp4(path):
 
 
 class MuseBrowser:
+    url_seen = staticmethod(lambda url: None)  # bộ chạy gắn hàm lưu địa chỉ cuộc trò chuyện của tác vụ
     def __init__(self, profile, downloads, headless, phase=lambda value: None):
         # Import lazily: the queue and HTTP server can be tested without a browser.
         from selenium import webdriver
@@ -842,7 +844,15 @@ return !leaves.some(e => e!==mine && !e.innerText.includes(marker)
         """Chờ video MỚI nằm sau prompt có mã tác vụ này. Hết giờ: báo 'pending' (Muse có thể vẫn đang tạo)."""
         until = time.monotonic() + timeout
         new_card = None
+        seen_url = None
         while time.monotonic() < until:
+            try:  # báo địa chỉ cuộc trò chuyện (đổi sau khi gửi) để Chrome có tắt ngang vẫn mở lại lấy được video
+                url = self.driver.current_url
+                if url != seen_url:
+                    seen_url = url
+                    self.url_seen(url)
+            except Exception:
+                pass
             self.guard()
             for card in self.video_cards():
                 try:
