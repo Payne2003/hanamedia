@@ -234,6 +234,14 @@
           <p class="detail" id="hardwareSummary"></p>
           <label class="check"><input id="gpuEncode" type="checkbox" checked><span>Dùng card đồ họa (GPU) để nâng 4K và ghép video<small>Nhanh hơn nhiều lần so với CPU. GPU lỗi thì tool tự chuyển sang CPU.</small></span></label>
         </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">☀</span><div><h3>Giao diện</h3><small>Nền tối hoặc nền sáng</small></div></div>
+          <div class="theme-toggle" role="group" aria-label="Giao diện"><button type="button" data-theme-choice="dark">🌙 Tối</button><button type="button" data-theme-choice="light">☀ Sáng</button><button type="button" data-theme-choice="system">🖥 Theo Windows</button></div>
+        </div>
+        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">!</span><div><h3>Nhật ký lỗi</h3><small>Gặp lỗi: sao chép nhật ký rồi dán gửi hỗ trợ</small></div></div>
+          <p class="detail">Nhật ký ghi lại lỗi của từng tác vụ và lần cập nhật (không có prompt, cookie, mật khẩu hay OTP).</p>
+          <button type="button" class="full primary" id="logCopy">📋 Sao chép nhật ký lỗi</button>
+          <button type="button" class="full" id="logOpen">Mở thư mục nhật ký</button>
+        </div>
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">⟳</span><div><h3>Cập nhật app</h3><small>Cập nhật ngay trên bản đang dùng, không cần tải bộ cài</small></div><span id="updateChip" class="status-chip">—</span></div>
           <p class="detail" id="updateSummary"></p>
           <button type="button" class="full" id="updateCheck">Kiểm tra cập nhật</button>
