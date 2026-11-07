@@ -245,11 +245,19 @@ class Engine:
             browser.close()
 
     def supervise(self):
+        planned = 0.0
         while not self.closing:
             with self.lock:
                 pair = self.store.claim(self.limit) if self.enabled and self.license_ok() else None
                 if pair:
                     self.launch(self.work, *pair, self.headless, self.store.setting("output_folder"), self.automatic)
+            if not pair and not self.enabled and time.monotonic() - planned > 3:
+                # Bộ chạy chưa bật (vừa mở lại app): vẫn chia prompt đang chờ cho các tài khoản để thấy ngay ai chạy gì.
+                planned = time.monotonic()
+                try:
+                    self.store.plan_waiting()
+                except Exception:
+                    pass  # CSDL bận: lần sau chia lại
             if not pair:
                 self.changed.wait(1)
                 self.changed.clear()

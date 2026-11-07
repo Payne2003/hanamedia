@@ -441,6 +441,40 @@ class StoreTests(unittest.TestCase):
         finally:
             engine.shutdown()
 
+    def test_prompts_are_assigned_after_reopen_even_before_run(self):
+        first, second = self.account(), self.account("acc2")
+        self.jobs(4)
+        engine = Engine(self.store, self.root / "engine-data")  # mở lại app: bộ chạy chưa bật
+        try:
+            for _ in range(80):
+                jobs = [j for j in self.store.snapshot()["jobs"] if j["status"] == "waiting"]
+                if all(j["assigned_account_id"] for j in jobs):
+                    break
+                time.sleep(0.1)
+            counts = {}
+            for job in jobs:
+                counts[job["assigned_account_id"]] = counts.get(job["assigned_account_id"], 0) + 1
+            self.assertEqual(sorted(counts.values()), [2, 2])  # chia đều 2 tài khoản
+            self.assertFalse(engine.enabled)
+        finally:
+            engine.shutdown()
+
+    def test_assign_hint_explains_unassigned_prompts(self):
+        account = self.account()
+        self.jobs(1)
+        self.store.set_account(account["id"], "attention")
+        self.store.plan_waiting()
+        self.assertIn("đăng nhập lại", self.store.snapshot()["assign_hint"])
+        self.store.set_account(account["id"], "ready")
+        self.store.configure_account(account["id"], True, 0)
+        self.store.plan_waiting()
+        self.assertIn("hết số lượt", self.store.snapshot()["assign_hint"])
+        self.store.configure_account(account["id"], False, 10)
+        self.assertIn("Chưa có tài khoản", self.store.snapshot()["assign_hint"])
+        self.store.configure_account(account["id"], True, 10)
+        self.store.plan_waiting()
+        self.assertEqual(self.store.snapshot()["assign_hint"], "")
+
     def test_at_most_two_parallel_accounts(self):
         engine = Engine(self.store, self.root / "engine-data")
         try:
