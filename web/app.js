@@ -64,7 +64,7 @@ function renderJobs(){
   $('rows').innerHTML=jobs.map(job=>{
     const assigned=job.account_id||job.assigned_account_id;
     const progress=jobProgress(job),estimated=job.status==='running'&&job.phase==='Muse đang tạo video';
-    const progressLabel=job.status==='done'?'Hoàn thành':job.status==='error'?'Dừng khi gặp lỗi':job.phase;
+    const progressLabel=job.status==='done'?'Hoàn thành':job.status==='error'?(job.error||'Dừng khi gặp lỗi'):job.phase;
     const thumbnail=job.status==='done'&&job.output
       ?`<button class="video-thumb" type="button" data-play="${job.id}" aria-label="Xem video ${esc(job.name)}"><video data-thumb-job="${job.id}" data-video-src="/api/media/${job.id}" muted playsinline preload="none"></video><span class="thumb-play">▶</span><span class="thumb-placeholder">▶</span></button>`
       :job.image_count?`<img src="/api/image/${job.id}/0" alt="Ảnh tham chiếu" loading="lazy">`:'<span class="thumb-placeholder">▣</span>';

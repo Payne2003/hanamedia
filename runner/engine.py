@@ -354,7 +354,7 @@ class Engine:
                 self.post_requests.put(job["id"])  # nâng độ phân giải / ghép video chạy riêng, không giữ tài khoản Muse
         except Exception as error:
             known = isinstance(error, MuseFailure)
-            technical = "" if known else self.log_error(job, account, error)
+            technical = self.log_failure(job, account, error) if known else self.log_error(job, account, error)
             message = str(error) if known else (
                 f"Bộ chạy gặp lỗi Chrome/trang Muse ({technical}). Chi tiết trong data/logs/runner.log; không tự gửi lại.")
             alive = bool(browser) and self.alive(browser)
@@ -440,6 +440,24 @@ class Engine:
                         self.browsers.pop(account["id"])
                 browser.close()
             self.store.finish(job["id"], error=message, account_state="ready")
+
+    def log_failure(self, job, account, error):
+        """Lỗi đã có thông báo (MuseFailure): ghi một dòng vào runner.log (giai đoạn + lời nhắn; không prompt/OTP)."""
+        try:
+            folder = self.data / "logs"
+            folder.mkdir(parents=True, exist_ok=True)
+            phase = ""
+            try:
+                row = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]]
+                phase = f" · bước: {row[0]['phase']} ({row[0]['progress']}%)" if row else ""
+            except Exception:
+                pass
+            with (folder / "runner.log").open("a", encoding="utf-8") as handle:
+                handle.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] tác vụ {job['id']} · tài khoản "
+                             f"{account.get('label') or account['id']}{phase} · {str(error)[:400]}\n")
+        except OSError:
+            pass
+        return ""
 
     def log_error(self, job, account, error):
         """Ghi lỗi kỹ thuật (không ghi prompt, cookie hay OTP) vào data/logs/runner.log; trả về tên lỗi ngắn gọn."""

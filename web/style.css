@@ -612,3 +612,6 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 .update-dialog{width:min(520px,92vw)}
 .update-dialog-list{margin:0 0 18px;padding-left:20px;color:var(--muted);font-size:var(--fs-sm);display:flex;flex-direction:column;gap:6px}
 .update-dialog-actions{display:flex;justify-content:flex-end;gap:10px}
+
+/* Lỗi của tác vụ: hiện thẳng lý do (tối đa 3 dòng), rê chuột xem đủ */
+.progress-caption .detail.error{white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.35;max-width:260px}
