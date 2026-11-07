@@ -87,6 +87,26 @@ class AppServer(ThreadingHTTPServer):
                 pass
             stop.wait(60)
 
+    def log_report(self, lines=300):
+        """Nhật ký lỗi để người dùng sao chép gửi hỗ trợ: phiên bản, cấu hình máy, phần cuối runner.log và update.log.
+        Các file này không chứa prompt, cookie, mật khẩu hay OTP."""
+        folder = self.data_dir / "logs"
+
+        def tail(name, count):
+            try:
+                text = (folder / name).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return "(chưa có)"
+            # bỏ phần backtrace địa chỉ bộ nhớ dài, vô ích khi đọc lỗi
+            kept = [line for line in text.splitlines() if not line.strip().startswith("(No symbol)")]
+            return "\n".join(kept[-count:]).strip() or "(trống)"
+        hw = getattr(self.engine, "hardware", {}) or {}
+        head = (f"HANA MEDIA {APP_VERSION} · Windows: {os.name == 'nt'} · RAM {hw.get('ram_gb')} GB · "
+                f"CPU {hw.get('cores')} nhân · tối đa {getattr(self.engine, 'max_parallel', '?')} luồng")
+        text = (f"{head}\n\n===== runner.log (lỗi tác vụ) =====\n{tail('runner.log', lines)}"
+                f"\n\n===== update.log (cập nhật) =====\n{tail('update.log', 40)}")
+        return {"text": text, "folder": str(folder)}
+
     def jobs_running(self):
         with self.store.connect() as db:
             return db.execute("SELECT COUNT(*) FROM jobs WHERE status='running'").fetchone()[0] > 0
@@ -421,6 +441,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"error": "Video ghép không còn trên máy."}, 404)
             download = "download" in parse_qs(urlsplit(self.path).query)
             return self.send_file(file, "video/mp4", "attachment" if download else "inline", file.name)
+        if path == "/api/logs":
+            return self.reply(self.server.log_report())
         if path == "/api/update":
             return self.reply(self.server.updater.status())
         if path == "/api/license":
@@ -647,6 +669,12 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/settings/support":
                 return self.reply({"ok": True, "support": store.save_support_bar(body.get("message"), body.get("phone"),
                                                                                   body.get("qr"))})
+            elif path == "/api/logs/open-folder":
+                folder = self.server.data_dir / "logs"
+                folder.mkdir(parents=True, exist_ok=True)
+                if os.name != "nt":
+                    raise ValueError(f"Thư mục nhật ký: {folder}")
+                os.startfile(folder)
             elif path == "/api/settings/gpu":
                 store.save_setting("gpu_encode", body.get("enabled") is True)
             elif path == "/api/settings/shared-account":

@@ -1070,6 +1070,10 @@ function renderUpdate(){
   $('updateInstall').hidden=!u.available||busy;$('updateCheck').disabled=busy||!u.supported;
 }
 setInterval(renderUpdate,1500);
+$('logCopy').onclick=()=>action(async()=>{const r=await fetch('/api/logs');const d=await r.json();if(!r.ok)throw Error(d.error||'Không đọc được nhật ký.');
+  try{await navigator.clipboard.writeText(d.text);toast('Đã sao chép nhật ký lỗi. Dán (Ctrl+V) gửi cho hỗ trợ.');}
+  catch{const box=document.createElement('textarea');box.value=d.text;document.body.appendChild(box);box.select();const ok=document.execCommand('copy');box.remove();toast(ok?'Đã sao chép nhật ký lỗi. Dán (Ctrl+V) gửi cho hỗ trợ.':'Không sao chép được: bấm "Mở thư mục nhật ký" và gửi file runner.log.',!ok);}});
+$('logOpen').onclick=()=>action(async()=>{await api('/api/logs/open-folder',{});});
 // Số luồng tối đa theo cấu hình của máy đang chạy (tool tự đo RAM / CPU), GPU cho bước xử lý video.
 let parallelMax=0;
 function renderHardware(){const e=state?.engine,hw=e?.hardware;if(!hw)return;
