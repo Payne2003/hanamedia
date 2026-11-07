@@ -278,7 +278,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({"error": "Không ghi được file vào thư mục dữ liệu. Kiểm tra dung lượng ổ đĩa và quyền ghi."}, 500)
 
     # Bản quyền: chạy video / tải media cần quyền tương ứng còn hạn. Xem dữ liệu, cài đặt, kích hoạt luôn được phép.
-    JOB_PATHS = {"/api/jobs", "/api/start", "/api/jobs/update", "/api/jobs/rerun", "/api/retry", "/api/batch/stitch",
+    JOB_PATHS = {"/api/jobs", "/api/start", "/api/jobs/update", "/api/jobs/rerun", "/api/retry", "/api/jobs/fetch", "/api/batch/stitch",
                  "/api/jobs/characters", "/api/jobs/attach-characters", "/api/login", "/api/accounts/login-all",
                  "/api/review", "/api/accounts/check", "/api/accounts/check-all"}
     MEDIA_PATHS = {"/api/media/upload", "/api/media/delete-batch", "/api/library/image-upload", "/api/image-upload",
@@ -660,6 +660,8 @@ class Handler(BaseHTTPRequestHandler):
                 engine.pause()
             elif path == "/api/retry":
                 store.retry(body["id"])
+            elif path == "/api/jobs/fetch":
+                engine.fetch(str(body["id"]))
                 engine.changed.set()
             elif path == "/api/folder":
                 if not self.server.folder_lock.acquire(blocking=False):
