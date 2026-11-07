@@ -1,8 +1,7 @@
-"""Tự cập nhật: so phiên bản, đọc bản mới nhất trên GitHub Releases, tải bộ cài có kiểm tra SHA-256, không cài khi
-đang có tác vụ chạy; chạy bộ cài im lặng rồi tắt app."""
+"""Tự cập nhật: tìm bản mới qua trang github.com/<kho>/releases/latest (không dùng API bị giới hạn), tải bộ cài có
+kiểm tra SHA-256, không cài khi đang có tác vụ chạy; chạy bộ cài rồi tắt app; nhật ký từng bước."""
 import hashlib
 import io
-import json
 import shutil
 import tempfile
 import time
@@ -10,14 +9,22 @@ import unittest
 import urllib.error
 from pathlib import Path
 
-from runner import updater as module
 from runner.updater import Updater, newer, parse_version
 
 REPO = "Owner/app"
+BASE = f"https://github.com/{REPO}/releases"
 BODY = b"MZ fake installer " * 1000
 
 
 class Response(io.BytesIO):
+    def __init__(self, data, url):
+        super().__init__(data)
+        self.url = url
+        self.headers = {"Content-Length": str(len(data))}
+
+    def geturl(self):
+        return self.url
+
     def __enter__(self):
         return self
 
@@ -25,32 +32,34 @@ class Response(io.BytesIO):
         self.close()
 
 
-def release(tag="v1.1.50", body=BODY, digest=True, url=None):
-    asset = {"name": f"HanaMedia-Setup-{tag.lstrip('v')}.exe", "size": len(body),
-             "browser_download_url": url or f"https://github.com/{REPO}/releases/download/{tag}/HanaMedia-Setup-{tag.lstrip('v')}.exe"}
-    if digest:
-        asset["digest"] = "sha256:" + hashlib.sha256(body).hexdigest()
-    return {"tag_name": tag, "body": "Sửa lỗi", "assets": [asset]}
-
-
 class UpdaterTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp()).resolve()
-        self.files = {}
+        self.files, self.redirect, self.seen = {}, {}, []
         self.launched, self.exited, self.busy = [], [], False
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
 
     def opener(self, url, timeout=20):
-        if url not in self.files:
+        self.seen.append(url)
+        final = self.redirect.get(url, url)
+        if final not in self.files:
             raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
-        return Response(self.files[url])
+        return Response(self.files[final], final)
 
-    def make(self, data, payload=BODY):
-        self.files[f"https://api.github.com/repos/{REPO}/releases/latest"] = json.dumps(data).encode()
-        for asset in data["assets"]:
-            self.files[asset["browser_download_url"]] = payload
+    def publish(self, tag="v1.1.60", payload=BODY, sha=True, api_digest=None):
+        self.redirect[f"{BASE}/latest"] = f"{BASE}/tag/{tag}"
+        self.files[f"{BASE}/tag/{tag}"] = b"<html>"
+        name = f"HanaMedia-Setup-{tag.lstrip('v')}.exe"
+        self.files[f"{BASE}/download/{tag}/{name}"] = payload
+        if sha:
+            self.files[f"{BASE}/download/{tag}/{name}.sha256"] = f"{hashlib.sha256(BODY).hexdigest()}  {name}".encode()
+        if api_digest:
+            self.files[f"https://api.github.com/repos/{REPO}/releases/tags/{tag}"] = (
+                '{"assets":[{"name":"%s","digest":"sha256:%s"}]}' % (name, api_digest)).encode()
+
+    def make(self):
         u = Updater(self.root, busy=lambda: self.busy, exit_app=lambda: self.exited.append(1), repo=REPO,
                     opener=self.opener, launcher=lambda path: self.launched.append(Path(path)), sleep=lambda s: None)
         u.state["supported"] = True
@@ -70,42 +79,46 @@ class UpdaterTests(unittest.TestCase):
         self.assertFalse(newer("v1.0.1", "1.0.1"))
         self.assertFalse(newer("bad", "1.0.1"))
 
-    def test_check_and_install(self):
-        u = self.make(release())
+    def test_check_without_github_api_then_install(self):
+        self.publish()
+        u = self.make()
         status = u.check()
-        self.assertEqual((status["available"], status["latest"], status["error"]), (True, "1.1.50", ""))
+        self.assertEqual((status["available"], status["latest"], status["error"]), (True, "1.1.60", ""))
+        self.assertFalse(any("api.github.com" in url for url in self.seen))  # không đụng API bị giới hạn
         u.start_install()
         self.wait(u)
         self.assertEqual(u.status()["phase"], "installing")
         self.assertEqual(self.launched[0].read_bytes(), BODY)
         self.assertEqual(self.exited, [1])
         u.clean_old()
-        self.assertFalse(any(self.root.joinpath("updates").iterdir()))
+        self.assertEqual([p.name for p in (self.root / "updates").iterdir()], ["pending.json"])
+        again = Updater(self.root, repo=REPO, opener=self.opener)  # mở lại mà vẫn là bản cũ
+        self.assertEqual(again.status()["phase"], "error")
+        self.assertIn("chưa thành công", again.status()["error"])
+        log = (self.root / "logs" / "update.log").read_text(encoding="utf-8")
+        for step in ("bản mới nhất v1.1.60", "Đã tải và kiểm tra SHA-256", "Đã chạy bộ cài", "cài không thành công"):
+            self.assertIn(step, log)
+
+    def test_old_release_without_sha_file_uses_api_digest(self):
+        self.publish(sha=False, api_digest=hashlib.sha256(BODY).hexdigest())
+        u = self.make()
+        u.check()
+        self.assertTrue(u.asset["digest"].startswith("sha256:"))
 
     def test_tampered_download_is_rejected(self):
-        u = self.make(release(), payload=b"evil" * 10)
-        u.check()
-        u.start_install()
-        self.wait(u)
-        self.assertEqual(u.status()["phase"], "error")
-        self.assertEqual(self.launched, [])
-
-    def test_bad_digest_rejected_even_with_same_size(self):
-        data = release()
-        data["assets"][0]["digest"] = "sha256:" + "0" * 64
-        u = self.make(data)
+        self.publish(payload=b"evil" * 10)
+        u = self.make()
         u.check()
         u.start_install()
         self.wait(u)
         self.assertIn("mã kiểm tra", u.status()["error"])
         self.assertEqual(self.launched, [])
 
-    def test_foreign_url_old_version_busy_and_unsupported(self):
-        u = self.make(release(url="https://evil.example/HanaMedia-Setup-1.1.50.exe"))
-        self.assertFalse(u.check()["available"])  # chỉ tải từ đúng kho phát hành
-        u = self.make(release(tag="v1.0.1"))
-        self.assertFalse(u.check()["available"])
-        u = self.make(release())
+    def test_same_version_busy_and_unsupported(self):
+        self.publish(tag="v1.0.1")
+        self.assertFalse(self.make().check()["available"])
+        self.publish()
+        u = self.make()
         u.check()
         self.busy = True
         with self.assertRaisesRegex(ValueError, "tác vụ chạy"):
@@ -116,9 +129,19 @@ class UpdaterTests(unittest.TestCase):
             u.start_install()
 
     def test_no_release_yet(self):
+        self.files[f"{BASE}/latest"] = b"<html>"  # không chuyển tới /tag/
         u = Updater(self.root, repo=REPO, opener=self.opener)
         self.assertIn("Chưa có bản phát hành", u.check()["error"])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FallbackTests(UpdaterTests):
+    def test_web_blocked_falls_back_to_api(self):
+        self.publish(tag="v1.1.70")
+        del self.redirect[f"{BASE}/latest"]  # trang web bị chặn / lỗi
+        self.files[f"https://api.github.com/repos/{REPO}/releases/latest"] = b'{"tag_name":"v1.1.70"}'
+        status = self.make().check()
+        self.assertEqual((status["latest"], status["available"]), ("1.1.70", True))

@@ -1072,7 +1072,8 @@ function renderUpdate(){
 setInterval(renderUpdate,1500);
 async function installUpdate(){if(!confirm(`Cập nhật lên bản ${state.update.latest}?\n\nApp sẽ tải bộ cài, tự tắt, cài đè rồi tự mở lại (khoảng 1–2 phút). Tài khoản, hàng đợi, video và bản quyền giữ nguyên.`))return;
   action(async()=>{await api('/api/update/install',{});toast('Đang tải bản cập nhật…');});}
-$('updateBannerButton').onclick=installUpdate;$('updateInstall').onclick=installUpdate;
+$('updateBannerButton').onclick=installUpdate;
+$('updateManual').onclick=()=>action(async()=>{await api('/api/update/open-page',{});toast('Đã mở trang tải bộ cài mới nhất trong trình duyệt.');});$('updateInstall').onclick=installUpdate;
 $('updateCheck').onclick=()=>action(async()=>{const r=await api('/api/update/check',{});toast(r.update.available?`Có bản mới ${r.update.latest}.`:r.update.error||'Bạn đang dùng bản mới nhất.',Boolean(r.update.error));});
 async function loadLicense(){
   try{const r=await fetch('/api/license');licenseData=await r.json();if(!r.ok)throw Error(licenseData.error);renderLicense();}catch(error){toast(error.message||'Không tải được thông tin bản quyền.',true);}

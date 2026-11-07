@@ -525,6 +525,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path.startswith("/api/license/"):
                 return self.license_action(path)
+            if path == "/api/update/open-page":
+                self.rfile.read(min(int(self.headers.get("Content-Length", "0") or 0), 10_000))
+                webbrowser.open(self.server.updater.release_page())  # địa chỉ cố định của kho phát hành  # địa chỉ cố định của kho phát hành
+                return self.reply({"ok": True, "url": self.server.updater.release_page()})
             if path in ("/api/update/check", "/api/update/install"):
                 self.rfile.read(min(int(self.headers.get("Content-Length", "0") or 0), 10_000))
             if path == "/api/update/check":
