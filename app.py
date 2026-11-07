@@ -410,6 +410,7 @@ class Handler(BaseHTTPRequestHandler):
                                                            "online_check", "checked_at", "check_error")}
             update = self.server.updater.status()
             data["update"] = {k: update.get(k) for k in ("supported", "available", "latest", "phase", "progress", "error")}
+            data["theme"] = self.server.store.setting("theme", "dark")
             data["support"] = self.server.store.support_bar()
             data["community"] = self.server.store.community()
             shared = self.server.shared
@@ -675,6 +676,10 @@ class Handler(BaseHTTPRequestHandler):
                 if os.name != "nt":
                     raise ValueError(f"Thư mục nhật ký: {folder}")
                 os.startfile(folder)
+            elif path == "/api/settings/theme":
+                if body.get("theme") not in ("dark", "light", "system"):
+                    raise ValueError("Giao diện không hợp lệ.")
+                store.save_setting("theme", body["theme"])
             elif path == "/api/settings/gpu":
                 store.save_setting("gpu_encode", body.get("enabled") is True)
             elif path == "/api/settings/shared-account":

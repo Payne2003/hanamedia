@@ -615,3 +615,27 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 
 /* Lỗi của tác vụ: hiện thẳng lý do (tối đa 3 dòng), rê chuột xem đủ */
 .progress-caption .detail.error{white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.35;max-width:260px}
+
+/* =====================================================================================================
+   GIAO DIỆN SÁNG — cùng bảng token, đổi màu nền/chữ. Bật bằng <html data-theme="light"> (Cài đặt → Giao diện).
+   ===================================================================================================== */
+:root[data-theme="light"]{
+  color-scheme:light;
+  --c-bg:#f3f4f9;--c-surface:#ffffff;--c-surface-2:#f7f8fc;--c-surface-3:#eceef6;--c-input:#ffffff;
+  --c-border:#dcdfeb;--c-border-strong:#c3c8da;
+  --c-text:#1b1d2b;--c-text-2:#525873;--c-text-3:#8a90a8;
+  --c-accent:#7c4dff;--c-accent-strong:#6a3cf0;--c-accent-soft:#ece5ff;--c-accent-text:#5b2fe0;
+  --c-success:#0f9466;--c-success-soft:#daf4ea;--c-warning:#a66a00;--c-warning-soft:#fff1d2;
+  --c-danger:#d0344c;--c-danger-soft:#fde3e7;
+  --ring:0 0 0 3px rgba(124,77,255,.22);
+}
+:root[data-theme="light"] .brand,:root[data-theme="light"] .brand span{color:var(--c-text)}
+:root[data-theme="light"] .primary{color:#fff}
+:root[data-theme="light"] .card,:root[data-theme="light"] dialog{box-shadow:0 1px 3px rgba(20,24,60,.06)}
+:root[data-theme="light"] #toast{color:var(--c-text);background:var(--c-surface);box-shadow:0 10px 40px rgba(20,24,60,.18)}
+:root[data-theme="light"] dialog::backdrop{background:rgba(20,22,40,.45)}
+.theme-toggle{display:flex;gap:6px}
+.theme-toggle button{flex:1;padding:8px 10px;font-size:var(--fs-sm)}
+.theme-toggle button.active{border-color:var(--c-accent);background:var(--c-accent-soft);color:var(--c-accent-text);font-weight:600}
+:root[data-theme="light"] .running-pill,:root[data-theme="light"] .running-pill b{color:var(--c-success)}
+:root[data-theme="light"] .stepper button.active{color:var(--c-text)}

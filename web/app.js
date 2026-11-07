@@ -1070,6 +1070,15 @@ function renderUpdate(){
   $('updateInstall').hidden=!u.available||busy;$('updateCheck').disabled=busy||!u.supported;
 }
 setInterval(renderUpdate,1500);
+// Giao diện sáng / tối (lưu trong dữ liệu app, áp dụng ngay).
+let themeChoice=null;const darkQuery=window.matchMedia?matchMedia('(prefers-color-scheme: dark)'):null;
+function applyTheme(choice){themeChoice=choice||'dark';const light=themeChoice==='light'||(themeChoice==='system'&&darkQuery&&!darkQuery.matches);
+  document.documentElement.dataset.theme=light?'light':'dark';
+  document.querySelectorAll('[data-theme-choice]').forEach(b=>b.classList.toggle('active',b.dataset.themeChoice===themeChoice));}
+setInterval(()=>{const t=state?.theme||'dark';if(t!==themeChoice)applyTheme(t);},800);
+if(darkQuery)darkQuery.addEventListener('change',()=>themeChoice==='system'&&applyTheme('system'));
+document.addEventListener('click',e=>{const b=e.target.closest('[data-theme-choice]');if(!b)return;applyTheme(b.dataset.themeChoice);
+  api('/api/settings/theme',{theme:b.dataset.themeChoice}).then(()=>refresh()).catch(err=>toast(err.message,true));});
 $('logCopy').onclick=()=>action(async()=>{const r=await fetch('/api/logs');const d=await r.json();if(!r.ok)throw Error(d.error||'Không đọc được nhật ký.');
   try{await navigator.clipboard.writeText(d.text);toast('Đã sao chép nhật ký lỗi. Dán (Ctrl+V) gửi cho hỗ trợ.');}
   catch{const box=document.createElement('textarea');box.value=d.text;document.body.appendChild(box);box.select();const ok=document.execCommand('copy');box.remove();toast(ok?'Đã sao chép nhật ký lỗi. Dán (Ctrl+V) gửi cho hỗ trợ.':'Không sao chép được: bấm "Mở thư mục nhật ký" và gửi file runner.log.',!ok);}});
