@@ -1070,6 +1070,15 @@ function renderUpdate(){
   $('updateInstall').hidden=!u.available||busy;$('updateCheck').disabled=busy||!u.supported;
 }
 setInterval(renderUpdate,1500);
+// Bảng báo có phiên bản mới: hiện ngay khi app phát hiện bản mới (mỗi lần mở app, mỗi phiên bản một lần).
+let updatePrompted='';
+function promptUpdate(){const u=state?.update;if(!u||!u.supported||!u.available||u.phase==='downloading'||u.phase==='installing'||updatePrompted===u.latest)return;
+  updatePrompted=u.latest;const running=(state.totals?.running||0)>0;
+  $('updateDialogTitle').textContent=`Có phiên bản mới ${u.latest}`;$('updateDialogText').textContent=`Bạn đang dùng ${state.app_version}. Cập nhật ngay để có bản sửa lỗi và tính năng mới nhất.`;
+  $('updateDialogBusy').hidden=!running;$('updateDialogNow').disabled=running;if(!$('updateDialog').open)$('updateDialog').showModal();}
+setInterval(promptUpdate,2000);
+$('updateDialogLater').onclick=()=>$('updateDialog').close();
+$('updateDialogNow').onclick=()=>{$('updateDialog').close();action(async()=>{await api('/api/update/install',{});toast('Đang tải bản cập nhật…');});};
 function renderAssignHint(){if(!state)return;$('assignHint').hidden=!state.assign_hint;$('assignHintText').textContent=state.assign_hint?`⚠ Prompt đang chờ chưa được chia tài khoản: ${state.assign_hint}`:'';}
 setInterval(renderAssignHint,1500);
 async function installUpdate(){if(!confirm(`Cập nhật lên bản ${state.update.latest}?\n\nApp sẽ tải bộ cài, tự tắt, cài đè rồi tự mở lại (khoảng 1–2 phút). Tài khoản, hàng đợi, video và bản quyền giữ nguyên.`))return;
