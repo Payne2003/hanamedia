@@ -61,6 +61,13 @@ jobs:
         run: |
           $version = python -c "from runner.version import APP_VERSION; print(APP_VERSION)"
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\HanaMedia.iss
+      - name: Mã SHA-256 của bộ cài (app kiểm tra khi tự cập nhật)
+        shell: pwsh
+        run: |
+          Get-ChildItem dist\HanaMedia-Setup-*.exe | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)" | Set-Content -NoNewline -Encoding ascii "$($_.FullName).sha256"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: HanaMedia-Setup
@@ -79,4 +86,6 @@ jobs:
           name: HANA MEDIA ${{ steps.version.outputs.version }}
           body: ${{ github.event.head_commit.message }}
           make_latest: true
-          files: dist/HanaMedia-Setup-*.exe
+          files: |
+            dist/HanaMedia-Setup-*.exe
+            dist/HanaMedia-Setup-*.exe.sha256

@@ -39,9 +39,21 @@ def newer(candidate, current=APP_VERSION):
 
 
 def http_get(url, timeout=20):
-    request = urllib.request.Request(url, headers={"User-Agent": "HanaMedia-Updater",
-                                                   "Accept": "application/vnd.github+json"})
-    return urllib.request.urlopen(request, timeout=timeout)
+    """GET qua HTTPS. Máy không xác minh được chứng chỉ bằng kho chứng chỉ của Windows (thiếu gốc, phần mềm diệt
+    virus can thiệp…) thì thử lại bằng bộ chứng chỉ certifi đóng gói sẵn trong app. Không bao giờ tắt xác minh."""
+    import ssl
+    request = urllib.request.Request(url, headers={"User-Agent": "HanaMedia-Updater"})
+    try:
+        return urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.URLError as error:
+        if not isinstance(getattr(error, "reason", None), ssl.SSLError):
+            raise
+        try:
+            import certifi
+        except ImportError:
+            raise error from None
+        context = ssl.create_default_context(cafile=certifi.where())
+        return urllib.request.urlopen(request, timeout=timeout, context=context)
 
 
 class Updater:
@@ -56,7 +68,35 @@ class Updater:
                       "checked_at": None, "error": "", "phase": "idle", "progress": 0,
                       "supported": frozen() and os.name == "nt"}
         self.asset = None
+        self.log_file = Path(data) / "logs" / "update.log"
+        self.check_previous()
 
+    def log(self, text):
+        """Nhật ký cập nhật (data/logs/update.log) để biết bước nào hỏng."""
+        try:
+            self.log_file.parent.mkdir(parents=True, exist_ok=True)
+            with self.log_file.open("a", encoding="utf-8") as handle:
+                handle.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] (đang dùng {APP_VERSION}) {text}\n")
+        except OSError:
+            pass
+
+    def check_previous(self):
+        """Lần trước đã chạy bộ cài bản X mà app vẫn là bản cũ: báo cập nhật không thành công."""
+        marker = self.dir / "pending.json"
+        try:
+            pending = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        try:
+            marker.unlink()
+        except OSError:
+            pass
+        if newer(pending.get("version"), APP_VERSION):
+            self.log(f"Bộ cài bản {pending.get('version')} đã chạy nhưng app vẫn là {APP_VERSION}: cài không thành công.")
+            self.state.update(phase="error", error=f"Lần cập nhật lên {pending.get('version')} chưa thành công "
+                              "(xem data/logs/update-setup.log). Bấm Tải bộ cài để cài tay.")
+        else:
+            self.log("Cập nhật thành công.")
     def status(self):
         with self.lock:
             return dict(self.state)
@@ -71,27 +111,78 @@ class Updater:
         return not checked or self.clock() - checked >= CHECK_INTERVAL
 
     def check(self):
+        """Tìm bản mới nhất qua https://github.com/<kho>/releases/latest (trang này chuyển tới /releases/tag/vX).
+        Không dùng API của GitHub: API giới hạn 60 lần/giờ cho mỗi địa chỉ mạng, nhiều máy dùng chung mạng của nhà
+        mạng nên hay bị từ chối (app không thấy bản mới)."""
         if not self.repo:
             self.set(error="Bản app này chưa cấu hình nơi cập nhật.")
             return self.status()
+        base = f"https://github.com/{self.repo}/releases"
         try:
-            with self.opener(f"https://api.github.com/repos/{self.repo}/releases/latest") as response:
-                release = json.loads(response.read(2_000_000))
-            tag = str(release.get("tag_name") or "")
-            asset = next((a for a in release.get("assets") or [] if ASSET.match(str(a.get("name") or ""))), None)
-            url = str((asset or {}).get("browser_download_url") or "")
-            if asset and not url.startswith(f"https://github.com/{self.repo}/releases/download/"):
-                asset = None  # chỉ tải bộ cài từ đúng kho phát hành
-            self.asset = asset
-            available = bool(asset) and newer(tag)
-            self.set(latest=tag.lstrip("v") or None, available=available, notes=str(release.get("body") or "")[:2000],
-                     size=int((asset or {}).get("size") or 0), checked_at=self.clock(), error="")
+            tag = self.latest_tag(base)
+            version = tag.lstrip("v")
+            name = f"HanaMedia-Setup-{version}.exe"
+            asset = {"name": name, "browser_download_url": f"{base}/download/{tag}/{name}", "size": 0,
+                     "digest": self.release_digest(base, tag, name)}
+            self.asset = asset if ASSET.match(name) else None
+            available = bool(self.asset) and newer(tag)
+            self.set(latest=version or None, available=available, notes="", size=0, checked_at=self.clock(), error="")
+            self.log(f"Kiểm tra: bản mới nhất {tag}, {'có' if available else 'không có'} bản mới"
+                     f"{'' if asset['digest'] else ' (không lấy được mã SHA-256)'}.")
         except urllib.error.HTTPError as error:
             message = "Chưa có bản phát hành nào." if error.code == 404 else f"GitHub trả mã {error.code}."
             self.set(checked_at=self.clock(), error=message, available=False)
+            self.log("Kiểm tra lỗi: " + message)
         except (OSError, ValueError) as error:
-            self.set(checked_at=self.clock(), error=f"Không kiểm tra được cập nhật (mạng?): {str(error)[:120]}")
+            self.set(checked_at=self.clock(), error=f"Không kiểm tra được cập nhật (mạng?): {str(error)[:120]}",
+                     available=False)
+            self.log(f"Kiểm tra lỗi: {type(error).__name__}: {str(error)[:200]}")
         return self.status()
+
+    def latest_tag(self, base):
+        """Tag bản mới nhất: trang github.com (không giới hạn), không được thì hỏi API (60 lần/giờ/địa chỉ mạng)."""
+        errors = []
+        try:
+            with self.opener(f"{base}/latest") as response:
+                match = re.search(r"/releases/tag/(v?[0-9][0-9.]*)$", response.geturl() or "")
+            if match:
+                return match.group(1)
+            errors.append("trang Releases không chỉ tới bản nào")
+        except (OSError, ValueError) as error:
+            errors.append(f"github.com: {str(error)[:80]}")
+        try:
+            with self.opener(f"https://api.github.com/repos/{self.repo}/releases/latest") as response:
+                tag = str(json.loads(response.read(2_000_000)).get("tag_name") or "")
+            if parse_version(tag):
+                return tag
+            errors.append("API không có tag")
+        except urllib.error.HTTPError as error:
+            errors.append("API: " + ("chưa có bản phát hành" if error.code == 404 else f"mã {error.code}"))
+        except (OSError, ValueError) as error:
+            errors.append(f"API: {str(error)[:80]}")
+        if all("chưa có" in e or "không chỉ tới" in e for e in errors):
+            raise ValueError("Chưa có bản phát hành nào.")
+        raise ValueError("; ".join(errors))
+
+    def release_digest(self, base, tag, name):
+        """Mã SHA-256 của bộ cài: file <tên>.sha256 đăng kèm bản phát hành; bản cũ chưa có thì hỏi API (có thể bị
+        giới hạn — khi đó chỉ dựa vào HTTPS của github.com)."""
+        try:
+            with self.opener(f"{base}/download/{tag}/{name}.sha256") as response:
+                found = re.search(r"\b([0-9a-fA-F]{64})\b", response.read(4096).decode("ascii", "ignore"))
+                if found:
+                    return "sha256:" + found.group(1).lower()
+        except (OSError, ValueError):
+            pass
+        try:
+            with self.opener(f"https://api.github.com/repos/{self.repo}/releases/tags/{tag}") as response:
+                release = json.loads(response.read(2_000_000))
+            for item in release.get("assets") or []:
+                if item.get("name") == name and str(item.get("digest") or "").startswith("sha256:"):
+                    return str(item["digest"])
+        except (OSError, ValueError):
+            pass
+        return ""
 
     # ---- tải và cài --------------------------------------------------------------------------------------------------
     def start_install(self):
@@ -117,6 +208,7 @@ class Updater:
         target, part = self.dir / name, self.dir / (name + ".part")
         hasher, done = hashlib.sha256(), 0
         with self.opener(asset["browser_download_url"], timeout=60) as response, open(part, "wb") as handle:
+            size = size or int(response.headers.get("Content-Length") or 0)
             while True:
                 chunk = response.read(1 << 20)
                 if not chunk:
@@ -137,23 +229,35 @@ class Updater:
 
     def install_worker(self):
         try:
+            self.log(f"Bắt đầu tải {self.asset.get('name')} ({self.asset.get('size')} byte).")
             installer = self.download()
+            self.log(f"Đã tải và kiểm tra SHA-256: {installer}")
             if self.busy():
                 raise ValueError("Có tác vụ vừa bắt đầu chạy. Đợi chạy xong rồi cập nhật.")
             self.set(phase="installing", progress=100)
+            try:
+                (self.dir / "pending.json").write_text(json.dumps({"version": self.status()["latest"]}), encoding="utf-8")
+            except OSError:
+                pass
             self.launcher(installer)
+            self.log("Đã chạy bộ cài; tắt app để bộ cài chép đè.")
             if self.exit_app:
                 self.sleep(1.5)  # để giao diện kịp hiện "Đang cài…"
                 self.exit_app()
         except (OSError, ValueError) as error:
+            self.log(f"Cập nhật lỗi: {type(error).__name__}: {str(error)[:300]}")
             self.set(phase="error", error=str(error)[:300] or "Không cập nhật được.")
 
-    @staticmethod
-    def launch_installer(installer):
-        """Chạy bộ cài im lặng, tách khỏi app (app tắt ngay sau đó); bộ cài tự mở lại app khi xong."""
+    def launch_installer(self, installer):
+        """Chạy bộ cài im lặng, tách khỏi app (app tắt ngay sau đó); bộ cài tự mở lại app khi xong.
+        Bộ cài ghi nhật ký vào data/logs/update-setup.log."""
         flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        subprocess.Popen([str(installer), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS",
-                          "/RELAUNCH=1"], creationflags=flags, close_fds=True)
+        setup_log = self.log_file.parent / "update-setup.log"
+        subprocess.Popen([str(installer), "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS",
+                          "/RELAUNCH=1", f"/LOG={setup_log}"], creationflags=flags, close_fds=True)
+
+    def release_page(self):
+        return f"https://github.com/{self.repo}/releases/latest"
 
     def clean_old(self):
         """Xóa bộ cài đã tải của các lần cập nhật trước."""
