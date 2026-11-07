@@ -97,22 +97,35 @@ def finish(temporary, destination):
     return Path(destination)
 
 
-def upscale(source, destination, size, timeout=3600):
+CPU_VIDEO = ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
+
+
+def encode(build, temporary, timeout, video_args):
+    """Chạy ffmpeg với bộ mã hóa đã chọn (GPU); GPU lỗi giữa chừng thì làm lại bằng CPU. Trả về kết quả cuối."""
+    result = run(build(video_args or CPU_VIDEO), timeout)
+    if (result.returncode != 0 or not temporary.is_file()) and video_args and video_args != CPU_VIDEO:
+        temporary.unlink(missing_ok=True)
+        result = run(build(CPU_VIDEO), timeout)
+    return result
+
+
+def upscale(source, destination, size, timeout=3600, video_args=None):
     """Phóng video lên kích thước đích (giữ tỉ lệ, thêm viền nếu khác tỉ lệ). Không ghi đè file gốc."""
     source, destination = Path(source), Path(destination)
     if source.resolve() == destination.resolve():
         raise VideoError("File đích trùng file gốc.")
     temporary = destination.with_name(destination.stem + ".part.mp4")
-    args = [ffmpeg(), "-hide_banner", "-y", "-i", str(source), "-vf", fit(size), "-c:v", "libx264", "-preset", "medium",
-            "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(temporary)]
-    result = run(args, timeout)
+    def build(video):
+        return [ffmpeg(), "-hide_banner", "-y", "-i", str(source), "-vf", fit(size), *video,
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(temporary)]
+    result = encode(build, temporary, timeout, video_args)
     if result.returncode != 0 or not temporary.is_file():
         temporary.unlink(missing_ok=True)
         raise VideoError("ffmpeg không nâng được độ phân giải video.")
     return finish(temporary, destination)
 
 
-def stitch(sources, destination, size=None, timeout=7200):
+def stitch(sources, destination, size=None, timeout=7200, video_args=None):
     """Ghép các cảnh theo thứ tự thành một video. Các cảnh khác kích thước được đưa về cùng khung (size, hoặc khung
     của cảnh đầu); cảnh không có tiếng được chèn khoảng lặng để ghép liền mạch."""
     sources = [Path(source) for source in sources]
@@ -137,9 +150,10 @@ def stitch(sources, destination, size=None, timeout=7200):
         pairs.append(f"[v{index}][a{index}]")
     filters.append(f"{''.join(pairs)}concat=n={len(sources)}:v=1:a=1[v][a]")
     temporary = Path(destination).with_name(Path(destination).stem + ".part.mp4")
-    args += ["-filter_complex", ";".join(filters), "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "medium",
-             "-crf", "18", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(temporary)]
-    result = run(args, timeout)
+    def build(video):
+        return args + ["-filter_complex", ";".join(filters), "-map", "[v]", "-map", "[a]", *video,
+                       "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(temporary)]
+    result = encode(build, temporary, timeout, video_args)
     if result.returncode != 0 or not temporary.is_file():
         temporary.unlink(missing_ok=True)
         raise VideoError("ffmpeg không ghép được các cảnh.")

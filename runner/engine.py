@@ -12,7 +12,9 @@ FLOW_LOGIN = object()  # yêu cầu đặc biệt trong hàng đợi Flow: mở 
 FLOW_CLOSE = object()  # đóng Chrome Flow do tool điều khiển (nhường hồ sơ Google chung)
 from .health import HealthMonitor
 
-MAX_PARALLEL = 2  # tối đa 2 Chrome Muse chạy cùng lúc (tạo video, đăng nhập hàng loạt, kiểm tra tài khoản)
+from . import hardware  # noqa: E402
+
+MAX_PARALLEL = hardware.HARD_CAP  # trần tuyệt đối; mỗi máy tự tính mức tối đa của mình (Engine.max_parallel)
 from .muse import MuseBrowser, MuseFailure
 from .video_tools import VideoError, needs_upscale, probe, size_for, stitch, target_size, upscale
 from .video_tools import request_spec
@@ -26,6 +28,10 @@ class Engine:
         self.changed = threading.Event()
         self.enabled = False
         self.closing = False
+        self.hardware = hardware.capacity()  # RAM / CPU của máy này → số luồng tối đa
+        self.max_parallel = self.hardware["max_threads"]
+        self.gpu_name = None  # bộ mã hóa GPU dò ở nền (không chặn lúc mở app)
+        threading.Thread(target=self.detect_gpu, daemon=True).start()
         self.auto_plan = False  # app thật bật (start_runner): chia prompt cho tài khoản cả khi bộ chạy chưa bật
         self.limit = 2
         self.headless = False
@@ -99,7 +105,8 @@ class Engine:
                 self.store.set_post(job_id, f"ok:{info['width']}x{info['height']}")
                 return
             self.post_status = f"Đang nâng {source.name} lên {job['resolution']}"
-            output = upscale(source, source.with_name(f"{source.stem} ({job['resolution']}).mp4"), size)
+            output = upscale(source, source.with_name(f"{source.stem} ({job['resolution']}).mp4"), size,
+                             video_args=self.video_args())
             self.store.set_post(job_id, f"upscaled:{size[0]}x{size[1]}", str(output))
         except (VideoError, OSError) as error:
             self.store.set_post(job_id, "error:" + (str(error) if isinstance(error, VideoError)
@@ -121,7 +128,7 @@ class Engine:
         try:
             self.store.set_stitch(batch, "running")
             self.post_status = f"Đang ghép {len(sources)} cảnh thành một video"
-            output = stitch(sources, destination, size)
+            output = stitch(sources, destination, size, video_args=self.video_args())
             self.store.set_stitch(batch, "done", str(output))
         except (VideoError, OSError) as error:
             self.store.set_stitch(batch, "error", error=str(error) if isinstance(error, VideoError)
@@ -148,8 +155,8 @@ class Engine:
         thread.start()
 
     def start(self, limit, headless, automatic=True):
-        if type(limit) is not int or not 1 <= limit <= MAX_PARALLEL or type(headless) is not bool or type(automatic) is not bool:
-            raise ValueError(f"Số luồng (tài khoản chạy cùng lúc) tối đa {MAX_PARALLEL}.")
+        if type(limit) is not int or not 1 <= limit <= self.max_parallel or type(headless) is not bool or type(automatic) is not bool:
+            raise ValueError(f"Máy này chạy tối đa {self.max_parallel} luồng (tài khoản cùng lúc).")
         destination = self.store.setting("output_folder")
         if not destination or not Path(destination).is_dir():
             raise ValueError("Chọn thư mục lưu trước khi chạy.")
@@ -245,6 +252,18 @@ class Engine:
                     self.flow_busy = False
         if browser:
             browser.close()
+
+    def detect_gpu(self):
+        try:
+            self.gpu_name = hardware.gpu_encoder()
+        except Exception:
+            self.gpu_name = None
+
+    def video_args(self):
+        """Mã hóa bằng GPU khi máy có và người dùng không tắt; không thì CPU."""
+        if self.gpu_name and self.store.setting("gpu_encode", True) is not False:
+            return hardware.ENCODERS[self.gpu_name][1]
+        return None
 
     def supervise(self):
         planned = 0.0
@@ -465,8 +484,8 @@ class Engine:
     def login_all(self, parallel):
         """Đăng nhập lần lượt mọi tài khoản đang bật mà chưa sẵn sàng, tối đa `parallel` Chrome cùng lúc.
         Đăng nhập xong thì đóng Chrome (phiên lưu trong hồ sơ riêng) để không mở hàng trăm cửa sổ."""
-        if type(parallel) is not int or not 1 <= parallel <= MAX_PARALLEL:
-            raise ValueError(f"Số Chrome đăng nhập cùng lúc tối đa {MAX_PARALLEL}.")
+        if type(parallel) is not int or not 1 <= parallel <= self.max_parallel:
+            raise ValueError(f"Máy này mở tối đa {self.max_parallel} Chrome đăng nhập cùng lúc.")
         with self.lock:
             if self.closing:
                 raise ValueError("Bộ chạy đang tắt.")
@@ -588,7 +607,9 @@ class Engine:
 
     def snapshot(self):
         with self.lock:
-            return {"enabled": self.enabled, "parallel": self.limit, "headless": self.headless, "automatic": self.automatic,
+            return {"enabled": self.enabled, "parallel": self.limit, "max_parallel": self.max_parallel,
+                    "hardware": {**self.hardware, "gpu": hardware.ENCODERS[self.gpu_name][0] if self.gpu_name else None,
+                                 "gpu_enabled": self.store.setting("gpu_encode", True) is not False}, "headless": self.headless, "automatic": self.automatic,
                     "output_folder": self.store.setting("output_folder", ""), "flow_status": self.flow_status,
                     "flow_profile": str(self.flow_profile), "flow_busy": self.flow_busy,
                     "flow_profile_used": (self.flow_profile.parent / "Local State").exists(),
