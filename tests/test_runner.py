@@ -445,6 +445,7 @@ class StoreTests(unittest.TestCase):
         first, second = self.account(), self.account("acc2")
         self.jobs(4)
         engine = Engine(self.store, self.root / "engine-data")  # mở lại app: bộ chạy chưa bật
+        engine.auto_plan = True
         try:
             for _ in range(80):
                 jobs = [j for j in self.store.snapshot()["jobs"] if j["status"] == "waiting"]

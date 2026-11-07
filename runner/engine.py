@@ -26,6 +26,7 @@ class Engine:
         self.changed = threading.Event()
         self.enabled = False
         self.closing = False
+        self.auto_plan = False  # app thật bật (start_runner): chia prompt cho tài khoản cả khi bộ chạy chưa bật
         self.limit = 2
         self.headless = False
         self.automatic = True
@@ -57,7 +58,8 @@ class Engine:
         self.post_thread.start()
         self.store.recover()
         self.health = HealthMonitor(self)
-        threading.Thread(target=self.supervise, daemon=True).start()
+        self.supervisor = threading.Thread(target=self.supervise, daemon=True)
+        self.supervisor.start()
 
     # ---- hậu kỳ --------------------------------------------------------------------------------------------------
     def post_worker(self):
@@ -251,7 +253,7 @@ class Engine:
                 pair = self.store.claim(self.limit) if self.enabled and self.license_ok() else None
                 if pair:
                     self.launch(self.work, *pair, self.headless, self.store.setting("output_folder"), self.automatic)
-            if not pair and not self.enabled and time.monotonic() - planned > 3:
+            if not pair and not self.enabled and self.auto_plan and time.monotonic() - planned > 3:
                 # Bộ chạy chưa bật (vừa mở lại app): vẫn chia prompt đang chờ cho các tài khoản để thấy ngay ai chạy gì.
                 planned = time.monotonic()
                 try:
@@ -598,7 +600,12 @@ class Engine:
         with self.lock:
             self.closing, self.enabled = True, False
             self.changed.set()
-            return list(self.threads)
+            threads = list(self.threads)
+        # Đợi vòng điều phối dừng hẳn (nó có thể đang chia prompt trong CSDL) trước khi đóng / xóa dữ liệu.
+        supervisor = getattr(self, "supervisor", None)
+        if supervisor and supervisor is not threading.current_thread():
+            supervisor.join(5)
+        return threads
 
     def close_browsers(self):
         self.post_requests.put(None)
