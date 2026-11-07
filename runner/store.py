@@ -900,7 +900,24 @@ class Store:
                 FROM batch_options b WHERE b.stitch=1 ORDER BY b.created DESC LIMIT 20""")]
             totals = {s: 0 for s in ("waiting", "running", "done", "error")}
             totals.update({r[0]: r[1] for r in db.execute("SELECT status,count(*) FROM jobs GROUP BY status")})
-            return {"accounts": accounts, "jobs": jobs, "totals": totals, "batches": batches}
+            return {"accounts": accounts, "jobs": jobs, "totals": totals, "batches": batches,
+                    "assign_hint": self.assign_hint(db) if totals["waiting"] else ""}
+
+    @staticmethod
+    def assign_hint(db):
+        """Vì sao prompt đang chờ chưa có tài khoản (hiện trên hàng đợi)."""
+        if not db.execute("SELECT 1 FROM jobs WHERE status='waiting' AND assigned_account_id IS NULL LIMIT 1").fetchone():
+            return ""
+        enabled = [dict(r) for r in db.execute("SELECT state,budget FROM accounts WHERE enabled=1")]
+        if not enabled:
+            return "Chưa có tài khoản Muse nào đang bật. Thêm hoặc bật tài khoản trong Tài khoản Muse."
+        usable = [a for a in enabled if a["state"] in ("new", "ready", "busy", "checking")]
+        if not usable:
+            return "Các tài khoản Muse đều đang tạm dừng / cần đăng nhập lại. Mở Tài khoản Muse → Đăng nhập."
+        cheapest = db.execute("SELECT MIN(cost) FROM jobs WHERE status='waiting'").fetchone()[0] or 0
+        if all(a["budget"] + 0.000001 < cheapest for a in usable):
+            return "Các tài khoản đã hết số lượt video đã đặt. Tăng số lượt trong Tài khoản Muse."
+        return ""
 
     SUPPORT_DEFAULT = {"message": "Mời cafe HANA MEDIA", "phone": "0983105651", "qr": None}
 

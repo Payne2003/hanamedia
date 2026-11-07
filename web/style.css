@@ -603,3 +603,12 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 
 /* Thanh báo có bản cập nhật */
 .update-banner{border-color:var(--c-accent-soft,#5b3fb0);background:linear-gradient(90deg,var(--c-surface-3,#1b1734),var(--c-surface,#141127))}
+
+.assign-hint{margin:0 18px 12px;border-color:var(--c-warning,#f5b74f);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.assign-hint button{padding:5px 10px;font-size:var(--fs-sm)}
+.account-chip.warn{color:var(--c-warning,#f5b74f)}
+
+/* Bảng báo có phiên bản mới */
+.update-dialog{width:min(520px,92vw)}
+.update-dialog-list{margin:0 0 18px;padding-left:20px;color:var(--muted);font-size:var(--fs-sm);display:flex;flex-direction:column;gap:6px}
+.update-dialog-actions{display:flex;justify-content:flex-end;gap:10px}

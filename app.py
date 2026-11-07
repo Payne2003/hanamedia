@@ -823,6 +823,7 @@ def start_runner(port=8765):
     try:
         store = Store(DATA / "studio.sqlite3")
         engine = Engine(store, DATA)
+        engine.auto_plan = True  # mở lại app: tự chia prompt đang chờ cho các tài khoản ngay
         try:
             server = AppServer(port, store, engine)
         except OSError:
