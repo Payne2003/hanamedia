@@ -788,6 +788,33 @@ class Store:
 
     AUTO_RETRIES = 2
 
+    def set_source(self, job_id, url):
+        """Địa chỉ cuộc trò chuyện Muse của tác vụ (để lấy video về sau mà không gửi lại prompt)."""
+        if str(url or "").startswith("https://"):
+            with self.connect() as db:
+                db.execute("UPDATE jobs SET source_url=? WHERE id=?", (str(url)[:1000], job_id))
+
+    def begin_fetch(self, job_id, limit):
+        """Bắt đầu lấy video của tác vụ ĐÃ GỬI bị báo lỗi (Muse làm xong muộn). Không gửi lại prompt."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            job = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not job or job["status"] != "error" or not job["submitted"] or not str(job["source_url"]).startswith("https://"):
+                raise ValueError("Chỉ lấy video cho tác vụ đã gửi lên Muse và còn liên kết cuộc trò chuyện.")
+            account = db.execute("SELECT * FROM accounts WHERE id=?", (job["account_id"],)).fetchone()
+            if not account:
+                raise ValueError("Tài khoản Muse đã gửi tác vụ này không còn trong tool.")
+            if account["state"] not in ("new", "ready", "attention"):
+                raise ValueError("Tài khoản Muse của tác vụ này đang bận. Đợi tài khoản rảnh rồi bấm lại.")
+            if db.execute("SELECT count(*) FROM accounts WHERE state IN ('busy','authenticating','reviewing')").fetchone()[0] >= limit:
+                raise ValueError("Đã đủ số luồng đang chạy. Đợi một luồng xong rồi bấm lại.")
+            db.execute("UPDATE jobs SET status='running',phase='Lấy video Muse đã tạo',error='',updated=? WHERE id=?",
+                       (time.time(), job_id))
+            db.execute("UPDATE accounts SET state='busy',detail='Đang lấy video đã tạo' WHERE id=?", (account["id"],))
+            result = dict(job)
+            result["status"] = "running"
+            return result, dict(account)
+
     def requeue_unsent(self, job_id, note, account_state="ready"):
         """Lỗi Chrome/trang Muse TRƯỚC khi gửi (submitted=0, Muse chưa nhận prompt): tự đưa tác vụ về hàng đợi, cho tài
         khoản khác nhận, tối đa AUTO_RETRIES lần. Trả về True nếu đã đưa lại; False nếu đã gửi hoặc hết lượt."""

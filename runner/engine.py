@@ -305,7 +305,8 @@ class Engine:
             browser.set_download_directory(target)
             self.store.phase(job["id"], "Chuẩn bị gửi prompt", browser.driver.current_url)
             spec = request_spec(job.get("aspect"), job.get("duration"), job.get("resolution"))
-            extra = {"spec": spec} if spec else {}  # prompt không chọn thông số: gửi đúng như trước
+            # Prompt chọn thông số: gửi kèm, và chờ lâu hơn cho 4K (Muse làm 4K / prompt dài thường mất 20–40 phút).
+            extra = {"spec": spec, "timeout": 2700 if job.get("resolution") == "4K" else 1800} if spec else {}
             file = browser.generate(job["prompt"], job["id"], lambda: self.store.submitting(job["id"]),
                                     automatic=automatic, images=job["images"], **extra)
             final = target / f"Prompt {job['ordinal'] + 1}.mp4"
@@ -334,6 +335,11 @@ class Engine:
                     if self.browsers.get(account["id"]) is browser:
                         self.browsers.pop(account["id"])
                 browser.close()
+            if alive:
+                try:
+                    self.store.set_source(job["id"], browser.driver.current_url)  # để "Lấy video" sau này
+                except Exception:
+                    pass
             account_state = error.state if known else "ready"
             if alive and not session_ready:
                 account_state = "attention"  # Chrome còn mở nhưng Muse đã đăng xuất: cần người dùng đăng nhập lại
@@ -341,6 +347,41 @@ class Engine:
             if not known and self.store.requeue_unsent(job["id"], f"lỗi Chrome trước khi gửi ({technical})", account_state):
                 return
             self.store.finish(job["id"], error=message, account_state=account_state)
+
+    def fetch(self, job_id):
+        """Nút ⇩ Lấy video: mở lại cuộc trò chuyện Muse của tác vụ đã gửi và tải video Muse làm xong muộn."""
+        with self.lock:
+            if self.closing:
+                raise ValueError("Bộ chạy đang tắt.")
+            job, account = self.store.begin_fetch(job_id, max(self.limit, 1))
+            self.launch(self.fetch_work, job, account, self.headless, self.store.setting("output_folder"))
+
+    def fetch_work(self, job, account, headless, folder):
+        browser = None
+        try:
+            target = Path(folder) / ("huy-" + job["id"])
+            target.mkdir(parents=True, exist_ok=True)
+            browser = self.session(job, account, headless, target)
+            browser.set_download_directory(target)
+            file = browser.fetch_existing(job["id"], job["source_url"])
+            final = target / f"Prompt {job['ordinal'] + 1}.mp4"
+            if file != final:
+                try:
+                    file.rename(final)
+                except OSError:
+                    final = file
+            self.store.finish(job["id"], output=str(final))
+            if job.get("resolution") or self.store.batch_stitch(job["batch"]):
+                self.post_requests.put(job["id"])
+        except Exception as error:
+            message = str(error) if isinstance(error, MuseFailure) else (
+                f"Không lấy được video ({self.log_error(job, account, error)}). Bấm ⇩ Lấy video lần nữa.")
+            if browser and not self.alive(browser):
+                with self.lock:
+                    if self.browsers.get(account["id"]) is browser:
+                        self.browsers.pop(account["id"])
+                browser.close()
+            self.store.finish(job["id"], error=message, account_state="ready")
 
     def log_error(self, job, account, error):
         """Ghi lỗi kỹ thuật (không ghi prompt, cookie hay OTP) vào data/logs/runner.log; trả về tên lỗi ngắn gọn."""
