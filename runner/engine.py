@@ -307,8 +307,13 @@ class Engine:
             spec = request_spec(job.get("aspect"), job.get("duration"), job.get("resolution"))
             # Prompt chọn thông số: gửi kèm, và chờ lâu hơn cho 4K (Muse làm 4K / prompt dài thường mất 20–40 phút).
             extra = {"spec": spec, "timeout": 2700 if job.get("resolution") == "4K" else 1800} if spec else {}
-            file = browser.generate(job["prompt"], job["id"], lambda: self.store.submitting(job["id"]),
-                                    automatic=automatic, images=job["images"], **extra)
+            try:
+                file = browser.generate(job["prompt"], job["id"], lambda: self.store.submitting(job["id"]),
+                                        automatic=automatic, images=job["images"], **extra)
+            except MuseFailure as error:
+                if not error.pending or not automatic or not hasattr(browser, "fetch_existing"):
+                    raise
+                file = self.chase_video(job, browser, error)  # tải được rồi mới nhận prompt tiếp theo
             final = target / f"Prompt {job['ordinal'] + 1}.mp4"
             if file != final:
                 try:
@@ -347,6 +352,30 @@ class Engine:
             if not known and self.store.requeue_unsent(job["id"], f"lỗi Chrome trước khi gửi ({technical})", account_state):
                 return
             self.store.finish(job["id"], error=message, account_state=account_state)
+
+    CHASE_ATTEMPTS = 10  # ~25 phút tự kiểm tra thêm sau khi hết thời gian chờ
+    chase_wait = 60
+
+    def chase_video(self, job, browser, error):
+        """Prompt ĐÃ GỬI mà chưa tải được video (Muse chậm, khung video bị vẽ lại, nút tải chưa hiện): giữ tài khoản,
+        tự mở lại đúng cuộc trò chuyện và kiểm tra lại nhiều lần cho tới khi tải được. KHÔNG gửi lại prompt.
+        Chỉ khi vẫn không được mới báo lỗi (khi đó còn nút ⇩ Lấy video)."""
+        url = browser.driver.current_url
+        self.store.set_source(job["id"], url)
+        last = error
+        for attempt in range(1, self.CHASE_ATTEMPTS + 1):
+            if self.closing:
+                break
+            self.store.phase(job["id"], f"Muse chưa trả video; tự kiểm tra lại lần {attempt}/{self.CHASE_ATTEMPTS} "
+                                        "(không gửi lại prompt)")
+            time.sleep(self.chase_wait)
+            try:
+                return browser.fetch_existing(job["id"], url)
+            except MuseFailure as again:
+                if not again.pending:
+                    raise
+                last = again
+        raise last
 
     def fetch(self, job_id):
         """Nút ⇩ Lấy video: mở lại cuộc trò chuyện Muse của tác vụ đã gửi và tải video Muse làm xong muộn."""
