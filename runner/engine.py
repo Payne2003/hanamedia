@@ -1,6 +1,7 @@
 import queue
 import time
 import shutil
+import os
 import threading
 from pathlib import Path
 import subprocess
@@ -25,6 +26,7 @@ class Engine:
         self.store, self.data = store, Path(data)
         self.flow_profile = default_chrome_profile(self.data)
         self.lock = threading.RLock()
+        self.place_lock = threading.Lock()  # đặt tên 1.mp4, 2.mp4… không trùng khi nhiều luồng xong cùng lúc
         self.changed = threading.Event()
         self.enabled = False
         self.closing = False
@@ -124,7 +126,10 @@ class Engine:
             return
         first = scenes[0]
         size = target_size(first["aspect"], first["resolution"]) if first["resolution"] else None
-        destination = sources[0].parent.parent / f"Video ghép {time.strftime('%Y-%m-%d %H%M')} ({len(sources)} cảnh).mp4"
+        folder = self.store.setting("output_folder")
+        parent = sources[0].parent  # video cũ nằm trong thư mục huy-<id>: ghép ra thư mục cha như trước
+        root = Path(folder) if folder and Path(folder).is_dir() else parent.parent if parent.name.startswith("huy-") else parent
+        destination = root / f"Video ghép {time.strftime('%Y-%m-%d %H%M')} ({len(sources)} cảnh).mp4"
         try:
             self.store.set_stitch(batch, "running")
             self.post_status = f"Đang ghép {len(sources)} cảnh thành một video"
@@ -397,13 +402,28 @@ class Engine:
                 return
             self.store.finish(job["id"], error=message, account_state=account_state)
 
+    def place(self, job, target, file):
+        """Video tải xong: chuyển ra thẳng thư mục lưu, đặt tên theo số thứ tự prompt (1.mp4, 2.mp4…).
+        Chrome vẫn tải vào thư mục tạm riêng của tác vụ để các luồng không lẫn file; thư mục tạm trống thì xóa.
+        Không bao giờ ghi đè: tên đã có (lượt chạy khác) thì thêm " (2)", " (3)"…"""
+        root, number = Path(target).parent, job["ordinal"] + 1
+        with self.place_lock:
+            final, copy = root / f"{number}.mp4", 2
+            while final.exists() and final != file:
+                final, copy = root / f"{number} ({copy}).mp4", copy + 1
+            if file != final:
+                try:
+                    os.replace(file, final)
+                except OSError:
+                    final = file  # video đã tải về: giữ tên/chỗ cũ chứ không báo lỗi tác vụ
+        try:
+            Path(target).rmdir()  # chỉ xóa được khi trống
+        except OSError:
+            pass
+        return final
+
     def complete(self, job, target, file):
-        final = target / f"Prompt {job['ordinal'] + 1}.mp4"
-        if file != final:
-            try:
-                file.rename(final)
-            except OSError:
-                final = file  # video đã tải về: giữ tên gốc chứ không báo lỗi tác vụ
+        final = self.place(job, target, file)
         self.store.finish(job["id"], output=str(final))
         if job.get("resolution") or self.store.batch_stitch(job["batch"]):
             self.post_requests.put(job["id"])  # nâng độ phân giải / ghép video chạy riêng, không giữ tài khoản Muse
@@ -470,12 +490,7 @@ class Engine:
             browser = self.session(job, account, headless, target)
             browser.set_download_directory(target)
             file = browser.fetch_existing(job["id"], job["source_url"])
-            final = target / f"Prompt {job['ordinal'] + 1}.mp4"
-            if file != final:
-                try:
-                    file.rename(final)
-                except OSError:
-                    final = file
+            final = self.place(job, target, file)
             self.store.finish(job["id"], output=str(final))
             if job.get("resolution") or self.store.batch_stitch(job["batch"]):
                 self.post_requests.put(job["id"])

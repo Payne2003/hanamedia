@@ -39,6 +39,30 @@ class StoreTests(unittest.TestCase):
     def jobs(self, count=1, cost=1):
         self.store.enqueue([f"Cảnh {i}" for i in range(count)], cost, uuid.uuid4().hex)
 
+    def test_downloaded_videos_are_numbered_in_output_folder_without_overwriting(self):
+        from runner.engine import Engine
+        engine = Engine(self.store, self.root / "data")
+        try:
+            out = self.root / "out"
+            for name in ("1.mp4", "1 (2).mp4"):
+                (out).mkdir(exist_ok=True)
+                (out / name).write_bytes(b"old")
+            target = out / "huy-abc"
+            target.mkdir()
+            download = target / "muse-download.mp4"
+            download.write_bytes(b"new")
+            final = engine.place({"ordinal": 0}, target, download)
+            self.assertEqual(final, out / "1 (3).mp4")
+            self.assertEqual(final.read_bytes(), b"new")
+            self.assertEqual((out / "1.mp4").read_bytes(), b"old")  # không ghi đè video của lượt trước
+            self.assertFalse(target.exists())  # thư mục tạm trống đã được xóa
+            target.mkdir(); (target / "2.mp4.crdownload").write_bytes(b"x")
+            other = target / "b.mp4"; other.write_bytes(b"two")
+            self.assertEqual(engine.place({"ordinal": 1}, target, other), out / "2.mp4")
+            self.assertTrue(target.exists())  # còn file khác: giữ thư mục tạm
+        finally:
+            engine.shutdown()
+
     def test_concurrent_claims_never_duplicate_or_exceed_budget(self):
         for i in range(10):
             self.account(str(i), 2)
@@ -224,8 +248,10 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(browser.close_count, 0)
                 done_jobs = [job for job in self.store.snapshot()["jobs"] if job["status"] == "done"]
                 self.assertEqual(len(done_jobs), 2)
-                self.assertEqual({Path(job["output"]).name for job in done_jobs},
-                                 {"Prompt 1.mp4", "Prompt 2.mp4"})
+                self.assertEqual({Path(job["output"]).name for job in done_jobs}, {"1.mp4", "2.mp4"})
+                # Video nằm thẳng trong thư mục lưu, không còn thư mục huy-<id>.
+                self.assertEqual({Path(job["output"]).parent for job in done_jobs}, {self.root / "output"})
+                self.assertFalse(list((self.root / "output").glob("huy-*")))
                 engine.close_browsers()
                 self.assertEqual(browser.close_count, 1)
         finally:
@@ -434,7 +460,7 @@ class StoreTests(unittest.TestCase):
                 engine.fetch_work(fetched, acc, False, str(self.root / "output"))
             row = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]][0]
             self.assertEqual(row["status"], "done")
-            self.assertEqual(Path(row["output"]).name, "Prompt 1.mp4")
+            self.assertEqual(Path(row["output"]).name, "1.mp4")
             self.assertEqual((calls["generate"], calls["fetch"]), (1, ["https://muse.ai/c/abc123"] * 3))  # không gửi lại
             with self.assertRaises(ValueError):
                 self.store.begin_fetch(job["id"], 2)  # đã xong: không lấy lại
