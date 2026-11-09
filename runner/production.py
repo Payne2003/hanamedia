@@ -49,6 +49,7 @@ COLUMNS = {
                             "clip_seconds": "INTEGER NOT NULL DEFAULT 10"},
     "production_tasks": {"difficult": "INTEGER NOT NULL DEFAULT 0"},
     "scenes": {"purpose": "TEXT NOT NULL DEFAULT ''", "duration": "REAL NOT NULL DEFAULT 10",
+               "source_shots": "TEXT NOT NULL DEFAULT '[]'",
                "difficult": "INTEGER NOT NULL DEFAULT 0"},
 }
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi")
@@ -137,11 +138,14 @@ class ProductionBoard:
         now, ids = time.time(), []
         for ordinal, scene in enumerate(scenes):
             scene_id = uuid.uuid4().hex
+            import json
+            shots = [str(s).zfill(3) for s in scene.get('source_shots') or [] if str(s).isdigit()][:5]
             db.execute("""INSERT INTO scenes(id,project_id,ordinal,setting,camera,behavior,action,source,prompt,purpose,
-                          duration,difficult,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                          duration,difficult,source_shots,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                        (scene_id, project_id, ordinal, text(scene['setting'], 2000), text(scene['camera'], 2000),
                         text(scene['behavior'], 2000), text(scene['action'], 2000), text(scene['action'], 2000), '',
-                        text(scene['purpose'], 2000), float(scene['duration']), int(bool(scene['difficult'])), now, now))
+                        text(scene['purpose'], 2000), float(scene['duration']), int(bool(scene['difficult'])),
+                        json.dumps(shots), now, now))
             ids.append(scene_id)
         self.ensure_tasks(db, project_id)
         return ids

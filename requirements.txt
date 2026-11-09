@@ -2,3 +2,4 @@ selenium>=4.27,<5
 imageio-ffmpeg>=0.5,<1
 cryptography>=42
 openpyxl>=3.1,<4  # Excel báo cáo phân tích ngược video (Wildlife)
+yt-dlp>=2025.1.1  # tải video gốc từ link (YouTube, TikTok, Facebook…) để phân tích shot

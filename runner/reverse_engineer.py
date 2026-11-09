@@ -80,7 +80,9 @@ def frame_differences(path, stop=None, timeout=1800):
         if process.poll() is None:
             process.kill()
             process.wait()
+        process.stdout.close()
     reader.join(5)
+    process.stderr.close()
     times = [float(t) for t in re.findall(r"pts_time:\s*([\d.]+)", "".join(log))]
     return scores, times
 

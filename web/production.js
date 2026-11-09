@@ -55,7 +55,17 @@ export function initProduction(callbacks) {
   $('productionRefresh').onclick=()=>loadProduction();
   $('productionProjects').onclick=e=>{const b=e.target.closest('[data-production-project]');if(b){stageFilter='';loadProduction(b.dataset.productionProject);}};
   $('productionPickVideo').onclick=()=>run(async()=>{const r=await host.api('/api/production/pick-video',{});if(r.path){sourceVideo=r.path;$('productionVideoPath').textContent=r.path;}});
-  $('productionCreate').onsubmit=e=>{e.preventDefault();run(async()=>{const data=await host.api('/api/production/create',{name:$('productionName').value,source_url:$('productionSource').value,brief:$('productionBrief').value,source_video:sourceVideo,target_seconds:Number($('productionTarget').value),clip_seconds:Number($('productionClip').value)});$('productionCreate').reset();sourceVideo='';$('productionVideoPath').textContent='Chưa chọn video gốc';stageFilter='';await loadProduction(data.project.id);host.toast('Đã tạo dự án. Bắt đầu từ 01 · Phân tích video gốc.');});};
+  let downloadTimer=null;
+  async function pollDownload(){
+    const st=await get('/api/production/download');const bar=$('productionDownloadProgress');
+    bar.hidden=!st.busy;bar.value=st.progress||0;
+    if(st.busy){$('productionVideoPath').textContent=st.status||'Đang tải…';downloadTimer=setTimeout(pollDownload,1000);return;}
+    $('productionDownload').disabled=false;downloadTimer=null;
+    if(st.error){$('productionVideoPath').textContent=st.error;host.toast(st.error,true);return;}
+    if(st.path){sourceVideo=st.path;$('productionVideoPath').textContent=`Đã tải: ${st.title||''} → ${st.path}`;if(!$('productionName').value)$('productionName').value=(st.title||'').slice(0,200);host.toast('Đã tải video gốc. Bấm Tạo dự án để bắt đầu 01 · Phân tích video gốc.');}
+  }
+  $('productionDownload').onclick=()=>run(async()=>{const url=$('productionLink').value.trim();if(!url)throw Error('Dán link video gốc trước.');await host.api('/api/production/download',{url});$('productionDownload').disabled=true;sourceVideo='';if(downloadTimer)clearTimeout(downloadTimer);pollDownload();});
+  $('productionCreate').onsubmit=e=>{e.preventDefault();run(async()=>{const data=await host.api('/api/production/create',{name:$('productionName').value,source_url:$('productionLink').value.slice(0,500),brief:$('productionBrief').value,source_video:sourceVideo,target_seconds:Number($('productionTarget').value),clip_seconds:Number($('productionClip').value)});$('productionCreate').reset();sourceVideo='';$('productionVideoPath').textContent='Chưa có video gốc';$('productionLink').value='';stageFilter='';await loadProduction(data.project.id);host.toast('Đã tạo dự án. Bắt đầu từ 01 · Phân tích video gốc.');});};
   $('productionEnable').onclick=()=>run(async()=>{const id=$('productionExisting').value;if(!id)throw Error('Chọn dự án trước.');await host.api('/api/production/enable',{project_id:id});stageFilter='';await loadProduction(id);});
   $('productionBoard').onclick=e=>run(async()=>{
     const b=e.target.closest('button');if(!b)return;

@@ -165,16 +165,22 @@ if (last) {
     /sao chép|copy|thích|good response|bad response|chia sẻ|share|thử lại|redo|regenerate/i.test(
       (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('mattooltip') || '') + ' ' + (b.getAttribute('data-test-id') || '')));
 }
-const busy = [...document.querySelectorAll('button, [role="button"]')].some(b => {
+const stopping = [...document.querySelectorAll('button, [role="button"]')].some(b => {
   const label = (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('mattooltip') || '') + ' ' + (b.className || '');
   return visible(b) && /stop|dừng|đang tạo|generating/i.test(label);
-}) || Boolean(last && last.querySelector('[aria-busy="true"], .loading, .pending, mat-progress-bar, [class*="spinner"]'));
+});
+// Giao diện mới: khung "đang suy nghĩ" (thinking-overlay) có chấm động; chữ bên trong cho biết Gemini đang làm gì.
+const overlay = last && [...last.querySelectorAll('thinking-overlay, model-thoughts, [data-test-id="thinking-overlay-content"]')].find(visible);
+const thinking = overlay ? (overlay.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 160) : '';
+const marker = Boolean(last && last.querySelector('[aria-busy="true"], .loading, .pending, mat-progress-bar, [class*="spinner"], thinking-dots-animation'));
+// Nút Sao chép/Thích chỉ hiện khi đã viết xong: khi đó dấu "aria-busy" còn sót lại không được giữ tool chờ mãi.
+const busy = stopping || (marker && !done);
 const account = [...document.querySelectorAll('a[aria-label*="@"], button[aria-label*="@"]')]
   .map(e => e.getAttribute('aria-label')).join(' ');
 const email = (account.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [''])[0].toLowerCase();
 const signIn = location.hostname.startsWith('accounts.') ||
   [...document.querySelectorAll('a,button')].some(e => /^(đăng nhập|sign in)$/i.test((e.innerText || '').trim()));
-return {count: responses.length, busy, done, text, email, signIn, host: location.hostname,
+return {count: responses.length, busy, done, text, thinking, email, signIn, host: location.hostname,
   rejected: location.hostname.startsWith('accounts.') && /rejected|disallowed/i.test(location.pathname)};
 """
 
@@ -546,7 +552,9 @@ class GeminiWebSession:
             if current != last_text:
                 last_text, stable_since = current, time.monotonic()
             steady = time.monotonic() - stable_since
-            status(f"{label}… {len(current):,} ký tự".replace(",", ".") + ("" if current.strip() else f" ({self.NAME} đang suy nghĩ)"))
+            thinking = str(page.get("thinking") or "").strip()
+            status(f"{label}… {len(current):,} ký tự".replace(",", ".") + ("" if current.strip() else
+                   f" ({self.NAME} đang suy nghĩ{': ' + thinking if thinking else ''} · {int(time.monotonic() - started)} giây)"))
             # Xong khi: không còn nút Dừng, có chữ, đứng yên; và đã hiện nút Sao chép/Thích (hoặc đứng yên lâu hẳn).
             if not page.get("busy") and current.strip() and (
                     (page.get("done") and steady >= 4) or steady >= 25):
@@ -639,7 +647,7 @@ def run_characters(session, script, scenes, status, stop, email="", model=""):
 
 
 def run_english(session, lines, status, stop, email="", model="", style="", aspect="16:9", structured=True,
-                seconds=content.DEFAULT_SECONDS):
+                seconds=content.DEFAULT_SECONDS, angles=0):
     """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
     total = len(lines)
     name = getattr(session, "NAME", "Gemini")
@@ -649,9 +657,11 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         picked = session.choose_model(model)
         status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
     rounds = 1
-    answer = session.ask(content.english_request(lines, style=style, aspect=aspect, structured=structured, seconds=seconds), status, stop, email,
+    answer = session.ask(content.english_request(lines, style=style, aspect=aspect, structured=structured, seconds=seconds,
+                                                 angles=angles), status, stop, email,
                          label=f"{name} đang viết {total} prompt tiếng Anh")
     found = content.parse_english(answer, total)
+    issues = content.parse_issues(answer)
     if not found:
         where = session.dump("Không đọc được prompt nào trong câu trả lời đầu tiên", answer) if hasattr(session, "dump") else ""
         raise GeminiWebError(f"Tool không đọc được prompt nào trong câu trả lời của {name} nên đã dừng (không gửi lại). "
@@ -666,6 +676,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
                              label=f"Đã có {len(found)}/{total} prompt · {name} đang viết tiếp")
         rounds += 1
         more = content.parse_english(answer, total, range(after + 1, total + 1))
+        issues += [i for i in content.parse_issues(answer) if i not in issues]
         if not any(number > after for number in more):
             break
         for number, prompt in more.items():
@@ -673,22 +684,27 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
                 found[number] = prompt
     # Theo sơ đồ: thiếu cảnh nào thì quay lại hỏi riêng những cảnh đó.
     for attempt in range(MAX_MISSING_ROUNDS):
-        missing = content.missing_english(found, total, structured)
+        missing = content.missing_english(found, total, structured, seconds, angles)
         if not missing:
             break
-        answer = session.ask(content.english_request(lines, missing, style, aspect, structured, seconds), status, stop, email,
+        answer = session.ask(content.english_request(lines, missing, style, aspect, structured, seconds, angles), status, stop, email,
                              label=f"Thiếu {len(missing)} prompt hoặc thiếu trường · {name} đang viết lại (lần {attempt + 1})")
         rounds += 1
         fixed = 0
+        issues += [i for i in content.parse_issues(answer) if i not in issues]
         for number, prompt in content.parse_english(answer, total, missing).items():
-            good = content.is_english(prompt) and (not structured or content.structured_complete(prompt))
+            good = (content.is_english(prompt) and (not structured or content.structured_complete(prompt))
+                    and not (angles and content.angle_problem(prompt, seconds, angles)))
             if number in missing and (number not in found or good):
                 found[number] = prompt
                 fixed += good
         if not fixed:
             break  # Hỏi lại mà không có cảnh nào được sửa: dừng, không gửi lặp.
-    missing = content.missing_english(found, total, structured)
+    missing = content.missing_english(found, total, structured, seconds, angles)
+    if structured:  # dựng lại đúng cấu trúc MASTER PROMPT 08, STYLE/DURATION/ASPECT RATIO chuẩn
+        found = {number: content.muse_prompt(prompt, seconds, aspect, style) for number, prompt in found.items()}
     return {"english": [found.get(number, "") for number in range(1, total + 1)], "missing": missing, "lines": lines,
+            "issues": issues,
             "structured": structured,
             "total": total, "rounds": rounds}
 
@@ -835,10 +851,11 @@ class GeminiWebRunner:
                                     + (f" · còn thiếu {len(result['missing'])} cảnh" if result["missing"] else ""))
                     continue
                 if kind == "english":
-                    defaults = ("", "16:9", True, content.DEFAULT_SECONDS)
+                    defaults = ("", "16:9", True, content.DEFAULT_SECONDS, 0)
                     options = tuple(style) if isinstance(style, tuple) else (style,)
-                    style, aspect, structured, seconds = options + defaults[len(options):]
-                    result = run_english(self.session, lines, status, self.stop, email, model, style, aspect, structured, seconds)
+                    style, aspect, structured, seconds, angles = options + defaults[len(options):]
+                    result = run_english(self.session, lines, status, self.stop, email, model, style, aspect, structured, seconds,
+                                         angles)
                     done = result["total"] - len(result["missing"])
                     self.set(busy=False, result=result,
                              status=f"Xong: {done}/{result['total']} prompt tiếng Anh sau {result['rounds']} lượt"

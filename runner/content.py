@@ -215,14 +215,28 @@ MAX_EN_LINES = 300
 VIET_CHARS = re.compile(r"[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]", re.IGNORECASE)
 
 
+SHOT_HEADER = re.compile(r"^\W*(?:shot|c[ảa]nh|scene)\s*\d{1,3}\s*[—–:\-.]", re.IGNORECASE)
+
+
 def split_scene_lines(text):
     """Tách đầu vào thành từng cảnh: mỗi dòng một cảnh, hoặc nhiều "Bối cảnh N:" nối bằng dấu ;"""
     text = str(text or "").replace("\r", "").strip()
     text = re.sub(r"^\s*(input\s*:)?\s*\[", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\]\s*$", "", text)
     text = re.sub(r";\s*(?=b[ốo]i\s*c[ảa]nh\s*\d)", ";\n", text, flags=re.IGNORECASE)
-    lines = [re.sub(r"\s+", " ", line).strip() for line in text.split("\n")]
-    lines = [line for line in lines if line]
+    raw = [line.strip() for line in text.split("\n")]
+    if any(SHOT_HEADER.match(line) for line in raw):
+        # Báo cáo phân tích theo shot (MASTER PROMPT V3.0): mỗi khối "SHOT N — …" nhiều dòng là MỘT cảnh.
+        blocks = []
+        for line in raw:
+            if SHOT_HEADER.match(line) or not blocks:
+                blocks.append([])
+            if line:
+                blocks[-1].append(re.sub(r"^[*•\-–]\s*", "", line))
+        lines = [" | ".join(block) for block in blocks if block]
+    else:
+        lines = [line for line in raw if line]
+    lines = [re.sub(r"\s+", " ", line).strip() for line in lines]
     if not lines:
         raise ValueError("Chưa có cảnh nào. Dán danh sách “Bối cảnh 1: …” hoặc lấy từ danh sách cảnh.")
     if len(lines) > MAX_EN_LINES:
@@ -239,9 +253,15 @@ ASPECTS = {"16:9": "16:9 widescreen (horizontal) frame", "9:16": "9:16 vertical 
 
 
 # Khung prompt chuẩn: mỗi prompt tự chứa đủ trường có nhãn, để tool tách lại trường từ chính prompt.
-STRUCT_FIELDS = (("setting", "Setting"), ("camera", "Camera"), ("behavior", "Character behavior"), ("action", "Action"))
-STRUCT_LABEL = re.compile(r"(?:(?<=^)|(?<=[\s;|.,(\[]))(setting|camera(?:\s*angle)?|character\s*behaviou?r|behaviou?r|action|style)\s*[:：]",
-                          re.IGNORECASE)
+# MASTER PROMPT 08 — VIẾT PROMPT MUSE: các trường AI phải viết (theo đúng thứ tự). STYLE, DURATION, ASPECT RATIO do tool
+# tự ghi theo thông số chuẩn để không bao giờ sai.
+STRUCT_FIELDS = (("setting", "SETTING"), ("characters", "CHARACTERS"), ("camera", "CAMERA"),
+                 ("behavior", "CHARACTER BEHAVIOR"), ("action", "ACTION"), ("ending", "ENDING FRAME"))
+MUSE_STYLE = ("Ultra-photorealistic, natural wildlife documentary footage, authentic animal anatomy and behavior, natural "
+              "daylight, real-time 1x, non-cinematic, natural ambient ASMR only, no narration, no music, no slow motion, "
+              "no artificial effects, no text, no watermark")
+STRUCT_LABEL = re.compile(r"(?:(?<=^)|(?<=[\s;|.,(\[]))(setting|camera(?:\s*angle)?|character\s*behaviou?r|behaviou?r|characters?"
+                          r"|action|ending\s*frame|style|duration|aspect\s*ratio)\s*[:：]", re.IGNORECASE)
 # Đuôi kỹ thuật cuối prompt: "15 seconds", "16:9 aspect ratio" (một hoặc cả hai, theo thứ tự bất kỳ).
 ASPECT_TAIL = re.compile(r"(?:[\s;,.]*(?:\d{1,3}\s*(?:seconds?|secs?|s|giây)|\d{1,2}\s*:\s*\d{1,2}\s*aspect\s*ratio))+\.?\s*$",
                          re.IGNORECASE)
@@ -258,7 +278,9 @@ def parse_structured(prompt):
     fields = {}
     for index, mark in enumerate(marks):
         label = re.sub(r"\s+", " ", mark.group(1).lower())
-        key = ("camera" if label.startswith("camera") else "behavior" if "behavio" in label else label)
+        key = ("camera" if label.startswith("camera") else "behavior" if "behavio" in label else
+               "characters" if label.startswith("character") else "ending" if label.startswith("ending") else
+               "aspect" if label.startswith("aspect") else label)
         end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
         value = ASPECT_TAIL.sub("", text[mark.end():end]).strip(" \t;|,")
         if value and key not in fields:
@@ -271,49 +293,146 @@ def structured_complete(prompt):
     return all(fields.get(key) for key, _ in STRUCT_FIELDS)
 
 
-def english_request(lines, numbers=None, style="", aspect="16:9", structured=True, seconds=DEFAULT_SECONDS):
-    """Yêu cầu gửi Gemini: viết prompt tiếng Anh cho các cảnh (numbers=None: tất cả)."""
+def muse_prompt(prompt, seconds=8, aspect="16:9", style=""):
+    """Dựng lại prompt Muse theo đúng cấu trúc MASTER PROMPT 08 từ các trường AI viết; STYLE/DURATION/ASPECT RATIO chuẩn.
+    Thiếu trường bắt buộc thì trả nguyên văn (tool sẽ hỏi lại riêng cảnh đó)."""
+    fields = parse_structured(prompt)
+    if not all(fields.get(key) for key, _ in STRUCT_FIELDS):
+        return prompt
+    parts = [f"{label}: {fields[key].strip().rstrip('.;')}" for key, label in STRUCT_FIELDS]
+    extra = str(style or "").strip().rstrip(".;")
+    parts.append("STYLE: " + MUSE_STYLE + (f", {extra}" if extra else ""))
+    if seconds:
+        parts.append(f"DURATION: {seconds} seconds")
+    if aspect in ASPECTS:
+        parts.append(f"ASPECT RATIO: {aspect}")
+    return "; ".join(parts) + "."
+
+
+ANGLE_CHOICES = (0, 3)  # 0: theo kịch bản (tối đa 3 góc, Master Prompt 08); 3: đổi góc máy mỗi 2–3 giây
+SEGMENT = re.compile(r"(\d+(?:[.,]\d+)?)\s*s?\s*(?:[–—\-]|to)\s*(\d+(?:[.,]\d+)?)\s*(?:s|sec|seconds?)\b", re.IGNORECASE)
+
+
+def camera_segments(prompt):
+    """Các mốc góc máy trong trường CAMERA: [(bắt đầu, kết thúc), …] theo thứ tự xuất hiện."""
+    camera = parse_structured(prompt).get("camera", "")
+    return [(float(a.replace(",", ".")), float(b.replace(",", "."))) for a, b in SEGMENT.findall(camera)]
+
+
+def angle_problem(prompt, seconds, step=3):
+    """Kiểm tra chế độ đổi góc mỗi 2–3 giây: mốc phủ kín 0→hết clip, nối liền, mỗi góc 2–3 giây (góc cuối có thể
+    ngắn hơn một chút). Trả về lý do sai, hoặc "" nếu đúng."""
+    segments = camera_segments(prompt)
+    if len(segments) < 2:
+        return "CAMERA chưa chia góc máy theo mốc thời gian"
+    if abs(segments[0][0]) > .25 or abs(segments[-1][1] - seconds) > .25:
+        return f"mốc góc máy không phủ đủ 0–{seconds}s"
+    for (start, end), following in zip(segments, segments[1:] + [None]):
+        if end <= start:
+            return "mốc góc máy sai thứ tự"
+        if following and abs(following[0] - end) > .25:
+            return "các góc máy không nối liền nhau"
+        if end - start > step + .5 or (end - start < 1.5 and following):
+            return f"có góc máy dài {end - start:g}s (cần 2–{step}s)"
+    return ""
+
+
+ISSUE_LINE = re.compile(r"^\W*ISSUE\s*[:：]\s*(.+)$", re.IGNORECASE)
+
+
+def parse_issues(text):
+    """Mâu thuẫn AI báo theo mục 9 của MASTER PROMPT 08 (dòng "ISSUE: Scene N — ...")."""
+    issues = []
+    for raw in str(text or "").replace("\r", "").split("\n"):
+        match = ISSUE_LINE.match(re.sub(r"[*_`#>]+", "", raw).strip())
+        if match and match.group(1).strip() not in issues:
+            issues.append(match.group(1).strip()[:500])
+    return issues
+
+
+def angle_plan(seconds, step=3):
+    """Mốc gợi ý chia clip thành các góc 2–3 giây, ví dụ 10s → 0–3s, 3–5s, 5–8s, 8–10s."""
+    marks, at = [0], 0
+    while seconds - at > step:
+        at += 3 if (seconds - at - 3) != 1 and len(marks) % 2 else 2
+        marks.append(at)
+    marks.append(seconds)
+    return ", ".join(f"{a:g}–{b:g}s" for a, b in zip(marks, marks[1:]))
+
+
+def english_request(lines, numbers=None, style="", aspect="16:9", structured=True, seconds=8, angles=0):
+    """Yêu cầu gửi Gemini/ChatGPT: viết prompt Muse tiếng Anh theo MASTER PROMPT 08 (numbers=None: tất cả cảnh)."""
     numbers = numbers or list(range(1, len(lines) + 1))
     partial = len(numbers) < len(lines)
-    head = ("Some scene prompts are missing or not in English. Write prompts ONLY for the scenes listed below, "
+    head = ("Some scene prompts are missing, incomplete or not in English. Write prompts ONLY for the scenes listed below, "
             "keeping their original numbers." if partial else
-            f"Below are {len(lines)} scenes of a video, written in Vietnamese.")
+            f"Below is the approved detailed script: {len(lines)} scenes, written in Vietnamese.")
+    timing = (f"0–3s first angle (initial action), 3–5s second angle (movement or reaction), 5–8s third angle (result and end "
+              f"state)" if seconds == 8 else f"split the {seconds} seconds proportionally across the angles")
     rules = (
-        "You are a prompt engineer for AI text-to-video models.\n"
+        "MASTER PROMPT 08 — WRITE MUSE PROMPTS TO RECONSTRUCT A WILDLIFE VIDEO.\n"
+        "Role: prompt engineering expert for Muse, writing realistic wildlife documentary video prompts.\n"
+        "Video target: 4K UHD, 16:9, real-time 1x, ultra-photorealistic BBC Natural History-style wildlife documentary, "
+        "natural light, natural ambient sound only; no cinematic effects, no slow motion, no music, no dialogue or "
+        "narration, no subtitles, text or watermark.\n"
         f"{head}\n"
-        "Convert EACH scene into ONE detailed English text-to-video prompt: setting and lighting, camera angle and "
-        "movement, character appearance and behavior, and the action that happens. Keep characters, outfits and "
-        "locations consistent between scenes. Translate spoken lines into English inside quotes.\n"
-        "Rules:\n"
-        + ("- Exactly one line per scene in this fixed labelled format, all four labels required, in this order:\n"
-           "  N. Setting: <location, time, lighting, props, character appearance>; Camera: <shot size, angle, movement>; "
-           "Character behavior: <behavior, emotion, posture>; Action: <what happens in the shot>; Style: <visual style, "
-           "sound>" + (f"; {seconds} seconds" if seconds else "") + ("; <aspect ratio>" if aspect in ASPECTS else "") + "\n"
-           "  Example: 1. Setting: A quiet beach at dawn, soft golden light, a young woman in a white dress; Camera: Wide "
-           "shot, slow dolly-in at eye level; Character behavior: Calm and relaxed, smiling; Action: She walks barefoot "
-           "along the waterline as waves wash over her feet; Style: Photorealistic, natural ambient sound"
-           + (f"; {seconds} seconds" if seconds else "") + (f"; {aspect} aspect ratio." if aspect in ASPECTS else ".") + "\n"
-           "- Never leave a label empty and never use the labels inside the text of another field.\n"
-           if structured else
-           "- Exactly one line per scene, starting with its number and a period, for example: 1. A quiet beach at dawn...\n")
-        + 
+        "If a scene is a source-shot analysis (SHOT N with time range, setting, characters, camera, opening/middle/"
+        "ending action, transition, link to next shot): reconstruct THAT shot faithfully; the clip is longer than the "
+        "source shot, so continue the same state and movement for the whole clip without adding events, and use the "
+        "ending action and the link to the next shot for ENDING FRAME. Unknown facts (e.g. screen direction) must not be "
+        "invented: write \"[unverified: ...]\" in the field and add an ISSUE line.\n"
+        "Task: turn EACH approved scene into ONE English Muse prompt. Do not create a new story or change the script; if "
+        "important data is missing, do not invent it as if observed.\n"
+        "Reconstruction rules: keep the script content and the verified action order; do not add or remove animals; keep "
+        "species, count, size and identifying marks; no unreasonable change of terrain, light or weather; keep left/right/"
+        "front/back positions; state movement direction and distance between animals; never swap predator and prey; no "
+        "unrealistic action or wrong anatomy; no added climax, conflict or different ending.\n"
+        "Action rules: state the initial state, who acts, the main movement, direction and speed, reactions of the other "
+        "animals and the end state. Prefer ONE clear main action per clip. Runs, chases and attacks move at the natural "
+        "speed of the species, no slow motion.\n"
+        + (("Camera rules: CHANGE THE CAMERA ANGLE EVERY 2–3 SECONDS. The CAMERA field MUST be a timeline covering the whole "
+            f"clip from 0 to {seconds}s, each angle 2–3 seconds, consecutive, written like \"{angle_plan(seconds, angles)}\" "
+            "with one angle per mark separated by \" / \" (for example \"0–3s: wide shot, static, from the left / 3–5s: "
+            "side tracking medium shot …\"). Use a different angle for each mark (extreme wide, wide, medium, close-up, "
+            "extreme close-up, low-angle, high-angle, frontal, side tracking, rear tracking, aerial wide). ACTION follows "
+            "the same time marks so each angle shows a different moment of the same continuous action. A new angle must "
+            "never reverse movement direction or move the animals.\n") if angles else
+           ("Camera rules: at most 3 angles, only when the script needs them (extreme wide, wide, medium, close-up, extreme "
+            "close-up, low-angle, high-angle, frontal, side tracking, rear tracking, aerial wide). With 3 angles: " + timing + ". "
+            "For continuous action prefer \"One continuous shot, no cuts\". A new angle must never reverse movement direction "
+            "or move the animals.\n")) +
+        "Continuity locks — compare each scene with the previous and next scene: CHARACTER LOCK (species, count, looks, "
+        "marks), ENVIRONMENT LOCK (terrain, plants, rocks, water, light, fixed objects), POSITION LOCK (positions, order, "
+        "direction, distance), ACTION LOCK (start pose, movement, reaction, end state), CONTINUITY LOCK (the end of the "
+        "previous scene matches the start of this one). Animals never appear, vanish, turn or teleport by themselves.\n"
+        "Output format — exactly ONE line per scene, these labels in this order, all required, separated by \"; \":\n"
+        "  SCENE N — SETTING: <environment, terrain, time, light, fixed objects>; CHARACTERS: <species, count, looks, "
+        "position, distance>; CAMERA: <shot size, angle, camera position and movement, time marks if several angles>; "
+        "CHARACTER BEHAVIOR: <posture, reactions, body movement, biologically correct behavior>; ACTION: <the action in "
+        f"clear order from start to end, fitting {seconds} seconds>; ENDING FRAME: <position, posture, direction and state "
+        "of each animal at the end of the clip>\n"
+        "- Do not write STYLE, DURATION or ASPECT RATIO: the tool adds the standard ones. Never use a label inside "
+        "another field. Concise, specific, action-focused.\n"
+        "- Quality check before answering: script followed, reference followed, species and count, consistent looks, "
+        "direction and distance, clear and plausible action, not too many actions, camera does not move animals, end "
+        "state connects to the next scene, nothing invented. If you find a contradiction or a scene too complex for one "
+        "clip, keep the scene and add a line after the last scene: ISSUE: Scene N — <problem>.\n"
         "- Do not merge, split, skip or renumber scenes. No headings, no markdown, no comments.\n"
         f"- After the last line write exactly: {END_EN}")
-    if seconds:
-        rules += (f"\n- Every scene is ONE continuous shot lasting about {seconds} seconds: plan the action so it fits "
-                  f"{seconds} seconds, and write \"{seconds} seconds\" near the end of the prompt.")
     if aspect in ASPECTS:
-        rules += (f"\n- Every prompt is composed for a {ASPECTS[aspect]}: describe the framing for that aspect ratio "
-                  f"and end the prompt with \"{aspect} aspect ratio\".")
+        rules += f"\n- Compose every shot for a {ASPECTS[aspect]}."
     if style.strip():
-        rules += f"\nExtra style for every prompt: {style.strip()[:2000]}"
+        rules += f"\nExtra style notes from the user (apply inside the fields, keep the rules above): {style.strip()[:2000]}"
+    if not structured:
+        rules = rules.replace("exactly ONE line per scene, these labels", "exactly ONE line per scene, preferably these labels")
     scenes = "\n".join(f"{number}. {lines[number - 1]}" for number in numbers)
     return f"{rules}\n\nScenes:\n{scenes}"
 
 
 def continue_english(after, total):
     return (f"Continue with scene {after + 1} to scene {total}, exactly the same format (one line per scene, starting with "
-            f"its number, same labels). Do not repeat earlier scenes. After scene {total} write exactly: {END_EN}")
+            f"SCENE and its number, same labels in the same order). Do not repeat earlier scenes. After scene {total} write "
+            f"exactly: {END_EN}")
 
 
 EN_LINE = re.compile(r"^\W*(?:scene|prompt|c[ảa]nh|b[ốo]i\s*c[ảa]nh)?\s*(\d{1,3})\s*[.):：\-–—]\s*(.+?)\s*$", re.IGNORECASE)
@@ -350,8 +469,9 @@ def parse_english(text, total, numbers=None):
     return {number: prompt for number, prompt in zip(order, paragraphs)}
 
 
-def missing_english(found, total, structured=False):
-    """Số cảnh còn thiếu, chưa phải tiếng Anh, hoặc (khi dùng khung chuẩn) thiếu một trong 4 trường."""
+def missing_english(found, total, structured=False, seconds=0, angles=0):
+    """Số cảnh còn thiếu, chưa phải tiếng Anh, thiếu trường Master Prompt 08, hoặc (chế độ đổi góc) sai mốc góc máy."""
     return [number for number in range(1, total + 1)
             if number not in found or not is_english(found[number])
-            or (structured and not structured_complete(found[number]))]
+            or (structured and not structured_complete(found[number]))
+            or (angles and seconds and angle_problem(found[number], seconds, angles))]

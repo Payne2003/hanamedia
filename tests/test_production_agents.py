@@ -50,7 +50,8 @@ class AgentTests(unittest.TestCase):
         """Hoàn tất thủ công các công đoạn trước video (dự án có sẵn cảnh, không có cảnh khó)."""
         for stage in ('research','script','bible','prompt','pilot'):self.complete_manual(stage)
     def run_agent(self,stage):
-        run=self.agents.start(self.task(stage)['id']);self.agents.thread.join(5)
+        # Máy build Windows ghi SQLite chậm hơn nhiều: chờ đủ lâu, vẫn khẳng định agent đã kết thúc.
+        run=self.agents.start(self.task(stage)['id']);self.agents.thread.join(30)
         self.assertFalse(self.agents.thread.is_alive())
         return next(r for r in self.agents.public(self.project)['runs'] if r['id']==run['run_id'])
 
@@ -83,19 +84,21 @@ class AgentTests(unittest.TestCase):
         run=self.run_agent('bible');self.agents.apply(run['id'],human=True)
         self.assertEqual(self.store.production.snapshot(self.project)['characters'][0]['code'],'SNOW_LEOPARD_01')
         hard=next(t for t in self.store.production.snapshot(self.project)['tasks'] if t['stage']=='prompt' and t['difficult'])
-        self.server.chatgpt_web.answers=[{'prompt':'Snow leopard pounces on a goat. Natural ambience.','subjects':['SNOW_LEOPARD_01'],'needs_review':False}]
-        run=self.agents.start(hard['id']);self.agents.thread.join(5)
+        self.server.chatgpt_web.answers=[{'prompt':'SCENE 2 — SETTING: Rocky slope at noon; CHARACTERS: One goat, left of frame; CAMERA: Wide shot, static; CHARACTER BEHAVIOR: Calm; ACTION: Snow leopard pounces on a goat; ENDING FRAME: Goat stands on the right rock','subjects':['SNOW_LEOPARD_01'],'needs_review':False}]
+        run=self.agents.start(hard['id']);self.agents.thread.join(30)
         board=self.store.production.snapshot(self.project)
-        self.assertTrue(board['scenes'][1]['prompt'].startswith('Snow leopard'))
+        self.assertTrue(board['scenes'][1]['prompt'].startswith('SETTING: Rocky slope'))  # bỏ 'SCENE 2 —', đúng thứ tự trường
+        self.assertIn('ACTION: Snow leopard pounces on a goat',board['scenes'][1]['prompt'])
+        self.assertTrue(board['scenes'][1]['prompt'].endswith('DURATION: 10 seconds; ASPECT RATIO: 16:9.'))
         sent=self.server.chatgpt_web.calls[-1][1]
-        for rule in ('4K','1.0x','no slow motion','no background music','watermarks'):self.assertIn(rule,sent)  # MASTER PROMPT V3.0
+        for rule in ('MASTER PROMPT 08','4K UHD','real-time 1x','no slow motion','no music','watermark','ENDING FRAME','POSITION LOCK'):self.assertIn(rule,sent)
         self.assertEqual(board['scenes'][1]['characters'],[board['characters'][0]['id']])
         # Cảnh khó được tạo video trước; cảnh thường chờ duyệt tạo thử.
         video=lambda i:next(t for t in board['tasks'] if t['stage']=='video' and t['scene_id']==board['scenes'][i]['id'])
         self.assertTrue(video(1)['ready']);self.assertFalse(video(0)['ready'])
-        self.server.chatgpt_web.answers=[{'prompt':'Bad','subjects':['UNKNOWN_01'],'needs_review':False}]
+        self.server.chatgpt_web.answers=[{'prompt':'SETTING: Rocky slope at noon; CHARACTERS: One goat, left of frame; CAMERA: Wide shot, static; CHARACTER BEHAVIOR: Calm; ACTION: Goat walks; ENDING FRAME: Goat stands on the right rock','subjects':['UNKNOWN_01'],'needs_review':False}]
         easy=next(t for t in board['tasks'] if t['stage']=='prompt' and not t['difficult'])
-        self.agents.start(easy['id']);self.agents.thread.join(5)
+        self.agents.start(easy['id']);self.agents.thread.join(30)
         self.assertIn('mã cá thể',next(r for r in self.agents.public(self.project)['runs'] if r['task_id']==easy['id'])['error'])
 
     def test_unresolved_disagreement_cannot_self_approve(self):
@@ -217,7 +220,7 @@ class AgentTests(unittest.TestCase):
     def test_api_transport_records_usage_and_does_not_open_browser(self):
         [self.complete_manual(stage) for stage in ('research','script','bible')]
         self.agents.api.vault.save('gemini',key='test-owner-only',max_output_tokens=128)
-        script=dict(prompt='Goat steps over rocks. Natural ambience.',needs_review=False)
+        script=dict(prompt='SETTING: Rocky slope at noon; CHARACTERS: One goat, left of frame; CAMERA: Wide shot, static; CHARACTER BEHAVIOR: Calm; ACTION: Goat steps over rocks; ENDING FRAME: Goat stands on the right rock',needs_review=False)
         self.agents.api.post=lambda *args:{'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':json.dumps(script)}]}}],
                                           'usageMetadata':{'promptTokenCount':20,'candidatesTokenCount':10}}
         config=self.agents.settings(self.project);config['agents']['prompt'].update(transport='api',provider='gemini',reviewer='',consultant='')
@@ -234,7 +237,7 @@ class AgentTests(unittest.TestCase):
         self.agents.gateway_enabled=True  # máy chủ trung gian đang tạm ẩn với người dùng; vẫn giữ đường chạy
         owner=APIClients(Path(self.temp.name)/'owner')
         owner.vault.save('gemini',key='test-gateway-owner-only',max_output_tokens=128)
-        script=dict(prompt='Goat steps over rocks. Natural ambience.',needs_review=False)
+        script=dict(prompt='SETTING: Rocky slope at noon; CHARACTERS: One goat, left of frame; CAMERA: Wide shot, static; CHARACTER BEHAVIOR: Calm; ACTION: Goat steps over rocks; ENDING FRAME: Goat stands on the right rock',needs_review=False)
         owner.post=lambda *args:{'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':json.dumps(script)}]}}],
                                   'usageMetadata':{'promptTokenCount':20,'candidatesTokenCount':10}}
         service=GatewayService(Path(self.temp.name)/'owner',api=owner)
@@ -354,7 +357,7 @@ class AgentTests(unittest.TestCase):
         self.store.characters.add_scenes(self.project,[{'action':'Báo rình'}])
         self.store.production.enable(self.project)
         for stage in ('research','script','bible'):self.complete_manual(stage)
-        prompt={'prompt':'Goat. Natural ambience.','needs_review':False}
+        prompt={'prompt':'SETTING: Rocky slope at noon; CHARACTERS: One goat, left of frame; CAMERA: Wide shot, static; CHARACTER BEHAVIOR: Calm; ACTION: Goat walks; ENDING FRAME: Goat stands on the right rock','needs_review':False}
         self.server.chatgpt_web.answers=[prompt,dict(prompt)]
         config=self.agents.settings(self.project);config['agents']['prompt'].update(reviewer='');config['auto_run']=True
         self.agents.configure(self.project,config)
@@ -388,6 +391,41 @@ class AgentTests(unittest.TestCase):
         scripts=[t for t in board['tasks'] if t['stage']=='script']
         self.assertEqual([t['scene_id'] for t in scripts],[None])
         self.assertTrue(any(t['stage']=='bible' for t in board['tasks']))
+
+    def test_shot_qc_compares_take_with_source_shot_frames(self):
+        root=Path(self.temp.name)
+        f=video_tools.ffmpeg()
+        take=root/'take.mp4'
+        self.assertEqual(video_tools.run([f,'-v','error','-y','-f','lavfi','-i','color=c=green:s=160x90:r=25:d=2','-c:v','libx264',str(take)],60).returncode,0)
+        research=self.task('research')
+        run_id='c'*32
+        evidence=self.agents.root/self.project/run_id/'evidence'/'shots'
+        evidence.mkdir(parents=True)
+        frames=[]
+        for label,time in (('dau',2.04),('giua',3.5),('cuoi',4.88)):
+            target=evidence/f'shot-002-{label}.jpg'
+            self.assertEqual(video_tools.run([f,'-v','error','-y','-f','lavfi','-i','color=c=red:s=64x36','-frames:v','1',str(target)],30).returncode,0)
+            frames.append(dict(label=label,time=time,name=f'shots/shot-002-{label}'))
+        with self.store.connect() as db:
+            db.execute("INSERT INTO production_runs(id,project_id,task_id,status,fingerprint,result,created,updated) VALUES(?,?,?,'done','x',?,0,0)",
+                       (run_id,self.project,research['id'],json.dumps(dict(shots=[dict(id='002',frames=frames)]))))
+            db.execute("UPDATE scenes SET source_shots=? WHERE id=?",(json.dumps(['002']),self.scene))
+        self.prepare_video()
+        self.store.enqueue(['Goat'],1,'source-compare-000001',scene_ids=[self.scene])
+        with self.store.connect() as db:db.execute("UPDATE jobs SET status='done',output=?",(str(take),))
+        self.agents.sync_muse(self.task('video')['id'])
+        config=self.agents.settings(self.project);config['agents']['shot_qc'].update(reviewer='');self.agents.configure(self.project,config)
+        report={'passed':True,'needs_review':False,'observations':[{'time':.5,'description':'Dê đứng'}],'issues':[],
+                'source_match':{'matches':False,'differences':['Gốc chạy trái sang phải, take chạy ngược lại']}}
+        self.server.gemini_web.answers=[report]
+        run=self.run_agent('shot_qc')
+        sent=self.server.gemini_web.calls[-1]
+        self.assertEqual(len(sent[2]['lines']['files']),7)  # 3 khung shot gốc + 4 khung video Muse
+        self.assertTrue(sent[2]['lines']['files'][0].endswith('shot-002-dau.jpg'))
+        self.assertIn('SOURCE video shot',sent[1])
+        self.assertFalse(run['result']['passed'])  # không giống shot gốc → không đạt
+        self.assertEqual([r['shot'] for r in run['result']['source_references']],['002','002','002'])
+        with self.assertRaises(ValueError):self.agents.apply(run['id'],human=True)
 
     def test_muse_sync_requires_unambiguous_scene_take(self):
         self.prepare_video()
