@@ -215,14 +215,28 @@ MAX_EN_LINES = 300
 VIET_CHARS = re.compile(r"[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]", re.IGNORECASE)
 
 
+SHOT_HEADER = re.compile(r"^\W*(?:shot|c[ảa]nh|scene)\s*\d{1,3}\s*[—–:\-.]", re.IGNORECASE)
+
+
 def split_scene_lines(text):
     """Tách đầu vào thành từng cảnh: mỗi dòng một cảnh, hoặc nhiều "Bối cảnh N:" nối bằng dấu ;"""
     text = str(text or "").replace("\r", "").strip()
     text = re.sub(r"^\s*(input\s*:)?\s*\[", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\]\s*$", "", text)
     text = re.sub(r";\s*(?=b[ốo]i\s*c[ảa]nh\s*\d)", ";\n", text, flags=re.IGNORECASE)
-    lines = [re.sub(r"\s+", " ", line).strip() for line in text.split("\n")]
-    lines = [line for line in lines if line]
+    raw = [line.strip() for line in text.split("\n")]
+    if any(SHOT_HEADER.match(line) for line in raw):
+        # Báo cáo phân tích theo shot (MASTER PROMPT V3.0): mỗi khối "SHOT N — …" nhiều dòng là MỘT cảnh.
+        blocks = []
+        for line in raw:
+            if SHOT_HEADER.match(line) or not blocks:
+                blocks.append([])
+            if line:
+                blocks[-1].append(re.sub(r"^[*•\-–]\s*", "", line))
+        lines = [" | ".join(block) for block in blocks if block]
+    else:
+        lines = [line for line in raw if line]
+    lines = [re.sub(r"\s+", " ", line).strip() for line in lines]
     if not lines:
         raise ValueError("Chưa có cảnh nào. Dán danh sách “Bối cảnh 1: …” hoặc lấy từ danh sách cảnh.")
     if len(lines) > MAX_EN_LINES:
@@ -324,6 +338,11 @@ def english_request(lines, numbers=None, style="", aspect="16:9", structured=Tru
         "natural light, natural ambient sound only; no cinematic effects, no slow motion, no music, no dialogue or "
         "narration, no subtitles, text or watermark.\n"
         f"{head}\n"
+        "If a scene is a source-shot analysis (SHOT N with time range, setting, characters, camera, opening/middle/"
+        "ending action, transition, link to next shot): reconstruct THAT shot faithfully; the clip is longer than the "
+        "source shot, so continue the same state and movement for the whole clip without adding events, and use the "
+        "ending action and the link to the next shot for ENDING FRAME. Unknown facts (e.g. screen direction) must not be "
+        "invented: write \"[unverified: ...]\" in the field and add an ISSUE line.\n"
         "Task: turn EACH approved scene into ONE English Muse prompt. Do not create a new story or change the script; if "
         "important data is missing, do not invent it as if observed.\n"
         "Reconstruction rules: keep the script content and the verified action order; do not add or remove animals; keep "

@@ -411,8 +411,14 @@ $('takeEnglish').onclick=()=>api('/api/content/web-take',{engine:content.english
 $('stopEnglish').onclick=()=>api('/api/content/web-stop',{engine:content.englishEngine}).then(()=>$('englishStatus').textContent='Đang dừng…').catch(error=>toast(error.message,true));
 // Tách đầu vào giống máy chủ (content.split_scene_lines): mỗi dòng một cảnh, hoặc "[...; Bối cảnh 2: ...]".
 function splitSceneLines(text){
-  return String(text||'').replace(/\r/g,'').trim().replace(/^\s*(input\s*:)?\s*\[/i,'').replace(/\]\s*$/,'')
-    .replace(/;\s*(?=b[ốo]i\s*c[ảa]nh\s*\d)/gi,';\n').split('\n').map(line=>line.replace(/\s+/g,' ').trim()).filter(Boolean);
+  const raw=String(text||'').replace(/\r/g,'').trim().replace(/^\s*(input\s*:)?\s*\[/i,'').replace(/\]\s*$/,'')
+    .replace(/;\s*(?=b[ốo]i\s*c[ảa]nh\s*\d)/gi,';\n').split('\n').map(line=>line.trim());
+  const header=/^\W*(?:shot|c[ảa]nh|scene)\s*\d{1,3}\s*[—–:\-.]/i;
+  if(raw.some(line=>header.test(line))){ // khối "SHOT N — …" nhiều dòng (phân tích theo shot) = một cảnh
+    const blocks=[];for(const line of raw){if(header.test(line)||!blocks.length)blocks.push([]);if(line)blocks[blocks.length-1].push(line.replace(/^[*•\-–]\s*/,''));}
+    return blocks.filter(b=>b.length).map(b=>b.join(' | ').replace(/\s+/g,' ').trim());
+  }
+  return raw.map(line=>line.replace(/\s+/g,' ').trim()).filter(Boolean);
 }
 // Prompt tiếng Anh số N đi kèm dòng cảnh tiếng Việt số N, để Prompt Studio có đủ Bối cảnh / Góc quay / Hành vi / Hành động.
 let promptSources={},promptScenes={};

@@ -732,6 +732,19 @@ class StructuredPromptTests(unittest.TestCase):
 
 
 
+class ShotInputTests(unittest.TestCase):
+    def test_multiline_shot_blocks_are_one_scene_each(self):
+        text = ("SHOT 2 — Gấu nâu tiến nhanh trên sườn cỏ\n00:01.29–00:02.34 • Khoảng 1,04 giây\n"
+                "Bối cảnh: Sườn núi xanh.\nHành động:\n\n* Đầu: Gấu đang chạy.\n* Cuối: Gấu tiếp tục chạy.\n\n"
+                "SHOT 3 — Đàn dê\nBối cảnh: Vách đá.")
+        lines = content.split_scene_lines(text)
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("SHOT 2 — Gấu nâu"))
+        self.assertIn("Cuối: Gấu tiếp tục chạy.", lines[0])
+        self.assertEqual(content.split_scene_lines("Bối cảnh 1: A\nBối cảnh 2: B"), ["Bối cảnh 1: A", "Bối cảnh 2: B"])
+        self.assertIn("source-shot analysis", content.english_request(lines))
+
+
 class SecondsTests(unittest.TestCase):
     def test_default_duration(self):
         self.assertEqual(content.DEFAULT_SECONDS, 15)
