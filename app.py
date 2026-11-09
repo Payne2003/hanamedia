@@ -625,6 +625,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(self.server.agents.api.vault.save_gateway(body.get("url",""),body.get("token"),body.get("remove") is True))
             elif path == "/api/production/agent/api-test":
                 if body.get("transport")=="gateway":
+                    if not self.server.agents.gateway_enabled:
+                        raise ValueError("Máy chủ trung gian chưa mở. Dùng trình duyệt hoặc API riêng trên máy này.")
                     result=self.server.agents.api.relay(body.get("provider"), 'Return only JSON: {"ok":true}.')
                     return self.reply({"ok":True,"model":result.get("model"),"usage":result.get("usage",{})})
                 return self.reply(self.server.agents.api.test(body.get("provider")))

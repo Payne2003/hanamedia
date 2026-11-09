@@ -1,9 +1,46 @@
 """Local evidence extraction and validated, non-destructive timeline rendering."""
 import math
 import hashlib
+import subprocess
+import tempfile
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from . import video_tools as video
+
+
+class Stopped(ValueError):
+    pass
+
+
+def run(args, timeout, stop=None):
+    """FFmpeg có thể dừng giữa chừng: bấm Dừng agent / đóng app thì tắt hẳn tiến trình, không để chạy ngầm."""
+    if stop is None:
+        return video.run(args, timeout)
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors,
+                                   creationflags=flags)
+        deadline = time.monotonic() + timeout
+        try:
+            while process.poll() is None:
+                if stop.is_set():
+                    raise Stopped('Đã dừng xử lý video theo yêu cầu.')
+                if time.monotonic() > deadline:
+                    raise video.VideoError('Xử lý video quá lâu, đã dừng.')
+                stop.wait(.2)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+        errors.seek(0)
+        return SimpleNamespace(returncode=process.returncode,
+                               stderr=errors.read()[-20000:].decode('utf-8', 'replace'), stdout='')
 
 
 def finite(value, label):
@@ -12,7 +49,7 @@ def finite(value, label):
     return float(value)
 
 
-def inspect_clip(path, folder):
+def inspect_clip(path, folder, stop=None):
     path, folder = Path(path), Path(folder)
     if not path.is_file():
         raise ValueError('Không tìm thấy file video của take đã chọn.')
@@ -20,8 +57,8 @@ def inspect_clip(path, folder):
     if info['duration'] <= 0 or info['width'] < 16 or info['height'] < 16:
         raise ValueError('Video thiếu thời lượng hoặc kích thước hợp lệ.')
     # Decode the entire stream. Metadata alone cannot establish that a clip is playable.
-    result = video.run([video.ffmpeg(), '-v', 'error', '-xerror', '-i', str(path),
-                        '-map', '0:v:0', '-f', 'null', '-'], 600)
+    result = run([video.ffmpeg(), '-v', 'error', '-xerror', '-i', str(path),
+                        '-map', '0:v:0', '-f', 'null', '-'], 600, stop)
     if result.returncode:
         raise ValueError('Video lỗi giải mã; cần kiểm tra hoặc tải lại take.')
     folder.mkdir(parents=True, exist_ok=True)
@@ -29,8 +66,8 @@ def inspect_clip(path, folder):
     for index, fraction in enumerate((0.1, 0.35, 0.65, 0.9)):
         timestamp = round(info['duration'] * fraction, 3)
         target = folder / f'frame-{index + 1}.jpg'
-        result = video.run([video.ffmpeg(), '-v', 'error', '-y', '-ss', str(timestamp), '-i', str(path),
-                            '-frames:v', '1', '-vf', 'scale=640:640:force_original_aspect_ratio=decrease', str(target)], 60)
+        result = run([video.ffmpeg(), '-v', 'error', '-y', '-ss', str(timestamp), '-i', str(path),
+                            '-frames:v', '1', '-vf', 'scale=640:640:force_original_aspect_ratio=decrease', str(target)], 60, stop)
         if result.returncode or not target.is_file() or target.stat().st_size == 0:
             raise ValueError('Không trích được khung hình để QC.')
         frames.append({'time': timestamp, 'file': str(target)})
@@ -62,7 +99,7 @@ def validate_timeline(plan, takes):
     return clips
 
 
-def render_timeline(plan, takes, destination):
+def render_timeline(plan, takes, destination, stop=None):
     clips = validate_timeline(plan, takes)
     for take in takes:
         if take.get('sha256'):
@@ -99,9 +136,9 @@ def render_timeline(plan, takes, destination):
     filters.append(''.join(outputs) + f'concat=n={len(clips)}:v=1:a=1[v][a]')
     temporary = destination.with_name(destination.stem + '.part.mp4')
     try:
-        result = video.run(args + ['-filter_complex_threads', '1', '-filter_complex', ';'.join(filters),
+        result = run(args + ['-filter_complex_threads', '1', '-filter_complex', ';'.join(filters),
                                   '-map', '[v]', '-map', '[a]', '-c:a', 'aac', '-c:v', 'libx264', '-threads', '2', '-preset', 'medium',
-                                  '-crf', '18', '-movflags', '+faststart', str(temporary)], 7200)
+                                  '-crf', '18', '-movflags', '+faststart', str(temporary)], 7200, stop)
         if result.returncode or not temporary.is_file():
             raise ValueError('FFmpeg không render được timeline.')
         info = video.probe(temporary)

@@ -16,7 +16,7 @@ PROVIDERS = {
                     variables=('HANAMEDIA_OPENAI_API_KEY','OPENAI_API_KEY')),
     'gemini': dict(name='Gemini', model='gemini-2.5-flash', url='https://generativelanguage.googleapis.com/v1beta/models/',
                    variables=('HANAMEDIA_GEMINI_API_KEY','GEMINI_API_KEY')),
-    'claude': dict(name='Anthropic', model='claude-sonnet-4-5', url='https://api.anthropic.com/v1/messages',
+    'claude': dict(name='Anthropic', model='claude-sonnet-5-5', url='https://api.anthropic.com/v1/messages',
                    variables=('HANAMEDIA_ANTHROPIC_API_KEY','ANTHROPIC_API_KEY')),
 }
 
@@ -155,8 +155,8 @@ class APIClients:
         request=urllib.request.Request(url,data=json.dumps(payload).encode(),headers={**headers,'Content-Type':'application/json'},method='POST')
         try:
             # The default HTTPS handler verifies TLS and inherits proxy/CA settings. Redirects are rejected.
-            opener=urllib.request.build_opener(NoRedirect())
-            with opener.open(request,timeout=120) as response:
+            from .net import urlopen
+            with urlopen(request,120,handlers=(NoRedirect(),)) as response:
                 body=response.read(4_000_001)
             if len(body)>4_000_000:raise APIError('Phản hồi API quá lớn.')
             return json.loads(body)
@@ -209,7 +209,8 @@ class APIClients:
         if not gateway.get('url') or not gateway.get('token'):raise APIError('Chưa lưu địa chỉ máy chủ và mã truy cập.')
         request=urllib.request.Request(gateway['url']+'/v1/me',headers={'Authorization':'Bearer '+gateway['token']})
         try:
-            with urllib.request.build_opener(NoRedirect()).open(request,timeout=20) as response:
+            from .net import urlopen
+            with urlopen(request,20,handlers=(NoRedirect(),)) as response:
                 result=json.loads(response.read(200000))
             if not isinstance(result,dict) or 'quota' not in result:raise APIError('Máy chủ không trả thông tin hạn mức hợp lệ.')
             return result

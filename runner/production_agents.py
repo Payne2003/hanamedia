@@ -11,7 +11,9 @@ from .production import STAGES
 from .production_media import inspect_clip, render_timeline
 
 PROVIDERS = ('gemini', 'chatgpt', 'claude')
+PROVIDER_NAMES = {'gemini': 'Gemini', 'chatgpt': 'ChatGPT', 'claude': 'Claude'}
 AI_STAGES = ('research', 'script', 'prompt', 'shot_qc', 'film_qc')
+MEDIA_STAGES = ('shot_qc', 'edit', 'film_qc', 'delivery')
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS production_agent_settings (
  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE, config TEXT NOT NULL);
@@ -68,6 +70,9 @@ def validate_result(stage, data):
 
 
 class ProductionAgents:
+    # Máy chủ trung gian chưa mở cho người dùng: mỗi máy tự chạy agent bằng trình duyệt hoặc API riêng.
+    gateway_enabled = False
+
     def __init__(self, server):
         self.server, self.store = server, server.store
         self.board = self.store.production
@@ -83,23 +88,30 @@ class ProductionAgents:
             columns={r['name'] for r in db.execute('PRAGMA table_info(production_calls)')}
             for column, declaration in {'transport':"TEXT NOT NULL DEFAULT 'browser'",'model':"TEXT NOT NULL DEFAULT ''",'usage':"TEXT NOT NULL DEFAULT '{}'"}.items():
                 if column not in columns:db.execute('ALTER TABLE production_calls ADD COLUMN '+column+' '+declaration)
+            if 'scope' not in columns:db.execute("ALTER TABLE production_calls ADD COLUMN scope TEXT NOT NULL DEFAULT ''")
             # Never replay a possibly submitted browser request after process loss.
             db.execute("UPDATE production_runs SET status='review',error=?,updated=? WHERE status='running'",
                        ('Ứng dụng dừng giữa tác vụ. Kiểm tra cuộc trò chuyện trước khi chạy lại.', time.time()))
 
     @staticmethod
     def defaults():
-        agents = {stage: dict(transport='gateway',provider='gemini' if stage in ('research', 'script', 'shot_qc', 'film_qc') else 'chatgpt',
+        agents = {stage: dict(transport='browser',provider='gemini' if stage in ('research', 'script', 'shot_qc', 'film_qc') else 'chatgpt',
                               model='', reviewer='chatgpt' if stage in ('research', 'script', 'shot_qc', 'film_qc') else 'gemini')
                   for stage in AI_STAGES}
-        agents['edit'] = dict(transport='gateway',provider='gemini', model='', reviewer='')
+        agents['edit'] = dict(transport='browser',provider='gemini', model='', reviewer='')
         return dict(agents=agents, discussion_rounds=1, max_calls=6)
 
     def settings(self, project_id):
         check_id(project_id, 'Dự án')
         with self.store.connect() as db:
             row = db.execute('SELECT config FROM production_agent_settings WHERE project_id=?', (project_id,)).fetchone()
-        return json.loads(row[0]) if row else self.defaults()
+        config = json.loads(row[0]) if row else self.defaults()
+        if not self.gateway_enabled:
+            # Cấu hình cũ chọn máy chủ trung gian: chạy bằng trình duyệt trên máy này cho tới khi máy chủ được mở.
+            for agent in config['agents'].values():
+                if agent.get('transport') == 'gateway':
+                    agent['transport'] = 'browser'
+        return config
 
     def configure(self, project_id, config):
         self.board.snapshot(project_id)
@@ -114,10 +126,10 @@ class ProductionAgents:
         for stage, agent in agents.items():
             if not isinstance(agent, dict) or set(agent) - {'provider', 'model', 'reviewer', 'consultant', 'transport'}:
                 raise ValueError('Cấu hình phòng ban không hợp lệ.')
-            if agent.get('transport','browser') not in ('browser','api','gateway'):
-                raise ValueError('Chọn trình duyệt, API riêng hoặc máy chủ trung gian.')
+            if agent.get('transport','browser') not in (('browser','api','gateway') if self.gateway_enabled else ('browser','api')):
+                raise ValueError('Chọn Trình duyệt trên máy này hoặc API riêng.')
             if agent.get('provider') not in PROVIDERS or any(agent.get(k,'') not in ('',*PROVIDERS) for k in ('reviewer','consultant')):
-                raise ValueError('Chỉ hỗ trợ Gemini, ChatGPT và Claude trên trình duyệt.')
+                raise ValueError('Chỉ hỗ trợ Gemini, ChatGPT và Claude.')
             if not isinstance(agent.get('model', ''), str) or len(agent.get('model', '')) > 80:
                 raise ValueError('Tên model không hợp lệ.')
         with self.store.connect() as db:
@@ -133,9 +145,66 @@ class ProductionAgents:
                 run['result'] = json.loads(run['result'])
                 run['calls'] = [dict(r) for r in db.execute('SELECT id,provider,role,status,created,answer,transport,model,usage FROM production_calls WHERE run_id=? ORDER BY id', (run['id'],))]
                 runs.append(run)
-        return dict(config=self.settings(project_id), runs=runs, api=self.api.vault.public(), gateway=self.api.vault.gateway(public=True), providers={
-            name: dict(name=runner.name, busy=runner.snapshot()['busy'], account=runner.account())
+        config = self.settings(project_id)
+        shared = self.shared_enabled()
+        return dict(config=config, runs=runs, api=self.api.vault.public(), gateway=self.api.vault.gateway(public=True),
+                    gateway_enabled=self.gateway_enabled, shared_profile=shared,
+                    readiness=self.readiness(config), providers={
+            name: dict(name=runner.name, busy=runner.snapshot()['busy'], account=runner.account(),
+                       shared=shared and name in ('gemini', 'chatgpt'))
             for name, runner in self.runners().items()})
+
+    def shared_enabled(self):
+        shared = getattr(self.server, 'shared', None)
+        return bool(shared and shared.enabled)
+
+    @staticmethod
+    def ffmpeg_ready():
+        try:
+            from .video_tools import ffmpeg
+            ffmpeg()
+            return True
+        except Exception:
+            return False
+
+    def stage_problems(self, stage, config, ffmpeg_ok=None):
+        """Lý do công đoạn chưa chạy được trên máy này (rỗng = sẵn sàng). Kiểm tra trước khi nhận tác vụ."""
+        problems = []
+        if stage in MEDIA_STAGES and not (self.ffmpeg_ready() if ffmpeg_ok is None else ffmpeg_ok):
+            problems.append('Máy này thiếu FFmpeg để kiểm tra/dựng video. Cài lại app bản mới.')
+        agent = config['agents'].get(stage)
+        if not agent:
+            return problems
+        transport = agent.get('transport', 'browser')
+        runners = self.runners()
+        for provider in dict.fromkeys(p for p in (agent.get('provider'), agent.get('reviewer'), agent.get('consultant')) if p):
+            name = PROVIDER_NAMES.get(provider, provider)
+            if transport == 'api':
+                if not self.api.vault.credential(provider)[0]:
+                    problems.append(f'Chưa nhập khóa API {name}. Mở “Kết nối AI” để nhập, hoặc chuyển phòng ban sang Trình duyệt.')
+                continue
+            if transport == 'gateway':
+                if not self.api.vault.gateway(public=True)['configured']:
+                    problems.append('Chưa cấu hình máy chủ trung gian.')
+                continue
+            runner = runners.get(provider)
+            if not runner:
+                problems.append(f'{name} chưa có trên bản app này.')
+                continue
+            if runner.snapshot().get('busy'):
+                problems.append(f'{name} đang bận việc khác (Content Studio hoặc agent). Đợi xong rồi giao lại.')
+            login_open = getattr(runner, 'login_window_open', None)
+            if login_open and login_open():
+                problems.append(f'Cửa sổ đăng nhập {name} vẫn mở. Đăng nhập xong thì đóng hẳn cửa sổ đó.')
+            if runner.account().get('logged_in') is False:
+                where = 'Cài đặt → Đăng nhập tài khoản chung' if self.shared_enabled() and provider in ('gemini', 'chatgpt') else f'nút Đăng nhập {name}'
+                problems.append(f'{name} chưa đăng nhập trên máy này. Bấm {where}.')
+        return problems
+
+    def readiness(self, config):
+        ffmpeg_ok = self.ffmpeg_ready()
+        stages = {stage: self.stage_problems(stage, config, ffmpeg_ok) for stage in (*config['agents'], 'delivery')}
+        return dict(ffmpeg=ffmpeg_ok, stages=stages, ready=not any(stages.values()))
 
     def runners(self):
         return {name:getattr(self.server,name+'_web') for name in PROVIDERS if hasattr(self.server,name+'_web')}
@@ -181,13 +250,9 @@ class ProductionAgents:
             if task['stage'] == 'video':
                 raise ValueError('Giao video qua Studio rồi dùng Đồng bộ Muse. Không tự gửi lại từ agent.')
             config = self.settings(task['project_id'])
-            agent = config['agents'].get(task['stage'])
-            if agent and agent.get('transport','browser')=='gateway' and not self.api.vault.gateway(public=True)['configured']:
-                raise ValueError('Mở Kết nối AI để nhập địa chỉ máy chủ và mã truy cập riêng.')
-            if agent and agent.get('transport','browser')=='api':
-                for provider in set(p for p in (agent['provider'],agent.get('reviewer'),agent.get('consultant')) if p):
-                    if not self.api.vault.credential(provider)[0]:
-                        raise ValueError('Chưa có khóa API cho '+provider+'. Mở Kết nối AI để cấu hình.')
+            problems = self.stage_problems(task['stage'], config)
+            if problems:
+                raise ValueError(' '.join(problems))
             run_id, now = uuid.uuid4().hex, time.time()
             # Task claim and run insertion are a single transaction.
             with self.store.connect() as db:
@@ -223,19 +288,22 @@ class ProductionAgents:
         if self.board.snapshot(project_id)['project']['production_status'] != 'active':
             raise AgentReview('Dự án tạm dừng. Kết quả đã nhận được giữ lại để duyệt.')
 
-    def ask(self, run_id, project_id, provider, role, prompt, files, config, model='', transport='browser'):
+    def ask(self, run_id, project_id, provider, role, prompt, files, config, model='', transport='browser', scope=''):
         self.check_active(project_id)
         if len(prompt)>200000:
             raise AgentReview('Ngữ cảnh quá dài cho một lượt trình duyệt. Chia dự án nhỏ hơn trước khi chạy.')
-        runner = self.runners()[provider]
+        runner = self.runners().get(provider)
+        if not runner:
+            raise AgentReview(PROVIDER_NAMES.get(provider, provider)+' chưa có trên bản app này.')
         if transport == 'browser' and runner.snapshot()['busy']:
             raise AgentReview(f'{runner.name} đang được Content Studio hoặc agent khác sử dụng.')
         with self.store.connect() as db:
-            count = db.execute('SELECT count(*) FROM production_calls WHERE run_id=?', (run_id,)).fetchone()[0]
+            # Giới hạn tính theo phạm vi: cả tác vụ, hoặc từng cảnh khi dựng phim (phim nhiều cảnh vẫn dựng được).
+            count = db.execute('SELECT count(*) FROM production_calls WHERE run_id=? AND scope=?', (run_id, scope)).fetchone()[0]
             if count >= config['max_calls']:
-                raise AgentReview('Đã đạt giới hạn lượt AI cho tác vụ. Không gọi thêm.')
-            call_id = db.execute('INSERT INTO production_calls(run_id,provider,role,prompt,status,created) VALUES(?,?,?,?,?,?)',
-                                 (run_id, provider, role, prompt, 'sending', time.time())).lastrowid
+                raise AgentReview('Đã đạt giới hạn lượt AI cho '+('cảnh này' if scope else 'tác vụ')+'. Không gọi thêm.')
+            call_id = db.execute('INSERT INTO production_calls(run_id,provider,role,prompt,status,created,scope) VALUES(?,?,?,?,?,?,?)',
+                                 (run_id, provider, role, prompt, 'sending', time.time(), scope)).lastrowid
         self.update(run_id, phase=f'{runner.name} · {role} · {transport}')
         with self.store.connect() as db:db.execute('UPDATE production_calls SET transport=?,model=? WHERE id=?',(transport,model,call_id))
         if transport in ('api','gateway'):
@@ -289,7 +357,7 @@ class ProductionAgents:
                               for t in snapshot['tasks'] if t['status']=='done'],
                     audio_policy='Natural sounds only. No speech, music or subtitles.')
 
-    def discussion(self, run_id, task, snapshot, config, schema, evidence=None):
+    def discussion(self, run_id, task, snapshot, config, schema, evidence=None, scope=''):
         agent = config['agents'][task['stage']]
         files = [f['file'] for f in (evidence or {}).get('frames', [])]
         evidence_meta = dict(evidence or {})
@@ -301,7 +369,7 @@ class ProductionAgents:
                   'Frames are sparse samples: do not claim a full motion/audio check. Never claim that still images establish natural-only audio. '
                   'No speech, music, captions.\nCONTEXT\n'+json.dumps(self.context(snapshot, task), ensure_ascii=False)+
                   '\nLOCAL EVIDENCE\n'+json.dumps(evidence_meta, ensure_ascii=False))
-        draft = self.ask(run_id, task['project_id'], agent['provider'], 'Đề xuất', prompt, files, config, agent.get('model',''),transport=agent.get('transport','browser'))
+        draft = self.ask(run_id, task['project_id'], agent['provider'], 'Đề xuất', prompt, files, config, agent.get('model',''),transport=agent.get('transport','browser'),scope=scope)
         reviewers = list(dict.fromkeys(p for p in (agent.get('reviewer'),agent.get('consultant')) if p))
         for number in range(config['discussion_rounds'] if reviewers else 0):
             critiques=[]
@@ -310,7 +378,7 @@ class ProductionAgents:
                                    '{"approved":boolean,"issues":[strings],"needs_review":boolean}. '
                                    'Approval requires enough evidence and no material contradiction.\nPROPOSAL\n'+draft)
                 critique = parse_answer(self.ask(run_id, task['project_id'], reviewer, f'Phản biện {number+1}', critique_prompt,
-                                                files, config,transport=agent.get('transport','browser')))
+                                                files, config,transport=agent.get('transport','browser'),scope=scope))
                 if type(critique.get('approved')) is not bool or type(critique.get('needs_review')) is not bool or not isinstance(critique.get('issues'),list):
                     raise AgentReview('Phản biện thiếu approved/issues/needs_review.')
                 critiques.append(dict(provider=reviewer,**critique))
@@ -318,7 +386,7 @@ class ProductionAgents:
                 break
             draft = self.ask(run_id, task['project_id'], agent['provider'], f'Tổng hợp {number+1}',
                              prompt+'\nRevise using these critiques. Keep needs_review=true if any material issue remains.\nDRAFT\n'+draft+
-                             '\nCRITIQUES\n'+json.dumps(critiques,ensure_ascii=False), files, config, agent.get('model',''),transport=agent.get('transport','browser'))
+                             '\nCRITIQUES\n'+json.dumps(critiques,ensure_ascii=False), files, config, agent.get('model',''),transport=agent.get('transport','browser'),scope=scope)
             if number == config['discussion_rounds'] - 1:
                 data = parse_answer(draft)
                 data['needs_review'] = True
@@ -374,7 +442,7 @@ class ProductionAgents:
                 path=job['output']
             else:
                 path=self.edit_result(snapshot)['render']['path']
-            evidence=inspect_clip(path,folder/'evidence')
+            evidence=inspect_clip(path,folder/'evidence',self.stop)
             schema='{"passed":boolean,"needs_review":boolean,"observations":[{"time":number,"description":string}],"issues":[strings]}'
             result=validate_result(stage,self.discussion(run_id,task,snapshot,config,schema,evidence))
             if any(o['time']>evidence['info']['duration'] for o in result['observations']):
@@ -389,14 +457,13 @@ class ProductionAgents:
             takes=self.selected_takes(snapshot)
             clips=[]
             # Plan each scene from its own sampled evidence; keep IDs and scene order authoritative.
-            # The global call budget also bounds the number of scenes processed in a single attempt.
             for take in takes:
                 self.check_active(task['project_id'])
-                evidence=inspect_clip(take['path'],folder/'evidence'/take['scene_id'])
+                evidence=inspect_clip(take['path'],folder/'evidence'/take['scene_id'],self.stop)
                 evidence['take']={k:v for k,v in take.items() if k!='path'}
                 schema='{"clips":[{"scene_id":string,"job_id":string,"in":number,"out":number,"speed":number}],"needs_review":boolean}'
                 scene_task=dict(task,scene_id=take['scene_id'])
-                proposed=self.discussion(run_id,scene_task,snapshot,config,schema,evidence)
+                proposed=self.discussion(run_id,scene_task,snapshot,config,schema,evidence,scope=take['scene_id'])
                 from .production_media import validate_timeline
                 validate_timeline(proposed,[take])
                 clips.extend(proposed['clips'])
@@ -511,7 +578,7 @@ class ProductionAgents:
                 run=dict(db.execute('SELECT * FROM production_runs WHERE id=?',(run_id,)).fetchone())
             self.check_active(run['project_id'])
             target=self.root/run['project_id']/run_id/'film.mp4'
-            result['render']=render_timeline(result,result['takes'],target)
+            result['render']=render_timeline(result,result['takes'],target,self.stop)
             result['render_pending']=False
             # Output is still a preview until film QC and human audio verification.
             result['needs_review']=True
@@ -592,4 +659,4 @@ class ProductionAgents:
             self.closing = True
         self.cancel()
         if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=2)
+            self.thread.join(timeout=8)  # FFmpeg bị tắt khi dừng; đợi ghi trạng thái xong

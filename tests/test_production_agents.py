@@ -203,6 +203,7 @@ class AgentTests(unittest.TestCase):
     def test_gateway_transport_routes_through_real_http_and_keeps_owner_key_off_client(self):
         from runner.ai_api import APIClients
         from runner.ai_gateway import GatewayService,GatewayServer
+        self.agents.gateway_enabled=True  # máy chủ trung gian đang tạm ẩn với người dùng; vẫn giữ đường chạy
         owner=APIClients(Path(self.temp.name)/'owner')
         owner.vault.save('gemini',key='test-gateway-owner-only',max_output_tokens=128)
         script=dict(setting='Núi',camera='Toàn cảnh',behavior='Quan sát',action='Dê bước qua đá',needs_review=False)
@@ -222,6 +223,54 @@ class AgentTests(unittest.TestCase):
             self.assertFalse(self.agents.api.vault.public()['gemini']['configured'])
             self.assertNotIn(grant['token'],json.dumps(self.agents.public(self.project)))
         finally:server.shutdown();server.server_close();thread.join()
+
+    def test_defaults_run_on_this_machine_and_old_gateway_config_falls_back_to_browser(self):
+        self.assertTrue(all(a['transport']=='browser' for a in self.agents.defaults()['agents'].values()))
+        config=self.agents.defaults();config['agents']['script']['transport']='gateway'
+        with self.store.connect() as db:
+            db.execute('UPDATE production_agent_settings SET config=? WHERE project_id=?',(json.dumps(config),self.project))
+        self.assertEqual(self.agents.settings(self.project)['agents']['script']['transport'],'browser')
+        with self.assertRaisesRegex(ValueError,'Trình duyệt'):self.agents.configure(self.project,config)
+        self.assertNotIn('gateway',{a['transport'] for a in self.agents.public(self.project)['config']['agents'].values()})
+
+    def test_preflight_blocks_before_claiming_task(self):
+        self.server.gemini_web.account=lambda:{'logged_in':False}
+        with self.assertRaisesRegex(ValueError,'chưa đăng nhập'):self.agents.start(self.task('research')['id'])
+        self.assertEqual(self.task('research')['status'],'waiting')
+        self.assertEqual(self.server.gemini_web.calls,[])
+        readiness=self.agents.public(self.project)['readiness']
+        self.assertFalse(readiness['ready']);self.assertTrue(readiness['stages']['research'])
+        self.server.gemini_web.account=lambda:{'logged_in':True}
+        self.server.chatgpt_web.job['busy']=True
+        with self.assertRaisesRegex(ValueError,'đang bận'):self.agents.start(self.task('research')['id'])
+        self.server.chatgpt_web.job['busy']=False
+        config=self.agents.settings(self.project);config['agents']['research'].update(provider='claude',reviewer='',consultant='')
+        self.agents.configure(self.project,config)
+        with self.assertRaisesRegex(ValueError,'Claude'):self.agents.start(self.task('research')['id'])
+        config['agents']['research'].update(transport='api');self.agents.configure(self.project,config)
+        with self.assertRaisesRegex(ValueError,'khóa API'):self.agents.start(self.task('research')['id'])
+
+    def test_edit_call_budget_is_per_scene_so_long_films_can_be_cut(self):
+        self.agents.close();self.agents.closing=False;self.agents.stop.clear()
+        with self.store.connect() as db:
+            run_id='a'*32
+            task=self.task('edit')
+            db.execute("INSERT INTO production_runs(id,project_id,task_id,status,fingerprint,created,updated) VALUES(?,?,?,'running','x',0,0)",(run_id,self.project,task['id']))
+        config=self.agents.settings(self.project);config['max_calls']=1
+        self.server.gemini_web.answers=[{'a':1},{'a':2},{'a':3}]
+        for scene in ('s1','s2','s3'):
+            self.agents.ask(run_id,self.project,'gemini','Đề xuất','p',[],config,scope=scene)
+        with self.assertRaisesRegex(AgentReview,'cảnh này'):
+            self.agents.ask(run_id,self.project,'gemini','Đề xuất','p',[],config,scope='s1')
+
+    def test_stop_kills_running_ffmpeg(self):
+        from runner import production_media
+        stop=threading.Event();timer=threading.Timer(.5,stop.set);timer.start()
+        import time
+        started=time.monotonic()
+        with self.assertRaises(production_media.Stopped):
+            production_media.run([video_tools.ffmpeg(),'-v','error','-re','-f','lavfi','-i','color=c=black:s=64x64:r=5:d=60','-f','null','-'],60,stop)
+        self.assertLess(time.monotonic()-started,10)
 
     def test_muse_sync_requires_unambiguous_scene_take(self):
         for stage in ('research','script','prompt'):self.complete_manual(stage)

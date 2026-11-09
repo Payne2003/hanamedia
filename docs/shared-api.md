@@ -34,7 +34,7 @@ Nhập từng khóa qua lời nhắc ẩn của CLI; không đặt giá trị kh
 ```sh
 .venv/bin/python -m runner.ai_gateway --data-dir /var/lib/hanamedia-gateway --set-key chatgpt --model gpt-4.1-mini --max-output-tokens 4096
 .venv/bin/python -m runner.ai_gateway --data-dir /var/lib/hanamedia-gateway --set-key gemini --model gemini-2.5-flash --max-output-tokens 4096
-.venv/bin/python -m runner.ai_gateway --data-dir /var/lib/hanamedia-gateway --set-key claude --model claude-sonnet-4-5 --max-output-tokens 4096
+.venv/bin/python -m runner.ai_gateway --data-dir /var/lib/hanamedia-gateway --set-key claude --model claude-sonnet-5-5 --max-output-tokens 4096
 ```
 
 Có thể thay model bằng ID được tài khoản API của bạn hỗ trợ. Các model mặc định là cấu hình khởi đầu, không phải cam kết về model mới nhất hoặc khả dụng trên mọi tài khoản. API là dịch vụ tính phí riêng với gói thuê bao trên website.
