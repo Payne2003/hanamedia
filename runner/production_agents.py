@@ -19,6 +19,10 @@ from .production_media import inspect_clip, render_timeline, sample_source, vali
 from .production_sounds import SoundLibrary
 
 PROVIDERS = ('gemini', 'chatgpt', 'claude')
+# Thông số mặc định cho video AI mới theo MASTER PROMPT V3.0.
+VIDEO_DEFAULTS = ('16:9, 4K, natural daylight; real-time motion at 1.0x speed, no slow motion; only natural ambient and animal '
+                  'sounds — no background music, dialogue, narration or voice-over; no logos, subtitles, watermarks or any '
+                  'on-screen text')
 PROVIDER_NAMES = {'gemini': 'Gemini', 'chatgpt': 'ChatGPT', 'claude': 'Claude'}
 AI_STAGES = ('research', 'script', 'bible', 'prompt', 'shot_qc', 'film_qc')
 AGENT_ROLES = AI_STAGES + ('edit', 'sound')  # edit = Editor Agent, sound = Sound Agent (cùng công đoạn 06)
@@ -114,7 +118,7 @@ def validate_report(data, duration, times):
     return data
 
 
-def validate_script(data, target):
+def validate_script(data, target, clip=10):
     strings(data, ('title', 'logline'), 2000)
     scenes = data.get('scenes')
     if not isinstance(scenes, list) or not 1 <= len(scenes) <= 150:
@@ -123,7 +127,7 @@ def validate_script(data, target):
         if not isinstance(scene, dict):
             raise AgentReview('Cảnh không hợp lệ.')
         strings(scene, ('purpose', 'setting', 'camera', 'behavior', 'action'), 1500)
-        number(scene.get('duration'), 'Thời lượng cảnh', 3, 10)
+        number(scene.get('duration'), 'Thời lượng cảnh', 3, clip)
         if type(scene.get('difficult')) is not bool:
             raise AgentReview('Mỗi cảnh cần difficult (boolean) để chọn cảnh tạo thử.')
     total = sum(s['duration'] for s in scenes)
@@ -493,6 +497,7 @@ class ProductionAgents:
         research, script, bible = (self.output(snapshot, s) for s in ('research', 'script', 'bible'))
         # Kết quả ghi tay có thể là văn bản thường; kết quả agent là JSON.
         summary = lambda value: {k: value.get(k) for k in ('title', 'logline', 'acts')} if isinstance(value, dict) else value
+        research = self.research_brief(research)
         if stage == 'script':
             return dict(project=brief, source_analysis=research)
         if stage == 'bible':
@@ -556,42 +561,222 @@ class ProductionAgents:
         return [dict(time=f['time'], name=Path(f['file']).resolve().relative_to(base).as_posix().removesuffix('.jpg'))
                 for f in frames]
 
+    SHOT_SCHEMA = ('{"cut_check":{"is_real_cut":true|false|null,"note":string},"environment":{"terrain":string,"surface":string,'
+                   '"vegetation_water":string,"story_location":string,"weather_light":string,"composition":string},'
+                   '"characters":[{"species":string,"count":string,"appearance":string,"fur_color":string,"relative_size":string,'
+                   '"head_body_direction":string,"frame_position":string}],"character_count":integer|null,"distances":string,'
+                   '"camera":{"shot_size":string,"angle":string,"position":string,"direction":string,"movement":string,'
+                   '"movement_evidence":string,"shake":string,"screen_direction":string},"action":{"opening":string,'
+                   '"middle":[{"time":number,"description":string}],"ending":string,"unfinished":string,"next_shot_condition":string},'
+                   '"behavior":string,"transition":{"type":string,"from_previous":string},"narrative_function":string,'
+                   '"ai_difficulty":"Dễ"|"Trung bình"|"Khó","ai_risks":string,"split_recommended":boolean,"continuity_notes":string,'
+                   '"verification":string,"confidence":"Cao"|"Trung bình"|"Thấp"}')
+
+    def analyse_shot(self, run_id, task, config, shot, frames, previous_frame, verify):
+        """GIAI ĐOẠN 3–4 cho một shot: AI chỉ mô tả những gì thấy trong khung hình được gửi (MASTER PROMPT V3.0)."""
+        from .reverse_engineer import STATUSES, UNVERIFIED, clock
+        agent = config['agents']['research']
+        files = ([previous_frame['file']] if previous_frame else []) + [f['file'] for f in frames]
+        order = (['LAST frame of the PREVIOUS shot (for cut verification)'] if previous_frame else []) + \
+                [f'frame "{f["label"]}" at {clock(f["time"])}' for f in frames]
+        prompt = ('You are a team of experts: Wildlife Documentary Director, Wildlife Behavior Analyst, Video Editing Analyst, '
+                  'Cinematography Analyst and Continuity Supervisor (MASTER PROMPT V3.0, frame-by-frame reverse engineering). '
+                  f'Analyse ONE shot of a source wildlife video: shot {shot["id"]}, {clock(shot["start"])}–{clock(shot["end"])} '
+                  f'({shot["duration"]:.2f}s), automatic cut confidence: {shot["cut_confidence"]}. Images in order: ' + '; '.join(order) + '. '
+                  'Rules: write every value in Vietnamese. Describe ONLY what is visible in these frames. Five frames do not show '
+                  'everything between them: never state unseen motion as observed; camera movement may only be inferred from '
+                  'changes across frames (say which), never from one still. Do not state animal intent as fact. If something is '
+                  'not visible write "' + UNVERIFIED + '". Check whether the start of this shot is a real cut from the previous '
+                  'shot or just fast camera motion/shake/light change. Audio is NOT provided. Do not write prompts or a new script. '
+                  '"verification" must be one of: ' + ' | '.join(STATUSES) + '. Return only one JSON object: ' + self.SHOT_SCHEMA)
+        answer = self.ask(run_id, task['project_id'], agent['provider'], f'Phân tích shot {shot["id"]}', prompt, files, config,
+                          agent.get('model', ''), transport=agent.get('transport', 'browser'), scope='shot-' + shot['id'])
+        data = parse_answer(answer)
+        if not isinstance(data.get('action'), dict) or not isinstance(data.get('camera'), dict):
+            raise AgentReview(f'Phân tích shot {shot["id"]} thiếu mục hành động hoặc camera.')
+        # Chỉ có khung hình tĩnh: tối đa là "ước lượng", không phải quan sát video liên tục.
+        if data.get('verification') not in STATUSES or data.get('verification') == STATUSES[0]:
+            data['verification'] = STATUSES[1]
+        if data.get('confidence') not in ('Cao', 'Trung bình', 'Thấp'):
+            data['confidence'] = 'Thấp'
+        if data.get('ai_difficulty') not in ('Dễ', 'Trung bình', 'Khó'):
+            data['ai_difficulty'] = UNVERIFIED
+        middle = data['action'].get('middle')
+        if isinstance(middle, list):
+            data['action']['middle'] = [m for m in middle if isinstance(m, dict) and isinstance(m.get('time'), (int, float))
+                                        and shot['start'] - .1 <= m['time'] <= shot['end'] + .1]
+        data['sound'] = dict(natural=UNVERIFIED + ' (công cụ chưa nghe âm thanh)' if verify['audio'] else 'Không có audio track',
+                             music_voice=UNVERIFIED if verify['audio'] else 'Không có audio track')
+        return data
+
+    @staticmethod
+    def research_brief(research):
+        """Bản rút gọn của báo cáo phân tích ngược để gửi cho các phòng ban sau (không gửi cả file)."""
+        if not isinstance(research, dict) or not research.get('shots'):
+            return research
+        story = research.get('story') or {}
+        return dict(summary=research.get('summary'), five_w_one_h={k: story.get(k) for k in ('who', 'what', 'where', 'when', 'why', 'how')},
+                    chapters=[{k: c.get(k) for k in ('name', 'start', 'end', 'summary', 'climax', 'pacing')} for c in story.get('chapters') or []],
+                    editing=story.get('editing'), editing_stats=research.get('editing_stats'),
+                    shots=[dict(id=s['id'], start=s['start'], end=s['end'], opening=(s.get('analysis') or {}).get('action', {}).get('opening'),
+                                ending=(s.get('analysis') or {}).get('action', {}).get('ending'),
+                                camera=(s.get('analysis') or {}).get('camera', {}).get('shot_size'),
+                                direction=(s.get('analysis') or {}).get('camera', {}).get('screen_direction'),
+                                difficulty=(s.get('analysis') or {}).get('ai_difficulty')) for s in research['shots']])
+
     def research(self, run_id, task, snapshot, config, folder):
         source = snapshot['project'].get('source_video') or ''
         agent = config['agents']['research']
-        schema = ('{"summary":string,"species":[strings],"terrain":string,"timeline":[{"start":number,"end":number,'
-                  '"event":string,"action":string,"camera":string,"audio_hint":string,"evidence":[frame times],'
-                  '"uncertain":boolean}],"audio_notes":string,"limitations":[strings],"needs_review":boolean}')
         if not source:
+            schema = ('{"summary":string,"species":[strings],"terrain":string,"timeline":[{"start":number,"end":number,'
+                      '"event":string,"action":string,"camera":string,"audio_hint":string,"evidence":[frame times],'
+                      '"uncertain":boolean}],"audio_notes":string,"limitations":[strings],"needs_review":boolean}')
             result = self.discussion(run_id, task, snapshot, config, schema, extra='No source video file was provided; plan '
                                      'only from the brief. Use an empty evidence list and mark every timeline item uncertain.')
             strings(result, ('summary',))
             return dict(result, needs_review=True, reference_video_verified=False)
         if not Path(source).is_file():
             raise AgentReview('Không tìm thấy video gốc trên máy: ' + source)
-        sampled = sample_source(source, folder / 'evidence', self.stop)
-        frames, duration = sampled['frames'], sampled['info']['duration']
-        notes = []
-        for index in range(0, len(frames), 8):
-            chunk = frames[index:index + 8]
-            prompt = ('You are the Reference Analyst of a wildlife film studio. These are frames sampled from a source video at '
-                      'the listed times (seconds). Describe ONLY what is visible. Return one JSON object '
-                      '{"frames":[{"time":number,"species":string,"count":string,"action":string,"terrain":string,'
-                      '"camera":string,"uncertain":boolean}],"notes":string}. Frame times in order: ' +
-                      json.dumps([f['time'] for f in chunk]))
-            answer = self.ask(run_id, task['project_id'], agent['provider'], f'Phân tích khung {index + 1}–{index + len(chunk)}',
-                              prompt, [f['file'] for f in chunk], config, agent.get('model', ''),
-                              transport=agent.get('transport', 'browser'), scope=f'frames-{index}')
-            notes.append(parse_answer(answer))
-        extra = ('Write the source analysis report from these per-frame observations of a ' + f'{duration:.1f}' +
-                 '-second source video. Each timeline item must cite evidence frame times from the list. Audio is NOT '
-                 'analysed: audio_hint is a guess from visuals and must say so.\nOBSERVATIONS\n' + json.dumps(notes, ensure_ascii=False))
-        result = validate_report(self.discussion(run_id, task, snapshot, config, schema, extra=extra, scope='report'),
-                                 duration, [f['time'] for f in frames])
-        result['evidence'] = dict(info=sampled['info'], frames=self.evidence_frames(folder, frames))
-        result['reference_video_verified'] = True
-        result['needs_review'] = True  # Điểm duyệt "Sau phân tích nguồn"
-        return result
+        from . import reverse_engineer as rev
+        transport = agent.get('transport', 'browser')
+        # GIAI ĐOẠN 1 — xác minh video. Không đọc được hình chuyển động thì không tạo timeline.
+        self.update(run_id, phase='Giai đoạn 1 · Xác minh video gốc')
+        verify = rev.verify_source(source, self.stop)
+        if not verify['readable'] or verify['duration'] <= 0:
+            raise AgentReview('Không đọc được hình ảnh chuyển động của video gốc; không tạo timeline hay mô tả hành động.')
+        # GIAI ĐOẠN 3 — ứng viên điểm cắt bằng sai khác khung hình, phủ toàn bộ thời lượng.
+        self.update(run_id, phase='Giai đoạn 3 · Tìm điểm cắt cảnh')
+        shots = rev.detect_shots(source, verify['duration'], verify['fps'], self.stop)
+        with Path(source).open('rb') as handle:
+            digest = hashlib.file_digest(handle, 'sha256').hexdigest()
+        cache_file = self.root / task['project_id'] / f'reverse-{digest[:16]}.json'
+        try:
+            cache = json.loads(cache_file.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            cache = {}
+        evidence = folder / 'evidence'
+        previous = None
+        for shot in shots:
+            self.check_active(task['project_id'])
+            frames = rev.shot_frames(source, shot, evidence / 'shots', self.stop)
+            shot['frames'] = [dict(label=f['label'], time=f['time'], name=Path(f['file']).relative_to(evidence).as_posix().removesuffix('.jpg'))
+                              for f in frames]
+            key = f"{shot['start']:.3f}-{shot['end']:.3f}"
+            if key in cache:  # chạy lại sau khi dừng: không gọi AI lại cho shot đã phân tích của cùng video
+                shot['analysis'] = cache[key]
+            elif frames:
+                self.update(run_id, phase=f'Giai đoạn 4 · Phân tích shot {shot["id"]}/{shots[-1]["id"]}')
+                shot['analysis'] = self.analyse_shot(run_id, task, config, shot, frames, previous, verify)
+                cache[key] = shot['analysis']
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(json.dumps(cache, ensure_ascii=False), encoding='utf-8')
+            else:
+                shot['analysis'] = dict(verification=rev.STATUSES[3], confidence='Thấp', action={}, camera={})
+            previous = frames[-1] if frames else None
+            self.update(run_id, result=json.dumps(dict(partial=True, verification=verify, shots=shots, needs_review=True), ensure_ascii=False))
+        stats = rev.editing_stats(shots)
+        compact = [dict(id=s['id'], start=s['start'], end=s['end'], duration=s['duration'], cut=s['cut_confidence'],
+                        environment=rev.text_of((s.get('analysis') or {}).get('environment')),
+                        characters=rev.text_of((s.get('analysis') or {}).get('characters')),
+                        camera=rev.text_of((s.get('analysis') or {}).get('camera')),
+                        action=rev.text_of((s.get('analysis') or {}).get('action')),
+                        behavior=rev.text_of((s.get('analysis') or {}).get('behavior'))) for s in shots]
+        # GIAI ĐOẠN 2 + 6 — 5W1H, chương, cấu trúc câu chuyện, ngôn ngữ dựng phim (từ dữ liệu từng shot).
+        self.update(run_id, phase='Giai đoạn 2 & 6 · 5W1H, chương và nhịp dựng')
+        story_schema = ('{"summary":string,"who":string,"what":string,"where":string,"when":string,"why":string,"how":string,'
+                        '"structure":string,"editing":string,"chapters":[{"name":string,"start":number,"end":number,"shots":[shot ids],'
+                        '"characters":string,"summary":string,"cause_effect":string,"climax":string,"pacing":string,"role":string}],'
+                        '"emotion_timeline":[{"start":number,"end":number,"emotion":string,"pacing":string}],"needs_review":boolean}')
+        prompt = ('You are the Wildlife Documentary Director, Behavior Analyst and Video Editing Analyst (MASTER PROMPT V3.0). '
+                  'From the per-shot analysis below (estimated from sampled frames, audio not analysed), write in Vietnamese: '
+                  '5W1H of the whole video, chapters (every shot id in exactly one chapter, in order), story structure, editing '
+                  'language (cut rhythm, wide vs close shots, tension, predator/prey intercutting, establishing and reaction shots, '
+                  'acceleration, pauses, climax, ending) and an emotion/pacing timeline. Do not state animal intent as fact; mark '
+                  'inferences as "suy luận". Do not write a new script or prompts. Measured editing stats: ' +
+                  json.dumps(stats, ensure_ascii=False) + '. Return only one JSON object: ' + story_schema +
+                  '\nSHOTS\n' + json.dumps(compact, ensure_ascii=False))
+        story = parse_answer(self.ask(run_id, task['project_id'], agent['provider'], 'Tổng hợp 5W1H & cấu trúc', prompt, [], config,
+                                      agent.get('model', ''), transport=transport, scope='story'))
+        strings(story, ('summary',))
+        ids = {s['id'] for s in shots}
+        chapters = story.get('chapters') if isinstance(story.get('chapters'), list) else []
+        story['chapters'] = [c for c in chapters if isinstance(c, dict)]
+        for chapter in story['chapters']:
+            chapter['shots'] = [str(i).zfill(3) for i in chapter.get('shots') or [] if str(i).zfill(3) in ids]
+        # GIAI ĐOẠN 5 — kiểm soát liên tục từng cặp shot (dữ liệu vị trí/hướng lấy từ phân tích shot).
+        continuity = []
+        pairs = list(zip(shots, shots[1:]))
+        for index in range(0, len(pairs), 25):
+            batch = pairs[index:index + 25]
+            self.update(run_id, phase=f'Giai đoạn 5 · Kiểm soát liên tục {index + 1}–{index + len(batch)}/{len(pairs)}')
+            data = [dict(previous=a['id'], next=b['id'], previous_end=rev.text_of((a.get('analysis') or {}).get('action', {}).get('ending')),
+                         previous_direction=rev.text_of((a.get('analysis') or {}).get('camera', {}).get('screen_direction')),
+                         previous_characters=rev.text_of((a.get('analysis') or {}).get('characters')),
+                         next_start=rev.text_of((b.get('analysis') or {}).get('action', {}).get('opening')),
+                         next_direction=rev.text_of((b.get('analysis') or {}).get('camera', {}).get('screen_direction')),
+                         next_characters=rev.text_of((b.get('analysis') or {}).get('characters')),
+                         cut_check=rev.text_of((b.get('analysis') or {}).get('cut_check'))) for a, b in batch]
+            prompt = ('You are the Continuity Supervisor (MASTER PROMPT V3.0). For each pair of consecutive shots decide, in '
+                      'Vietnamese: identity, setting, direction, time jump, animal count change, same continuous action or '
+                      'intercutting. "link" must be one of: "Liên tục thực tế" | "Liên tục do dựng phim tạo ra" | '
+                      '"Không đủ bằng chứng xác định". Return only {"pairs":[{"previous":string,"next":string,"link":string,'
+                      '"issue":string,"suggestion":string}]} where suggestion is how to handle it when recreating with AI.\nPAIRS\n' +
+                      json.dumps(data, ensure_ascii=False))
+            answer = parse_answer(self.ask(run_id, task['project_id'], agent['provider'], f'Liên tục {index + 1}–{index + len(batch)}',
+                                           prompt, [], config, agent.get('model', ''), transport=transport, scope=f'continuity-{index}'))
+            found = {(str(p.get('previous')).zfill(3), str(p.get('next')).zfill(3)): p for p in answer.get('pairs') or [] if isinstance(p, dict)}
+            for a, b in batch:
+                item = found.get((a['id'], b['id']), {})
+                link = item.get('link') if item.get('link') in ('Liên tục thực tế', 'Liên tục do dựng phim tạo ra') else 'Không đủ bằng chứng xác định'
+                continuity.append(dict(previous=a['id'], next=b['id'],
+                                       characters=rev.text_of((b.get('analysis') or {}).get('characters')),
+                                       position=rev.text_of([c.get('frame_position') for c in (b.get('analysis') or {}).get('characters') or [] if isinstance(c, dict)]),
+                                       direction=f"{rev.text_of((a.get('analysis') or {}).get('camera', {}).get('screen_direction'))} → "
+                                                 f"{rev.text_of((b.get('analysis') or {}).get('camera', {}).get('screen_direction'))}",
+                                       end_state=rev.text_of((a.get('analysis') or {}).get('action', {}).get('ending')),
+                                       next_start_state=rev.text_of((b.get('analysis') or {}).get('action', {}).get('opening')),
+                                       link=link, issue=item.get('issue') or '', suggestion=item.get('suggestion') or ''))
+        # GIAI ĐOẠN 8 — kiểm tra chất lượng và danh sách cần kiểm tra lại.
+        qc = rev.quality_check(shots, verify['duration'])
+        qc_items = [dict(category='Timeline', where='Toàn video', detail=issue, status='Cần kiểm tra') for issue in qc['issues']]
+        for shot in shots:
+            analysis = shot.get('analysis') or {}
+            where = f"Shot {shot['id']} · {rev.clock(shot['start'])}"
+            if shot['cut_confidence'] in ('Trung bình', 'Thấp'):
+                qc_items.append(dict(category='Điểm cắt chưa chắc chắn', where=where,
+                                     detail=f"Điểm số sai khác {shot['cut_score']} ({shot['cut_confidence']}).", status='Cần kiểm tra'))
+            if (analysis.get('cut_check') or {}).get('is_real_cut') is False:
+                qc_items.append(dict(category='Có thể không phải điểm cắt thật', where=where,
+                                     detail=rev.text_of((analysis.get('cut_check') or {}).get('note')), status='Cần kiểm tra'))
+            if analysis.get('verification') == rev.STATUSES[3]:
+                qc_items.append(dict(category='Không thấy rõ nhân vật / hành động', where=where, detail='AI không đủ thông tin từ khung hình.',
+                                     status='Không xác định'))
+            if (analysis.get('action') or {}).get('middle'):
+                qc_items.append(dict(category='Chuyển động chưa được xác minh liên tục', where=where,
+                                     detail='Hành động giữa được ước lượng từ 5 khung hình.', status='Cần kiểm tra'))
+        for item in continuity:
+            if item['link'] != 'Liên tục thực tế' and item['issue']:
+                qc_items.append(dict(category='Nguy cơ thiếu tính liên tục', where=f"{item['previous']} → {item['next']}",
+                                     detail=item['issue'], status='Cần kiểm tra'))
+        qc_items.append(dict(category='Âm thanh', where='Toàn video', status='Không xác định',
+                             detail='Công cụ chưa nghe/phân tích âm thanh; cột âm thanh ghi "Chưa xác minh".' if verify['audio'] else 'Video không có audio track.'))
+        qc_items.append(dict(category='Camera', where='Toàn video', status='Cần kiểm tra',
+                             detail='Chuyển động camera chỉ ước lượng từ 5 khung hình mỗi shot; cần xem video để xác nhận.'))
+        report = dict(source_name=Path(source).name, verification=verify, shots=shots, story=story, continuity=continuity,
+                      qc=qc, qc_items=qc_items, editing_stats=stats)
+        self.update(run_id, phase='Giai đoạn 7 · Xuất Excel')
+        counts = rev.write_workbook(report, folder / 'reverse_engineering.xlsx')
+        verified = sum(1 for s in shots if (s.get('analysis') or {}).get('verification') in rev.STATUSES[:2])
+        limitations = ['Mỗi shot được phân tích từ 5 khung hình (đầu, 25%, giữa, 75%, cuối); chuyển động giữa các khung là ước lượng.',
+                       'Âm thanh chưa được phân tích.', 'Điểm cắt phát hiện tự động bằng sai khác khung hình; các điểm "Trung bình/Thấp" cần xem lại.']
+        frames_preview = [dict(time=s['frames'][2]['time'] if len(s['frames']) > 2 else s['frames'][0]['time'],
+                               name=(s['frames'][2] if len(s['frames']) > 2 else s['frames'][0])['name']) for s in shots if s['frames']][:60]
+        return dict(report, summary=story['summary'], needs_review=True, reference_video_verified=True, master_prompt='V3.0',
+                    excel=str(folder / 'reverse_engineering.xlsx'), excel_rows=counts, limitations=limitations,
+                    counts=dict(duration=verify['duration'], shots=len(shots), verified=verified, unverified=len(shots) - verified,
+                                chapters=len(story['chapters']), rows=sum(counts.values())),
+                    evidence=dict(info=dict(duration=verify['duration'], width=verify['width'], height=verify['height'], audio=verify['audio']),
+                                  frames=frames_preview))
 
     def selected_takes(self, snapshot):
         from .video_tools import probe
@@ -715,15 +900,17 @@ class ProductionAgents:
             return self.research(run_id, task, snapshot, config, folder)
         if stage == 'script':
             target = int(project.get('target_seconds') or 510)
+            clip = int(project.get('clip_seconds') or 10)
             schema = ('{"title":string,"logline":string,"acts":[{"name":string,"purpose":string}],"scenes":[{"purpose":string,'
                       '"setting":string,"camera":string,"behavior":string,"action":string,"duration":number,"difficult":boolean}],'
                       '"needs_review":boolean}')
             extra = (f'Write the full film script for a {target}-second film (total of scene durations between {int(target * .9)} and '
-                     f'{int(target * 1.1)} seconds). Split it into scenes of 5–10 seconds, each with a clear purpose in the story; '
-                     'follow the source analysis; do not pad with repeated establishing shots. Mark difficult=true for scenes whose '
+                     f'{int(target * 1.1)} seconds). Each scene is one AI clip of {clip} seconds (scene duration 3–{clip}s = the part kept '
+                     'after editing), each with a clear purpose in the story; follow the source analysis (shots, chapters, continuity, '
+                     'editing rhythm); do not pad with repeated establishing shots. Mark difficult=true for scenes whose '
                      'action is hard for video AI (chases, attacks, several animals interacting, fast motion) so they are test-generated '
                      'first. Keep each field short (under 300 characters).')
-            result = validate_script(self.discussion(run_id, task, snapshot, config, schema, extra=extra), target)
+            result = validate_script(self.discussion(run_id, task, snapshot, config, schema, extra=extra), target, clip)
             result['needs_review'] = True  # Điểm duyệt "Sau kịch bản"
             return result
         if stage == 'bible':
@@ -737,9 +924,11 @@ class ProductionAgents:
             return result
         if stage == 'prompt':
             schema = '{"prompt":string,"subjects":[subject ids],"needs_review":boolean}'
-            extra = ('Write one English text-to-video prompt for this 10-second scene: the locked subjects with their traits, '
-                     'environment, camera, action and continuity with neighbouring scenes. Natural ambient sound only; no speech, '
-                     'music, captions or on-screen text.')
+            clip = int(project.get('clip_seconds') or 10)
+            extra = (f'Write one English text-to-video prompt for this {clip}-second clip of a wildlife documentary: the locked '
+                     'subjects with their traits, environment, camera (shot size, angle, movement), the action from start to end '
+                     'state, and continuity with neighbouring scenes (entry/exit direction, positions). Video specification: ' +
+                     VIDEO_DEFAULTS + '.')
             result = validate_result('prompt', self.discussion(run_id, task, snapshot, config, schema, extra=extra))
             bible = self.output(snapshot, 'bible') or {}
             known = {s['id'] for s in bible.get('subjects', [])} if isinstance(bible, dict) else set()
@@ -1092,8 +1281,10 @@ class ProductionAgents:
         return dict(synced=synced, ambiguous=ambiguous)
 
     def queue_muse(self, project_id, enqueue):
-        """Giao Muse các cảnh sẵn sàng (đã có prompt duyệt, chưa có job đang chờ/chạy). enqueue(prompts, batch, scene_ids)."""
+        """Giao Muse các cảnh sẵn sàng (đã có prompt duyệt, chưa có job đang chờ/chạy).
+        enqueue(prompts, batch, scene_ids, options) — clip 8 hoặc 10 giây, 16:9, 4K theo MASTER PROMPT V3.0."""
         snapshot = self.board.snapshot(project_id)
+        options = {'duration': int(snapshot['project'].get('clip_seconds') or 10), 'aspect': '16:9', 'resolution': '4K'}
         queued = []
         for task in snapshot['tasks']:
             if task['stage'] != 'video':
@@ -1111,7 +1302,7 @@ class ProductionAgents:
                 continue
             queued.append((scene, 'production-' + task['id'] + '-' + str(attempt)))
         for scene, batch in queued:
-            enqueue([scene['prompt']], batch, [scene['id']])
+            enqueue([scene['prompt']], batch, [scene['id']], options)
         return dict(queued=len(queued))
 
     def cancel(self):

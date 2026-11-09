@@ -6,10 +6,10 @@ Một video gốc → phim AI động vật dài 8–9 phút. Dựng bằng CapC
 
 | Công đoạn | Agent | Đầu ra | Điểm duyệt |
 |---|---|---|---|
-| 01 · Phân tích video gốc | Reference Analyst (+ phản biện) | Báo cáo diễn biến có mốc thời gian, mỗi mục dẫn chứng bằng khung hình đã trích (FFmpeg) | Diễn biến có bằng chứng; chỗ chưa rõ được đánh dấu |
+| 01 · Phân tích video gốc | Reference Analyst · **MASTER PROMPT V3.0** | Xác minh file (thời lượng, FPS, độ phân giải, số khung, audio); tìm điểm cắt bằng sai khác khung hình; mỗi shot 5 khung (đầu/25%/giữa/75%/cuối) + khung cuối shot trước để kiểm tra điểm cắt; 5W1H, chương, ngôn ngữ dựng phim; bản đồ liên tục; QC timeline; **Excel 5 sheet** (Overview, Shot by shot 28 cột, Story structure, Continuity map, Verification & QC) | Dừng chờ người dùng; phân biệt đã xác minh / ước lượng / tự động / chưa đủ thông tin |
 | 02 · Đạo diễn & kịch bản | Story Director | Kịch bản toàn phim, chia cảnh 5–10 giây, có mục đích, đánh dấu cảnh khó. Tổng thời lượng phải nằm trong ±15% mục tiêu | Duyệt xong mới tạo danh sách SCENE_001… |
 | 03 · Nhân vật & môi trường | Character Agent | Hồ sơ cá thể (mã như `SNOW_LEOPARD_01`) và môi trường cố định, ghi vào Character Registry | Duyệt |
-| 03 · Prompt từng cảnh | Prompt Agent | Prompt tiếng Anh cho từng cảnh; gắn cá thể vào cảnh | Duyệt hàng loạt được |
+| 03 · Prompt từng cảnh | Prompt Agent | Prompt tiếng Anh cho từng clip 8/10 giây: 16:9, 4K, ánh sáng tự nhiên, 1.0×, không slow motion, chỉ tiếng tự nhiên, không chữ/logo/watermark (theo MASTER PROMPT V3.0); gắn cá thể vào cảnh | Duyệt hàng loạt được |
 | Tạo thử các cảnh khó | — | Cảnh khó được tạo video và QC trước | Duyệt xong mới chạy hàng loạt |
 | 04 · Sản xuất video | Bộ chạy Muse | Video theo mã cảnh. Nút **Giao Muse** và **Đồng bộ take** | — |
 | 05 · QC cảnh & nối cảnh | Visual QC | Cảnh đạt, hoặc lỗi kèm bằng chứng, trả về bước sửa prompt / tạo take mới | Duyệt hàng loạt được |
@@ -26,6 +26,7 @@ Một video gốc → phim AI động vật dài 8–9 phút. Dựng bằng CapC
 ## Chưa làm (cần kiểm tra trên máy người dùng)
 
 - Adapter điều khiển CapCut: tạo project, nhập file, đặt clip, xuất bản cuối. Hiện tại bản cuối được dựng trong CapCut theo file kế hoạch, bản nháp và bàn giao dùng FFmpeg.
-- Phân tích âm thanh của video gốc. Hiện chỉ đoán từ hình và được ghi rõ là đoán.
+- Phân tích âm thanh của video gốc: cột âm thanh trong Excel ghi "Chưa xác minh".
+- Phân tích chuyển động liên tục: mỗi shot dựa trên 5 khung hình, nên hành động giữa các khung và chuyển động camera được ghi là ước lượng.
 
 Nên nghiệm thu một phim ngắn 1 phút (khoảng 6 cảnh), có dựng và âm thanh hoàn chỉnh, trước khi chạy bản 8–9 phút.

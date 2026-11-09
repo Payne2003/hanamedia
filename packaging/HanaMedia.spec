@@ -13,7 +13,7 @@ a = Analysis(
     # imageio_ffmpeg: ffmpeg.exe để nâng độ phân giải và ghép video trên máy.
     datas=[(str(root / "web"), "web")] + collect_data_files("selenium") + collect_data_files("imageio_ffmpeg") + collect_data_files("certifi"),
     # Selenium nạp các phần con khi cần (lazy import) nên PyInstaller không tự thấy: gom hết để Chrome mở được trong bản .exe.
-    hiddenimports=["app", "folder_picker", "webview", "imageio_ffmpeg", "cryptography.hazmat.primitives.asymmetric.ed25519", "certifi"] + collect_submodules("selenium"),
+    hiddenimports=["app", "folder_picker", "webview", "imageio_ffmpeg", "cryptography.hazmat.primitives.asymmetric.ed25519", "certifi", "openpyxl"] + collect_submodules("selenium"),
     excludes=["pytest", "unittest.mock"],
 )
 pyz = PYZ(a.pure)

@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS production_events (
 """
 COLUMNS = {
     "production_projects": {"source_video": "TEXT NOT NULL DEFAULT ''",
-                            "target_seconds": f"INTEGER NOT NULL DEFAULT {DEFAULT_TARGET_SECONDS}"},
+                            "target_seconds": f"INTEGER NOT NULL DEFAULT {DEFAULT_TARGET_SECONDS}",
+                            "clip_seconds": "INTEGER NOT NULL DEFAULT 10"},
     "production_tasks": {"difficult": "INTEGER NOT NULL DEFAULT 0"},
     "scenes": {"purpose": "TEXT NOT NULL DEFAULT ''", "duration": "REAL NOT NULL DEFAULT 10",
                "difficult": "INTEGER NOT NULL DEFAULT 0"},
@@ -90,7 +91,7 @@ class ProductionBoard:
                            (uuid.uuid4().hex, project_id, scene['id'] if scene else None, stage,
                             int(scene['difficult']) if scene else 0, now, now))
 
-    def create(self, name, brief="", source_video="", target_seconds=DEFAULT_TARGET_SECONDS, source_url=""):
+    def create(self, name, brief="", source_video="", target_seconds=DEFAULT_TARGET_SECONDS, source_url="", clip_seconds=10):
         """Dự án mới từ một video gốc. Danh sách cảnh do công đoạn kịch bản tạo ra."""
         from pathlib import Path
         source_video = str(source_video or "").strip()
@@ -101,12 +102,14 @@ class ProductionBoard:
             source_video = str(path.resolve())
         if type(target_seconds) is not int or not 30 <= target_seconds <= 1200:
             raise ValueError("Thời lượng phim từ 30 giây đến 20 phút.")
+        if clip_seconds not in (8, 10):
+            raise ValueError("Mỗi clip AI dài 8 hoặc 10 giây.")
         if not source_video and not text(brief):
             raise ValueError("Chọn video gốc hoặc nhập yêu cầu sản xuất.")
         project_id = self.store.characters.create_project(name, brief, source_url)
         with self.store.connect() as db:
-            db.execute("INSERT INTO production_projects(project_id,status,created,source_video,target_seconds) VALUES(?,?,?,?,?)",
-                       (project_id, 'active', time.time(), source_video, target_seconds))
+            db.execute("INSERT INTO production_projects(project_id,status,created,source_video,target_seconds,clip_seconds) VALUES(?,?,?,?,?,?)",
+                       (project_id, 'active', time.time(), source_video, target_seconds, clip_seconds))
             self.ensure_tasks(db, project_id)
             self.event(db, project_id, None, "enabled", "Đã tạo dự án sản xuất từ " + ("video gốc." if source_video else "yêu cầu."))
         return self.snapshot(project_id)
@@ -180,7 +183,7 @@ class ProductionBoard:
     def snapshot(self, project_id):
         check_id(project_id, "Dự án")
         with self.store.connect() as db:
-            project = db.execute("""SELECT p.*, pp.status AS production_status, pp.source_video, pp.target_seconds
+            project = db.execute("""SELECT p.*, pp.status AS production_status, pp.source_video, pp.target_seconds, pp.clip_seconds
                 FROM projects p JOIN production_projects pp ON pp.project_id=p.id WHERE p.id=?""", (project_id,)).fetchone()
             if not project:
                 raise ValueError("Dự án chưa bật bảng sản xuất.")
