@@ -46,6 +46,9 @@ class AgentTests(unittest.TestCase):
     def complete_manual(self,stage):
         task=self.task(stage);self.store.production.transition(task['id'],'start')
         self.store.production.transition(task['id'],'complete','Kết quả đã duyệt')
+    def prepare_video(self):
+        """Hoàn tất thủ công các công đoạn trước video (dự án có sẵn cảnh, không có cảnh khó)."""
+        for stage in ('research','script','bible','prompt','pilot'):self.complete_manual(stage)
     def run_agent(self,stage):
         run=self.agents.start(self.task(stage)['id']);self.agents.thread.join(5)
         self.assertFalse(self.agents.thread.is_alive())
@@ -62,17 +65,36 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(self.task('script')['ready'])
         self.assertEqual(run['result']['reference_video_verified'],False)
 
-    def test_script_and_prompt_are_written_to_scene(self):
+    def test_script_creates_scenes_then_bible_and_prompt_link_characters(self):
         self.complete_manual('research')
-        script=dict(setting='Núi tuyết',camera='Toàn cảnh',behavior='Quan sát',action='Dê bước qua khe đá',needs_review=False)
+        with self.store.connect() as db:db.execute('UPDATE production_projects SET target_seconds=20')
+        scene=lambda action,hard:dict(purpose='Mở đầu',setting='Núi tuyết',camera='Toàn cảnh',behavior='Quan sát',action=action,duration=10,difficult=hard)
+        script=dict(title='Báo tuyết',logline='Một ngày săn mồi',acts=[],scenes=[scene('Dê bước qua khe đá',False),scene('Báo vồ dê',True)],needs_review=False)
         self.server.gemini_web.answers=[script]
         self.server.chatgpt_web.answers=[{'approved':True,'issues':[],'needs_review':False}]
-        run=self.run_agent('script');self.assertEqual(run['status'],'done')
-        self.assertEqual(self.store.characters.project(self.project)['scenes'][0]['action'],script['action'])
-        self.server.chatgpt_web.answers=[{'prompt':'Mountain goat steps over a rock crevice. Natural ambience.','needs_review':False}]
-        self.server.gemini_web.answers=[{'approved':True,'issues':[],'needs_review':False}]
-        self.assertEqual(self.run_agent('prompt')['status'],'done')
-        self.assertTrue(self.store.characters.project(self.project)['scenes'][0]['prompt'].startswith('Mountain goat'))
+        run=self.run_agent('script');self.assertEqual(run['status'],'review')  # điểm duyệt "Sau kịch bản"
+        self.agents.apply(run['id'],human=True)
+        scenes=self.store.production.snapshot(self.project)['scenes']
+        self.assertEqual([s['action'] for s in scenes],['Dê bước qua khe đá','Báo vồ dê'])
+        self.assertEqual([s['difficult'] for s in scenes],[0,1])
+        bible=dict(subjects=[dict(id='SNOW_LEOPARD_01',species='Báo tuyết',role='thợ săn',appearance='lông xám đốm đen')],
+                   environment=dict(biome='núi cao'),continuity_rules=['Báo luôn đi từ trái sang phải'],needs_review=False)
+        self.server.gemini_web.answers=[bible];self.server.chatgpt_web.answers=[{'approved':True,'issues':[],'needs_review':False}]
+        run=self.run_agent('bible');self.agents.apply(run['id'],human=True)
+        self.assertEqual(self.store.production.snapshot(self.project)['characters'][0]['code'],'SNOW_LEOPARD_01')
+        hard=next(t for t in self.store.production.snapshot(self.project)['tasks'] if t['stage']=='prompt' and t['difficult'])
+        self.server.chatgpt_web.answers=[{'prompt':'Snow leopard pounces on a goat. Natural ambience.','subjects':['SNOW_LEOPARD_01'],'needs_review':False}]
+        run=self.agents.start(hard['id']);self.agents.thread.join(5)
+        board=self.store.production.snapshot(self.project)
+        self.assertTrue(board['scenes'][1]['prompt'].startswith('Snow leopard'))
+        self.assertEqual(board['scenes'][1]['characters'],[board['characters'][0]['id']])
+        # Cảnh khó được tạo video trước; cảnh thường chờ duyệt tạo thử.
+        video=lambda i:next(t for t in board['tasks'] if t['stage']=='video' and t['scene_id']==board['scenes'][i]['id'])
+        self.assertTrue(video(1)['ready']);self.assertFalse(video(0)['ready'])
+        self.server.chatgpt_web.answers=[{'prompt':'Bad','subjects':['UNKNOWN_01'],'needs_review':False}]
+        easy=next(t for t in board['tasks'] if t['stage']=='prompt' and not t['difficult'])
+        self.agents.start(easy['id']);self.agents.thread.join(5)
+        self.assertIn('mã cá thể',next(r for r in self.agents.public(self.project)['runs'] if r['task_id']==easy['id'])['error'])
 
     def test_unresolved_disagreement_cannot_self_approve(self):
         self.server.gemini_web.answers=[{'summary':'Draft','needs_review':False},{'summary':'Revised','needs_review':False}]
@@ -129,7 +151,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(run['status'],'review')
 
     def test_qc_rework_invalidates_downstream_and_disallows_old_take(self):
-        for stage in ('research','script','prompt'):self.complete_manual(stage)
+        self.prepare_video()
         self.store.enqueue(['Goat'],1,'old-take-000000001',scene_ids=[self.scene])
         with self.store.connect() as db:db.execute("UPDATE jobs SET status='done',output='old.mp4'")
         oldjob=self.store.snapshot()['jobs'][0]['id']
@@ -153,7 +175,7 @@ class AgentTests(unittest.TestCase):
                                 '-c:v','libx264','-threads','1',str(source)],30)
         self.assertEqual(result.returncode,0,result.stderr)
         config=self.agents.settings(self.project);config['discussion_rounds']=0;self.agents.configure(self.project,config)
-        for stage in ('research','script','prompt'):self.complete_manual(stage)
+        self.prepare_video()
         self.store.enqueue(['Goat'],1,'real-media-take-00001',scene_ids=[self.scene])
         with self.store.connect() as db:db.execute("UPDATE jobs SET status='done',output=?",(str(source),))
         self.agents.sync_muse(self.task('video')['id'])
@@ -174,7 +196,11 @@ class AgentTests(unittest.TestCase):
         film=self.run_agent('film_qc')
         with self.assertRaisesRegex(ValueError,'âm thanh'):self.agents.apply(film['id'],human=True)
         self.agents.apply(film['id'],human=True,audio_confirmed=True)
-        delivery=self.run_agent('delivery');self.assertEqual(delivery['status'],'done')
+        delivery=self.run_agent('delivery')
+        # Bản dựng 0,8 giây lệch xa mục tiêu 8–9 phút: kiểm tra bàn giao báo lệch và chờ người dùng duyệt.
+        self.assertEqual(delivery['status'],'review')
+        self.assertFalse(next(c for c in delivery['result']['checks'] if c['name']=='Thời lượng')['ok'])
+        self.agents.apply(delivery['id'],human=True)
         manifest=json.loads(Path(delivery['result']['manifest']).read_text(encoding='utf-8'))
         self.assertEqual(manifest['scenes'][0]['scene_id'],self.scene)
         self.assertEqual(len(manifest['sha256']),64)
@@ -187,14 +213,14 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(self.server.gemini_web.calls,[])
 
     def test_api_transport_records_usage_and_does_not_open_browser(self):
-        self.complete_manual('research')
+        [self.complete_manual(stage) for stage in ('research','script','bible')]
         self.agents.api.vault.save('gemini',key='test-owner-only',max_output_tokens=128)
-        script=dict(setting='Núi',camera='Toàn cảnh',behavior='Quan sát',action='Dê bước qua đá',needs_review=False)
+        script=dict(prompt='Goat steps over rocks. Natural ambience.',needs_review=False)
         self.agents.api.post=lambda *args:{'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':json.dumps(script)}]}}],
                                           'usageMetadata':{'promptTokenCount':20,'candidatesTokenCount':10}}
-        config=self.agents.settings(self.project);config['agents']['script'].update(transport='api',reviewer='',consultant='')
+        config=self.agents.settings(self.project);config['agents']['prompt'].update(transport='api',provider='gemini',reviewer='',consultant='')
         self.agents.configure(self.project,config)
-        run=self.run_agent('script')
+        run=self.run_agent('prompt')
         self.assertEqual(run['status'],'done');self.assertEqual(run['calls'][0]['transport'],'api')
         self.assertEqual(json.loads(run['calls'][0]['usage'])['input_tokens'],20)
         self.assertEqual(self.server.gemini_web.calls,[])
@@ -206,7 +232,7 @@ class AgentTests(unittest.TestCase):
         self.agents.gateway_enabled=True  # máy chủ trung gian đang tạm ẩn với người dùng; vẫn giữ đường chạy
         owner=APIClients(Path(self.temp.name)/'owner')
         owner.vault.save('gemini',key='test-gateway-owner-only',max_output_tokens=128)
-        script=dict(setting='Núi',camera='Toàn cảnh',behavior='Quan sát',action='Dê bước qua đá',needs_review=False)
+        script=dict(prompt='Goat steps over rocks. Natural ambience.',needs_review=False)
         owner.post=lambda *args:{'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':json.dumps(script)}]}}],
                                   'usageMetadata':{'promptTokenCount':20,'candidatesTokenCount':10}}
         service=GatewayService(Path(self.temp.name)/'owner',api=owner)
@@ -214,10 +240,10 @@ class AgentTests(unittest.TestCase):
         server=GatewayServer(('127.0.0.1',0),service);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         try:
             self.agents.api.vault.save_gateway('http://127.0.0.1:'+str(server.server_port),grant['token'])
-            self.complete_manual('research')
-            config=self.agents.settings(self.project);config['agents']['script'].update(transport='gateway',reviewer='',consultant='')
+            [self.complete_manual(stage) for stage in ('research','script','bible')]
+            config=self.agents.settings(self.project);config['agents']['prompt'].update(transport='gateway',provider='gemini',reviewer='',consultant='')
             self.agents.configure(self.project,config)
-            run=self.run_agent('script');self.assertEqual(run['status'],'done')
+            run=self.run_agent('prompt');self.assertEqual(run['status'],'done')
             self.assertEqual(run['calls'][0]['transport'],'gateway')
             self.assertEqual(service.store.report()[0]['used_tokens'],30)
             self.assertFalse(self.agents.api.vault.public()['gemini']['configured'])
@@ -260,7 +286,7 @@ class AgentTests(unittest.TestCase):
         self.server.gemini_web.answers=[{'a':1},{'a':2},{'a':3}]
         for scene in ('s1','s2','s3'):
             self.agents.ask(run_id,self.project,'gemini','Đề xuất','p',[],config,scope=scene)
-        with self.assertRaisesRegex(AgentReview,'cảnh này'):
+        with self.assertRaisesRegex(AgentReview,'phần này'):
             self.agents.ask(run_id,self.project,'gemini','Đề xuất','p',[],config,scope='s1')
 
     def test_stop_kills_running_ffmpeg(self):
@@ -272,8 +298,70 @@ class AgentTests(unittest.TestCase):
             production_media.run([video_tools.ffmpeg(),'-v','error','-re','-f','lavfi','-i','color=c=black:s=64x64:r=5:d=60','-f','null','-'],60,stop)
         self.assertLess(time.monotonic()-started,10)
 
+    def test_research_analyses_frames_of_the_source_video(self):
+        source=Path(self.temp.name)/'source.mp4'
+        result=video_tools.run([video_tools.ffmpeg(),'-v','error','-y','-f','lavfi','-i','testsrc=s=160x90:r=10:d=12',
+                                '-c:v','libx264','-threads','1',str(source)],60)
+        self.assertEqual(result.returncode,0,result.stderr)
+        board=self.store.production.create('Nguồn',source_video=str(source),target_seconds=60)
+        project=board['project']['id']
+        config=self.agents.settings(project);config['agents']['research'].update(reviewer='');self.agents.configure(project,config)
+        frames={'frames':[{'time':.75,'species':'không rõ','count':'0','action':'thử','terrain':'','camera':'tĩnh','uncertain':True}],'notes':'hình thử'}
+        report={'summary':'Video thử nghiệm','species':[],'terrain':'','timeline':[{'start':0,'end':12,'event':'Màn hình màu','action':'',
+                'camera':'tĩnh','audio_hint':'đoán','evidence':[.75],'uncertain':True}],'audio_notes':'','limitations':[],'needs_review':False}
+        self.server.gemini_web.answers=[frames,report]
+        task=next(t for t in board['tasks'] if t['stage']=='research')
+        run=self.agents.start(task['id']);self.agents.thread.join(30)
+        run=next(r for r in self.agents.public(project)['runs'] if r['id']==run['run_id'])
+        self.assertEqual(run['status'],'review',run['error']);self.assertTrue(run['result']['reference_video_verified'])
+        self.assertEqual(len(run['result']['evidence']['frames']),8)
+        self.assertEqual(run['result']['evidence']['frames'][0]['name'],'src-001')
+        self.assertEqual(len(self.server.gemini_web.calls[0][2]['lines']['files']),8)  # khung hình được gửi kèm
+        self.assertTrue(run['result']['needs_review'])
+        with self.assertRaisesRegex(AgentReview,'khung hình'):
+            from runner.production_agents import validate_report
+            validate_report(dict(report,timeline=[dict(report['timeline'][0],evidence=[7.1])]),12,[.75,2.25])
+
+    def test_ai_manager_runs_ready_tasks_until_a_review_gate(self):
+        self.store.characters.add_scenes(self.project,[{'action':'Báo rình'}])
+        self.store.production.enable(self.project)
+        for stage in ('research','script','bible'):self.complete_manual(stage)
+        prompt={'prompt':'Goat. Natural ambience.','needs_review':False}
+        self.server.chatgpt_web.answers=[prompt,dict(prompt)]
+        config=self.agents.settings(self.project);config['agents']['prompt'].update(reviewer='');config['auto_run']=True
+        self.agents.configure(self.project,config)
+        import time
+        deadline=time.monotonic()+10
+        prompts=lambda:[t for t in self.store.production.snapshot(self.project)['tasks'] if t['stage']=='prompt']
+        while time.monotonic()<deadline and not all(t['status']=='done' for t in prompts()):time.sleep(.05)
+        self.assertTrue(all(t['status']=='done' for t in prompts()))
+        self.assertEqual(len(self.server.chatgpt_web.calls),2)
+        # Tạo thử cảnh khó cần người duyệt: AI Manager dừng ở đây.
+        self.assertIsNone(self.agents.next_task(self.project))
+
+    def test_queue_muse_and_sync_all_follow_scene_codes(self):
+        self.prepare_video()
+        enqueued=[]
+        def enqueue(prompts,batch,scene_ids):
+            enqueued.append(batch);self.store.enqueue(prompts,1,batch,scene_ids=scene_ids)
+        self.assertEqual(self.agents.queue_muse(self.project,enqueue)['queued'],1)
+        self.assertEqual(self.agents.queue_muse(self.project,enqueue)['queued'],0)  # không gửi trùng
+        self.assertTrue(enqueued[0].startswith('production-'))
+        with self.store.connect() as db:db.execute("UPDATE jobs SET status='done',output='take.mp4'")
+        self.assertEqual(self.agents.sync_all(self.project),{'synced':1,'ambiguous':0})
+        self.assertEqual(self.task('video')['status'],'done')
+
+    def test_old_projects_move_script_to_whole_film_stage(self):
+        with self.store.connect() as db:
+            db.execute("DELETE FROM production_tasks WHERE project_id=? AND stage IN ('script','bible','pilot')",(self.project,))
+            db.execute("INSERT INTO production_tasks(id,project_id,scene_id,stage,created,updated) VALUES(?,?,?,'script',0,0)",('b'*32,self.project,self.scene))
+        board=Store(self.store.path).production.snapshot(self.project)
+        scripts=[t for t in board['tasks'] if t['stage']=='script']
+        self.assertEqual([t['scene_id'] for t in scripts],[None])
+        self.assertTrue(any(t['stage']=='bible' for t in board['tasks']))
+
     def test_muse_sync_requires_unambiguous_scene_take(self):
-        for stage in ('research','script','prompt'):self.complete_manual(stage)
+        self.prepare_video()
         self.store.enqueue(['Goat'],1,'muse-sync-000000001',scene_ids=[self.scene])
         with self.assertRaises(ValueError):self.agents.sync_muse(self.task('video')['id'])
         with self.store.connect() as db:db.execute("UPDATE jobs SET status='done',output='take.mp4'")
@@ -293,6 +381,22 @@ class MediaTests(unittest.TestCase):
         result=video_tools.run(args+[str(path)],30)
         self.assertEqual(result.returncode,0,result.stderr)
         return path
+    def test_sound_layers_are_mixed_into_the_draft(self):
+        from runner.production_media import validate_sound
+        take=self.clip('take.mp4','green',audio=True)
+        sound=self.root/'wind.wav'
+        result=video_tools.run([video_tools.ffmpeg(),'-v','error','-y','-f','lavfi','-i','anoisesrc=d=0.5:a=0.1',str(sound)],30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        info=video_tools.probe(take)
+        takes=[dict(scene_id='s'*32,job_id='j'*32,path=str(take),**info)]
+        plan=dict(clips=[dict(scene_id='s'*32,job_id='j'*32,**{'in':.1,'out':1.1,'speed':1})])
+        spec=validate_sound(dict(source_audio='mute',layers=[dict(sound_id='w',at=.2,length=.6,volume=.8)]),1.0,{'w':sound})
+        with self.assertRaises(ValueError):validate_sound(dict(layers=[dict(sound_id='music',at=0)]),1.0,{'w':sound})
+        with self.assertRaises(ValueError):validate_sound(dict(layers=[dict(sound_id='w',at=5)]),1.0,{'w':sound})
+        out=render_timeline(plan,takes,self.root/'film.mp4',sounds={'s'*32:spec})
+        self.assertTrue(out['info']['audio']);self.assertAlmostEqual(out['info']['duration'],1.0,delta=.2)
+        self.assertEqual(out['audio_policy'],'natural_layers_unverified')
+
     def test_real_ffmpeg_decode_frames_and_trimmed_mixed_audio_render(self):
         files=[self.clip('red.mp4','red',True),self.clip('blue.mp4','blue')]
         evidence=inspect_clip(files[0],self.root/'evidence')

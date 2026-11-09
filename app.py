@@ -311,8 +311,9 @@ class Handler(BaseHTTPRequestHandler):
     JOB_PATHS = {"/api/jobs", "/api/start", "/api/jobs/update", "/api/jobs/rerun", "/api/retry", "/api/jobs/fetch", "/api/batch/stitch",
                  "/api/jobs/characters", "/api/jobs/attach-characters", "/api/login", "/api/accounts/login-all",
                  "/api/review", "/api/accounts/check", "/api/accounts/check-all",
-                 "/api/production/agent/run", "/api/production/agent/approve", "/api/production/agent/api-test"}
-    MEDIA_PATHS = {"/api/media/upload", "/api/media/delete-batch", "/api/library/image-upload", "/api/image-upload",
+                 "/api/production/agent/run", "/api/production/agent/approve", "/api/production/agent/api-test",
+                 "/api/production/agent/auto", "/api/production/agent/approve-batch", "/api/production/queue-muse"}
+    MEDIA_PATHS = {"/api/production/sounds/upload", "/api/media/upload", "/api/media/delete-batch", "/api/library/image-upload", "/api/image-upload",
                    "/api/library/delete", "/api/library/import-flow"}
 
     def required_permission(self, method, path):
@@ -486,7 +487,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(self.server.store.characters.project(project_match.group(1)))
             except ValueError as error:
                 return self.reply({"error": str(error)}, 404)
-        production_file = re.fullmatch(r"/api/production/run/([a-f0-9]{32})/(film|manifest|frame/[1-4])", path)
+        production_file = re.fullmatch(r"/api/production/run/([a-f0-9]{32})/(film|manifest|plan\.csv|plan\.json|"
+                                       r"frame/(?:[a-f0-9]{32}/)?[a-z0-9-]{1,40})", path)
         if production_file:
             run_id, part = production_file.groups()
             with self.server.store.connect() as db:
@@ -494,12 +496,21 @@ class Handler(BaseHTTPRequestHandler):
             if not run:
                 return self.reply({"error": "Không tìm thấy lần chạy."}, 404)
             folder = self.server.agents.root / run["project_id"] / run_id
-            relative = "film.mp4" if part == "film" else "manifest.json" if part == "manifest" else "evidence/frame-" + part.rsplit("/", 1)[1] + ".jpg"
+            files = {"film": ("film.mp4", "video/mp4"), "manifest": ("manifest.json", "application/json"),
+                     "plan.csv": ("edit_plan.csv", "text/csv; charset=utf-8"), "plan.json": ("edit_plan.json", "application/json")}
+            relative, kind = files.get(part) or ("evidence/" + part.split("/", 1)[1] + ".jpg", "image/jpeg")
             file = (folder / relative).resolve()
             if not file.is_relative_to(folder.resolve()) or not file.is_file():
                 return self.reply({"error": "Chưa có tệp đầu ra."}, 404)
-            kind = "video/mp4" if part == "film" else "application/json" if part == "manifest" else "image/jpeg"
-            return self.send_file(file, kind, "attachment" if part == "manifest" else "inline", file.name)
+            return self.send_file(file, kind, "inline" if kind in ("video/mp4", "image/jpeg") else "attachment", file.name)
+        production_sound = re.fullmatch(r"/api/production/sound/([a-f0-9]{32})", path)
+        if production_sound:
+            try:
+                file = self.server.agents.sounds.path(production_sound.group(1))
+            except ValueError as error:
+                return self.reply({"error": str(error)}, 404)
+            kinds = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac", ".ogg": "audio/ogg", ".flac": "audio/flac"}
+            return self.send_file(file, kinds.get(file.suffix.lower(), "application/octet-stream"), "inline", file.name)
         library_image = re.fullmatch(r"/api/library/image/([a-f0-9]{32})", path)
         if library_image:
             image = self.server.store.image_file(library_image.group(1))
@@ -574,6 +585,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def pick_video(self):
+        """Hộp chọn video gốc của Windows (tiến trình riêng vì Tk cần luồng chính). Trả về đường dẫn hoặc ''."""
+        if not self.server.folder_lock.acquire(blocking=False):
+            raise ValueError("Hộp chọn file đang mở.")
+        try:
+            if frozen():
+                answer = DATA / ".video-choice.txt"
+                answer.unlink(missing_ok=True)
+                result = subprocess.run([sys.executable, "--pick-video", str(answer)], timeout=300)
+                chosen = answer.read_text(encoding="utf-8").strip() if answer.is_file() else ""
+                answer.unlink(missing_ok=True)
+            else:
+                result = subprocess.run([sys.executable, str(ROOT / "folder_picker.py"), "--video"],
+                                        capture_output=True, timeout=300, encoding="utf-8")
+                chosen = (result.stdout or "").strip()
+            if result.returncode:
+                raise ValueError("Không mở được hộp chọn file. Chạy tool trên Windows có giao diện màn hình.")
+            return chosen
+        finally:
+            self.server.folder_lock.release()
+
     def do_POST(self):
         if not self.allowed(True):
             return self.reply({"error": "Yêu cầu không hợp lệ. Mở tool tại địa chỉ 127.0.0.1."}, 403)
@@ -599,6 +631,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply({"error": str(error)}, 400)
             if path.startswith("/api/media/"):
                 return self.media_mutate("POST", path)
+            if path == "/api/production/sounds/upload":
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 80 * 1024 * 1024:
+                    raise ValueError("File âm thanh trống hoặc lớn hơn 80 MB.")
+                item, duplicate = self.server.agents.sounds.add(self.rfile.read(size), unquote(self.headers.get("X-Sound-Name", "")),
+                                                                unquote(self.headers.get("X-Sound-Tags", "")))
+                return self.reply({"ok": True, "duplicate": duplicate, "sound": item})
             if path in ("/api/image-upload", "/api/library/image-upload"):
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= 10_000_000:
@@ -646,13 +685,44 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(self.server.agents.apply(body["run_id"], human=True,
                                                           audio_confirmed=body.get("audio_confirmed") is True))
             elif path == "/api/production/agent/rework":
-                return self.reply(self.server.agents.rework(body["run_id"], body.get("target")))
+                return self.reply(self.server.agents.rework(body["run_id"], body.get("target"), body.get("scene_id")))
+            elif path == "/api/production/agent/approve-batch":
+                return self.reply(self.server.agents.approve_batch(body["project_id"], body.get("stage")))
+            elif path == "/api/production/agent/auto":
+                return self.reply(self.server.agents.set_auto(body["project_id"], body.get("enabled")))
+            elif path == "/api/production/agent/sync-all":
+                return self.reply(self.server.agents.sync_all(body["project_id"]))
+            elif path == "/api/production/queue-muse":
+                def enqueue(prompts, batch, scene_ids):
+                    reserved = self.server.license.reserve_jobs(len(prompts))
+                    try:
+                        store.enqueue(prompts, 1, batch, None, "text", None, scene_ids, {"duration": 10, "aspect": "16:9"})
+                    except Exception:
+                        self.server.license.refund_jobs(reserved, len(prompts))
+                        raise
+                try:
+                    result = self.server.agents.queue_muse(body["project_id"], enqueue)
+                except PermissionError as error:
+                    return self.reply({"error": str(error), "license": True}, 403)
+                engine.changed.set()
+                return self.reply(result)
+            elif path == "/api/production/sounds/update":
+                self.server.agents.sounds.update(body.get("id"), body.get("name"), body.get("tags"))
+                return self.reply({"ok": True, "sounds": self.server.agents.sounds.list()})
+            elif path == "/api/production/sounds/delete":
+                self.server.agents.sounds.delete(body.get("id"))
+                return self.reply({"ok": True, "sounds": self.server.agents.sounds.list()})
+            elif path == "/api/production/pick-video":
+                return self.reply({"path": self.pick_video()})
             elif path == "/api/production/agent/reject":
                 return self.reply(self.server.agents.reject(body["run_id"]))
             elif path == "/api/production/agent/stop":
                 return self.reply(self.server.agents.cancel())
             elif path == "/api/production/agent/sync-muse":
                 return self.reply(self.server.agents.sync_muse(body["task_id"], body.get("job_id")))
+            elif path == "/api/production/create" and "scenes" not in body:
+                return self.reply(store.production.create(body.get("name"), body.get("brief", ""), body.get("source_video", ""),
+                                                          body.get("target_seconds", 510), body.get("source_url", "")))
             elif path == "/api/production/create":
                 scenes = body.get("scenes")
                 if not isinstance(scenes, list) or not 1 <= len(scenes) <= 200:
@@ -988,10 +1058,11 @@ def stop_runner(server, engine, instance, wait=None):
 
 
 def main():
-    if "--pick-folder" in sys.argv:  # bản cài đặt: HanaMedia.exe --pick-folder mở hộp chọn thư mục
-        import folder_picker
-        index = sys.argv.index("--pick-folder")
-        return folder_picker.main(sys.argv[index + 1] if len(sys.argv) > index + 1 else None)
+    for flag in ("--pick-folder", "--pick-video"):  # bản cài đặt: HanaMedia.exe --pick-… mở hộp chọn thư mục / video
+        if flag in sys.argv:
+            import folder_picker
+            index = sys.argv.index(flag)
+            return folder_picker.main(sys.argv[index + 1] if len(sys.argv) > index + 1 else None, video=flag == "--pick-video")
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-open", action="store_true")

@@ -140,9 +140,9 @@ class Store:
             db.execute("""CREATE TABLE IF NOT EXISTS batch_options (
                 batch TEXT PRIMARY KEY, stitch INTEGER NOT NULL DEFAULT 0, stitch_status TEXT NOT NULL DEFAULT '',
                 stitch_output TEXT, stitch_error TEXT NOT NULL DEFAULT '', created REAL NOT NULL)""")
+        self.characters = CharacterRegistry(self)
         from .production import ProductionBoard
         self.production = ProductionBoard(self)
-        self.characters = CharacterRegistry(self)
         self.media = MediaLibrary(self)
         self.cleanup_images()
         self.media.purge_hidden()

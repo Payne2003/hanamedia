@@ -78,7 +78,7 @@ class KeyVault:
 
     def options(self, provider):
         with self.lock:record=self.read().get(provider,{})
-        return dict(model=record.get('model') or PROVIDERS[provider]['model'],max_output_tokens=record.get('max_output_tokens',4096))
+        return dict(model=record.get('model') or PROVIDERS[provider]['model'],max_output_tokens=record.get('max_output_tokens',8192))
 
     def public(self):
         result={}
@@ -117,8 +117,8 @@ class KeyVault:
             raise APIError('Khóa API không hợp lệ; không được có khoảng trắng.')
         if model is not None and (not isinstance(model,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}',model)):
             raise APIError('Tên model API không hợp lệ.')
-        if max_output_tokens is not None and (type(max_output_tokens) is not int or not 64<=max_output_tokens<=8192):
-            raise APIError('Giới hạn đầu ra từ 64 đến 8192 token.')
+        if max_output_tokens is not None and (type(max_output_tokens) is not int or not 64<=max_output_tokens<=32768):
+            raise APIError('Giới hạn đầu ra từ 64 đến 32768 token.')
         with self.lock:
             records=self.read();record=records.setdefault(provider,{})
             if remove:record.pop('key',None)
