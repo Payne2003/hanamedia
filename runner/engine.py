@@ -285,11 +285,25 @@ class Engine:
 
     @staticmethod
     def alive(browser):
-        """Chrome/ChromeDriver còn sống không (người dùng có thể đã tự đóng cửa sổ)."""
+        """Chrome/ChromeDriver còn sống không (người dùng có thể đã tự đóng cửa sổ). Cửa sổ đang điều khiển đã đóng
+        nhưng còn tab khác thì chuyển sang tab đó; không còn tab nào thì coi như Chrome đã chết."""
         try:
-            return bool(browser.driver.window_handles)
+            handles = browser.driver.window_handles
         except Exception:
             return False
+        if not handles:
+            return False
+        try:
+            browser.driver.current_window_handle
+            return True
+        except AttributeError:
+            return True  # driver giả lập trong kiểm thử
+        except Exception:
+            try:
+                browser.driver.switch_to.window(handles[-1])
+                return True
+            except Exception:
+                return False
 
     def session(self, job, account, headless, target):
         """Phiên Muse cho tác vụ: dùng lại Chrome đang mở của tài khoản nếu còn sống, kiểm tra phiên trước khi gửi,
@@ -332,6 +346,7 @@ class Engine:
             target.mkdir(parents=True, exist_ok=True)
             browser = self.session(job, account, headless, target)
             browser.set_download_directory(target)
+            browser.url_seen = lambda url, job_id=job["id"]: self.store.set_source(job_id, url)
             self.store.phase(job["id"], "Chuẩn bị gửi prompt", browser.driver.current_url)
             spec = request_spec(job.get("aspect"), job.get("duration"), job.get("resolution"))
             # Prompt chọn thông số: gửi kèm, và chờ lâu hơn cho 4K (Muse làm 4K / prompt dài thường mất 20–40 phút).
@@ -343,21 +358,18 @@ class Engine:
                 if not error.pending or not automatic or not hasattr(browser, "fetch_existing"):
                     raise
                 file = self.chase_video(job, browser, error)  # tải được rồi mới nhận prompt tiếp theo
-            final = target / f"Prompt {job['ordinal'] + 1}.mp4"
-            if file != final:
-                try:
-                    file.rename(final)
-                except OSError:
-                    final = file  # video đã tải về: giữ tên gốc chứ không báo lỗi tác vụ
-            self.store.finish(job["id"], output=str(final))
-            if job.get("resolution") or self.store.batch_stitch(job["batch"]):
-                self.post_requests.put(job["id"])  # nâng độ phân giải / ghép video chạy riêng, không giữ tài khoản Muse
+            self.complete(job, target, file)
         except Exception as error:
             known = isinstance(error, MuseFailure)
             technical = self.log_failure(job, account, error) if known else self.log_error(job, account, error)
             message = str(error) if known else (
                 f"Bộ chạy gặp lỗi Chrome/trang Muse ({technical}). Chi tiết trong data/logs/runner.log; không tự gửi lại.")
-            alive = bool(browser) and self.alive(browser)
+            if known and getattr(error, "region", False):
+                self.store.set_video_blocked(account["id"])  # không giao prompt cho tài khoản này nữa
+            dead = not known and any(t in f"{type(error).__name__} {error}" for t in (
+                "NoSuchWindow", "InvalidSessionId", "invalid session id", "not connected to DevTools",
+                "target window already closed", "web view not found", "chrome not reachable"))
+            alive = bool(browser) and not dead and self.alive(browser)
             session_ready = False
             if alive:
                 try:
@@ -380,16 +392,51 @@ class Engine:
             # Chrome bị đóng / treo: lần sau mở Chrome mới, KHÔNG dừng tài khoản.
             if not known and self.store.requeue_unsent(job["id"], f"lỗi Chrome trước khi gửi ({technical})", account_state):
                 return
+            # Chrome tắt ngang SAU khi đã gửi: mở Chrome mới, vào lại đúng cuộc trò chuyện, tải video (không gửi lại).
+            if not known and automatic and not alive and self.recover_after_crash(job, account, headless, target):
+                return
             self.store.finish(job["id"], error=message, account_state=account_state)
+
+    def complete(self, job, target, file):
+        final = target / f"Prompt {job['ordinal'] + 1}.mp4"
+        if file != final:
+            try:
+                file.rename(final)
+            except OSError:
+                final = file  # video đã tải về: giữ tên gốc chứ không báo lỗi tác vụ
+        self.store.finish(job["id"], output=str(final))
+        if job.get("resolution") or self.store.batch_stitch(job["batch"]):
+            self.post_requests.put(job["id"])  # nâng độ phân giải / ghép video chạy riêng, không giữ tài khoản Muse
+
+    def recover_after_crash(self, job, account, headless, target):
+        """Prompt đã gửi, Chrome chết giữa chừng: mở Chrome mới và tự tải video về. True nếu đã xong tác vụ."""
+        state = self.store.job_state(job["id"])
+        url = str(state.get("source_url") or "")
+        if state.get("status") != "running" or not state.get("submitted") or not url.startswith("https://") \
+                or url.rstrip("/").endswith(("muse.ai", "muse.ai/")) or self.closing:
+            return False
+        try:
+            self.store.phase(job["id"], "Chrome bị đóng sau khi gửi; mở lại cuộc trò chuyện để lấy video (không gửi lại)")
+            browser = self.session(job, account, headless, target)
+            browser.set_download_directory(target)
+            if not hasattr(browser, "fetch_existing"):
+                return False
+            file = self.chase_video(job, browser, MuseFailure("Chrome bị đóng sau khi gửi.", pending=True), url=url,
+                                    first_now=True)
+            self.complete(job, target, file)
+            return True
+        except Exception as again:
+            self.log_failure(job, account, MuseFailure(f"Không lấy lại được video sau khi Chrome bị đóng: {again}"))
+            return False
 
     CHASE_ATTEMPTS = 10  # ~25 phút tự kiểm tra thêm sau khi hết thời gian chờ
     chase_wait = 60
 
-    def chase_video(self, job, browser, error):
+    def chase_video(self, job, browser, error, url=None, first_now=False):
         """Prompt ĐÃ GỬI mà chưa tải được video (Muse chậm, khung video bị vẽ lại, nút tải chưa hiện): giữ tài khoản,
         tự mở lại đúng cuộc trò chuyện và kiểm tra lại nhiều lần cho tới khi tải được. KHÔNG gửi lại prompt.
         Chỉ khi vẫn không được mới báo lỗi (khi đó còn nút ⇩ Lấy video)."""
-        url = browser.driver.current_url
+        url = url or browser.driver.current_url
         self.store.set_source(job["id"], url)
         last = error
         for attempt in range(1, self.CHASE_ATTEMPTS + 1):
@@ -397,7 +444,8 @@ class Engine:
                 break
             self.store.phase(job["id"], f"Muse chưa trả video; tự kiểm tra lại lần {attempt}/{self.CHASE_ATTEMPTS} "
                                         "(không gửi lại prompt)")
-            time.sleep(self.chase_wait)
+            if not (first_now and attempt == 1):
+                time.sleep(self.chase_wait)
             try:
                 return browser.fetch_existing(job["id"], url)
             except MuseFailure as again:

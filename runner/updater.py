@@ -39,21 +39,9 @@ def newer(candidate, current=APP_VERSION):
 
 
 def http_get(url, timeout=20):
-    """GET qua HTTPS. Máy không xác minh được chứng chỉ bằng kho chứng chỉ của Windows (thiếu gốc, phần mềm diệt
-    virus can thiệp…) thì thử lại bằng bộ chứng chỉ certifi đóng gói sẵn trong app. Không bao giờ tắt xác minh."""
-    import ssl
-    request = urllib.request.Request(url, headers={"User-Agent": "HanaMedia-Updater"})
-    try:
-        return urllib.request.urlopen(request, timeout=timeout)
-    except urllib.error.URLError as error:
-        if not isinstance(getattr(error, "reason", None), ssl.SSLError):
-            raise
-        try:
-            import certifi
-        except ImportError:
-            raise error from None
-        context = ssl.create_default_context(cafile=certifi.where())
-        return urllib.request.urlopen(request, timeout=timeout, context=context)
+    """GET qua HTTPS, có dự phòng chứng chỉ certifi (runner/net.py). Không bao giờ tắt xác minh."""
+    from .net import urlopen
+    return urlopen(urllib.request.Request(url, headers={"User-Agent": "HanaMedia-Updater"}), timeout=timeout)
 
 
 class Updater:

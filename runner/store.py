@@ -71,6 +71,9 @@ ACCOUNT_COLUMNS = {
     "check_failures": "INTEGER NOT NULL DEFAULT 0",
     "next_check": "REAL NOT NULL DEFAULT 0",
     "health_before": "TEXT NOT NULL DEFAULT ''",
+    # 1 = Muse báo tài khoản không dùng được tính năng tạo video ở khu vực của nó: không giao prompt nữa (kể cả sau
+    # khi đăng nhập lại) cho tới khi người dùng tự bỏ đánh dấu.
+    "video_blocked": "INTEGER NOT NULL DEFAULT 0",
 }
 
 
@@ -540,7 +543,7 @@ class Store:
             if db.execute("SELECT count(*) FROM accounts WHERE state IN ('busy','authenticating','reviewing')").fetchone()[0] >= limit:
                 return None
             pick = """SELECT j.id AS job_id, a.id AS account_id FROM jobs j JOIN accounts a
-                ON a.id=j.assigned_account_id AND a.enabled=1 AND a.state IN ('new','ready')
+                ON a.id=j.assigned_account_id AND a.enabled=1 AND a.video_blocked=0 AND a.state IN ('new','ready')
                 AND a.budget+0.000001>=j.cost
                 WHERE j.status='waiting' ORDER BY j.created,j.rowid LIMIT 1"""
             pair = db.execute(pick).fetchone()
@@ -568,7 +571,7 @@ class Store:
     def rebalance(self, db):
         """Tài khoản rảnh mà hết prompt của mình: nhận một prompt CHƯA GỬI (đang chờ) từ tài khoản còn nhiều prompt chờ nhất,
         lấy từ cuối hàng đợi của tài khoản đó. Không chuyển prompt người dùng đã tự chọn tài khoản. Trả về True nếu đã chuyển."""
-        free = db.execute("""SELECT a.id, a.budget FROM accounts a WHERE a.enabled=1 AND a.state IN ('new','ready')
+        free = db.execute("""SELECT a.id, a.budget FROM accounts a WHERE a.enabled=1 AND a.video_blocked=0 AND a.state IN ('new','ready')
                              AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.status='waiting' AND j.assigned_account_id=a.id)
                              ORDER BY a.rowid""").fetchall()
         moved = False
@@ -593,12 +596,12 @@ class Store:
             db.execute("BEGIN IMMEDIATE")
             accounts = [dict(row) for row in db.execute(
                 """SELECT id,budget,rowid FROM accounts
-                   WHERE enabled=1 AND state IN ('new','ready','busy','checking') ORDER BY rowid""")]
+                   WHERE enabled=1 AND video_blocked=0 AND state IN ('new','ready','busy','checking') ORDER BY rowid""")]
             eligible = {account["id"] for account in accounts}
             stale = db.execute(
                 """SELECT j.id FROM jobs j LEFT JOIN accounts a ON a.id=j.assigned_account_id
                    WHERE j.status='waiting' AND j.assigned_account_id IS NOT NULL
-                   AND (a.id IS NULL OR a.enabled!=1 OR a.state NOT IN ('new','ready','busy','checking'))"""
+                   AND (a.id IS NULL OR a.enabled!=1 OR a.video_blocked=1 OR a.state NOT IN ('new','ready','busy','checking'))"""
             ).fetchall()
             stale_ids = [row["id"] for row in stale]
             if stale_ids:
@@ -788,6 +791,15 @@ class Store:
 
     AUTO_RETRIES = 2
 
+    def job_state(self, job_id):
+        with self.connect() as db:
+            row = db.execute("SELECT status,submitted,source_url FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return dict(row) if row else {}
+
+    def set_video_blocked(self, account_id, blocked=True):
+        with self.connect() as db:
+            db.execute("UPDATE accounts SET video_blocked=? WHERE id=?", (int(bool(blocked)), account_id))
+
     def set_source(self, job_id, url):
         """Địa chỉ cuộc trò chuyện Muse của tác vụ (để lấy video về sau mà không gửi lại prompt)."""
         if str(url or "").startswith("https://"):
@@ -882,7 +894,7 @@ class Store:
     def snapshot(self):
         with self.connect() as db:
             accounts = [dict(r) for r in db.execute(
-                """SELECT a.id,a.email,a.enabled,a.budget,a.state,a.detail,a.health,a.last_checked,a.last_error,
+                """SELECT a.id,a.email,a.enabled,a.budget,a.state,a.detail,a.health,a.last_checked,a.last_error,a.video_blocked,
                    (SELECT count(*) FROM jobs j WHERE j.status='waiting' AND j.assigned_account_id=a.id) AS jobs_assigned,
                    (SELECT count(*) FROM jobs j WHERE j.status='done' AND j.account_id=a.id) AS jobs_completed,
                    (SELECT count(*) FROM jobs j WHERE j.status='error' AND j.account_id=a.id) AS jobs_failed
@@ -908,9 +920,12 @@ class Store:
         """Vì sao prompt đang chờ chưa có tài khoản (hiện trên hàng đợi)."""
         if not db.execute("SELECT 1 FROM jobs WHERE status='waiting' AND assigned_account_id IS NULL LIMIT 1").fetchone():
             return ""
-        enabled = [dict(r) for r in db.execute("SELECT state,budget FROM accounts WHERE enabled=1")]
+        enabled = [dict(r) for r in db.execute("SELECT state,budget,video_blocked FROM accounts WHERE enabled=1")]
         if not enabled:
             return "Chưa có tài khoản Muse nào đang bật. Thêm hoặc bật tài khoản trong Tài khoản Muse."
+        if all(a["video_blocked"] for a in enabled):
+            return "Các tài khoản đang bật đều bị Muse chặn tạo video ở khu vực của tài khoản. Thêm tài khoản tạo được video."
+        enabled = [a for a in enabled if not a["video_blocked"]]
         usable = [a for a in enabled if a["state"] in ("new", "ready", "busy", "checking")]
         if not usable:
             return "Các tài khoản Muse đều đang tạm dừng / cần đăng nhập lại. Mở Tài khoản Muse → Đăng nhập."

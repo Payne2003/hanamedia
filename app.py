@@ -590,6 +590,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r"[a-f0-9]{32}", str(body.get("id", ""))):
                     raise ValueError("Tài khoản không hợp lệ.")
                 return self.reply({"ok": True, "email": engine.remove_account(body["id"])})
+            elif path == "/api/accounts/unblock":
+                store.set_video_blocked(str(body["id"]), False)
             elif path == "/api/accounts/check":
                 if not re.fullmatch(r"[a-f0-9]{32}", str(body.get("id", ""))):
                     raise ValueError("Tài khoản không hợp lệ.")

@@ -476,6 +476,97 @@ class StoreTests(unittest.TestCase):
         self.store.plan_waiting()
         self.assertEqual(self.store.snapshot()["assign_hint"], "")
 
+    def test_region_blocked_account_never_gets_prompts_again(self):
+        blocked, good = self.account(), self.account("good")
+        self.store.set_account(blocked["id"], "ready")
+        self.jobs(3)
+        engine = Engine(self.store, self.root / "engine-data")
+
+        class RegionMuse:
+            def __init__(self, profile, downloads, headless, phase):
+                self.driver = type("Driver", (), {"current_url": "https://muse.ai/c/r", "window_handles": ["main"]})()
+
+            def login(self, account):
+                pass
+
+            def set_download_directory(self, downloads):
+                pass
+
+            def session_ready(self):
+                return True
+
+            def generate(self, prompt, job_id, before_submit, automatic=True, images=None):
+                before_submit()
+                raise MuseFailure("Muse báo không dùng được ở khu vực.", "attention", False, True)
+
+            def close(self):
+                pass
+
+        try:
+            with patch("runner.engine.MuseBrowser", RegionMuse):
+                job, claimed = self.store.claim(2)
+                engine.work(job, claimed, False, str(self.root / "output"), True)
+            account = next(a for a in self.store.snapshot()["accounts"] if a["id"] == claimed["id"])
+            self.assertEqual(account["video_blocked"], 1)
+            self.store.set_account(claimed["id"], "ready")  # vd đăng nhập lại
+            self.store.plan_waiting()
+            waiting = [j for j in self.store.snapshot()["jobs"] if j["status"] == "waiting"]
+            self.assertTrue(waiting)
+            self.assertTrue(all(j["assigned_account_id"] != claimed["id"] for j in waiting))
+            self.store.set_video_blocked(claimed["id"], False)  # người dùng bỏ chặn
+            account = next(a for a in self.store.snapshot()["accounts"] if a["id"] == claimed["id"])
+            self.assertEqual(account["video_blocked"], 0)
+        finally:
+            engine.shutdown()
+
+    def test_chrome_dies_after_submit_new_chrome_fetches_video(self):
+        account = self.account()
+        self.store.set_account(account["id"], "ready")
+        self.jobs(1)
+        engine = Engine(self.store, self.root / "engine-data")
+        engine.chase_wait = 0
+        made = []
+
+        class Muse:
+            def __init__(self, profile, downloads, headless, phase):
+                self.downloads = Path(downloads)
+                self.driver = type("Driver", (), {"current_url": "https://muse.ai/", "window_handles": ["main"]})()
+                made.append(self)
+
+            def login(self, account):
+                pass
+
+            def set_download_directory(self, downloads):
+                self.downloads = Path(downloads)
+
+            def session_ready(self):
+                return True
+
+            def generate(self, prompt, job_id, before_submit, automatic=True, images=None):
+                before_submit()
+                self.url_seen("https://muse.ai/c/after-submit")
+                self.driver.window_handles = []  # Chrome tắt ngang
+                raise RuntimeError("invalid session id: session deleted as the browser has closed the connection")
+
+            def fetch_existing(self, job_id, url):
+                assert url == "https://muse.ai/c/after-submit"
+                file = self.downloads / "x.mp4"
+                file.write_bytes(b"v")
+                return file
+
+            def close(self):
+                pass
+
+        try:
+            with patch("runner.engine.MuseBrowser", Muse):
+                job, claimed = self.store.claim(1)
+                engine.work(job, claimed, False, str(self.root / "output"), True)
+            row = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]][0]
+            self.assertEqual(row["status"], "done")
+            self.assertEqual(len(made), 2)  # mở Chrome mới để lấy video, không gửi lại prompt
+        finally:
+            engine.shutdown()
+
     def test_at_most_two_parallel_accounts(self):
         engine = Engine(self.store, self.root / "engine-data")
         engine.max_parallel = 2  # máy chỉ đủ sức 2 luồng

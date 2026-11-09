@@ -8,10 +8,10 @@ class ReplyProblemTests(unittest.TestCase):
     def test_region_block_pauses_account(self):
         text = ("Mình không tạo được video này cho bạn, Isabella. Tính năng tạo video hiện không khả dụng với tài khoản "
                 "ở quốc gia/khu vực của bạn, nên thử lại cũng sẽ không được.")
-        message, state = reply_problem(text)
+        message, state = reply_problem(text)[:2]
         self.assertEqual(state, "attention")
         self.assertIn("quốc gia/khu vực", message)
-        message, state = reply_problem("Video generation isn't available in your country yet.")
+        message, state = reply_problem("Video generation isn't available in your country yet.")[:2]
         self.assertEqual(state, "attention")
 
     def test_region_block_other_wording(self):
@@ -22,7 +22,7 @@ class ReplyProblemTests(unittest.TestCase):
         self.assertEqual(reply_problem("Video creation is unavailable in your region.")[1], "attention")
 
     def test_content_refusal_fails_job_only(self):
-        message, state = reply_problem("Sorry, I can't create this video because it shows a real person.")
+        message, state = reply_problem("Sorry, I can't create this video because it shows a real person.")[:2]
         self.assertEqual(state, "ready")
         self.assertIn("không tự gửi lại", message)
 

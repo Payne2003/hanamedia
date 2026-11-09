@@ -639,3 +639,6 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 .theme-toggle button.active{border-color:var(--c-accent);background:var(--c-accent-soft);color:var(--c-accent-text);font-weight:600}
 :root[data-theme="light"] .running-pill,:root[data-theme="light"] .running-pill b{color:var(--c-success)}
 :root[data-theme="light"] .stepper button.active{color:var(--c-text)}
+
+.video-blocked{margin:8px 0 4px;padding:8px 10px;border-radius:var(--radius-sm);background:var(--c-danger-soft);color:var(--c-danger);font-size:var(--fs-sm);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.video-blocked button{padding:4px 9px;font-size:var(--fs-xs)}
