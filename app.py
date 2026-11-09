@@ -70,7 +70,9 @@ class AppServer(ThreadingHTTPServer):
         if store.setting("shared_google_profile") is True:
             self.apply_shared(True)
         from runner.production_agents import ProductionAgents
+        from runner.video_download import VideoDownloader
         self.agents = ProductionAgents(self)
+        self.downloader = VideoDownloader(self.data_dir / "production" / "sources")
 
     def server_close(self):
         if hasattr(self, "agents"):
@@ -471,6 +473,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/production":
             return self.reply({"projects": self.server.store.production.list_projects()})
+        if path == "/api/production/download":
+            return self.reply(self.server.downloader.status())
         production_match = re.fullmatch(r"/api/production/([a-f0-9]{32})", path)
         if production_match:
             try:
@@ -713,6 +717,11 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/production/sounds/delete":
                 self.server.agents.sounds.delete(body.get("id"))
                 return self.reply({"ok": True, "sounds": self.server.agents.sounds.list()})
+            elif path == "/api/production/download":
+                return self.reply(self.server.downloader.start(body.get("url")))
+            elif path == "/api/production/download-cancel":
+                self.server.downloader.cancel()
+                return self.reply({"ok": True})
             elif path == "/api/production/pick-video":
                 return self.reply({"path": self.pick_video()})
             elif path == "/api/production/agent/reject":
