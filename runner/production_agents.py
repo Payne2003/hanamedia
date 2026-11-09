@@ -778,6 +778,33 @@ class ProductionAgents:
                     evidence=dict(info=dict(duration=verify['duration'], width=verify['width'], height=verify['height'], audio=verify['audio']),
                                   frames=frames_preview))
 
+    def source_references(self, snapshot, task, limit=3):
+        """Khung hình của shot gốc mà cảnh này tái dựng (lấy từ lần phân tích video gốc đã duyệt), để QC so trực tiếp."""
+        scene = next((s for s in snapshot['scenes'] if s['id'] == task['scene_id']), None)
+        try:
+            wanted = json.loads(scene.get('source_shots') or '[]') if scene else []
+        except ValueError:
+            wanted = []
+        research = next((t for t in snapshot['tasks'] if t['stage'] == 'research'), None)
+        if not wanted or not research:
+            return []
+        with self.store.connect() as db:
+            row = db.execute("SELECT id,result FROM production_runs WHERE task_id=? AND status='done' ORDER BY created DESC LIMIT 1",
+                             (research['id'],)).fetchone()
+        if not row:
+            return []
+        shots = {s['id']: s for s in (json.loads(row['result']).get('shots') or [])}
+        evidence = self.root / task['project_id'] / row['id'] / 'evidence'
+        picks = []
+        for shot_id in wanted:
+            frames = (shots.get(shot_id) or {}).get('frames') or []
+            labels = ('giua',) if len(wanted) > 1 else ('dau', 'giua', 'cuoi')
+            for frame in frames:
+                file = evidence / (frame['name'] + '.jpg')
+                if frame.get('label') in labels and file.is_file():
+                    picks.append(dict(shot=shot_id, time=frame['time'], run=row['id'], name=frame['name'], file=str(file)))
+        return picks[:limit]
+
     def selected_takes(self, snapshot):
         from .video_tools import probe
         takes = []
@@ -902,7 +929,8 @@ class ProductionAgents:
             target = int(project.get('target_seconds') or 510)
             clip = int(project.get('clip_seconds') or 10)
             schema = ('{"title":string,"logline":string,"acts":[{"name":string,"purpose":string}],"scenes":[{"purpose":string,'
-                      '"setting":string,"camera":string,"behavior":string,"action":string,"duration":number,"difficult":boolean}],'
+                      '"setting":string,"camera":string,"behavior":string,"action":string,"duration":number,"difficult":boolean,'
+                      '"source_shots":[source shot ids this scene reconstructs]}],'
                       '"needs_review":boolean}')
             extra = (f'Write the full film script for a {target}-second film (total of scene durations between {int(target * .9)} and '
                      f'{int(target * 1.1)} seconds). Each scene is one AI clip of {clip} seconds (scene duration 3–{clip}s = the part kept '
@@ -955,22 +983,39 @@ class ProductionAgents:
                         note=('Xem các cảnh khó đã tạo thử và QC. Duyệt để chạy hàng loạt các cảnh còn lại.' if hard else
                               'Kịch bản không có cảnh khó. Duyệt để chạy hàng loạt.'))
         if stage in ('shot_qc', 'film_qc'):
+            references = []
             if stage == 'shot_qc':
                 dep = next(t for t in self.board.dependencies(task, snapshot['tasks']) if t['stage'] == 'video')
                 job = next((j for j in snapshot['jobs'] if j['id'] == dep['job_id'] and j['status'] == 'done'), None)
                 if not job or not job['output']:
                     raise AgentReview('Chưa có video đã hoàn thành để QC.')
                 path = job['output']
+                references = self.source_references(snapshot, task)
                 extra = ('Check the subject identity against the locked traits, plausible animal behaviour and action, terrain, '
                          'direction of travel and motion continuity with the neighbouring scenes.')
+                if references:
+                    extra += (f' The FIRST {len(references)} images are frames of the SOURCE video shot(s) this scene must '
+                              'reconstruct (' + ', '.join(f"shot {r['shot']} at {r['time']:.2f}s" for r in references) +
+                              '); the remaining images are the generated take. Compare them directly: same species and count, '
+                              'same left/right positions and screen direction, similar shot size and angle, same action and '
+                              'end state. Fill "source_match". If the take does not reconstruct the source shot, passed=false.')
             else:
                 path = self.edit_result(snapshot)['render']['path']
                 extra = ('Review the whole cut: story, visuals, scene-to-scene continuity, duration against target. Audio cannot be '
                          'verified from stills.')
             evidence = inspect_clip(path, folder / 'evidence', self.stop)
-            schema = '{"passed":boolean,"needs_review":boolean,"observations":[{"time":number,"description":string}],"issues":[strings]}'
+            schema = ('{"passed":boolean,"needs_review":boolean,"observations":[{"time":number,"description":string}],"issues":[strings]'
+                      + (',"source_match":{"matches":boolean,"differences":[strings]}' if references else '') + '}')
             result = validate_result(stage, self.discussion(run_id, task, snapshot, config, schema,
-                                                            [f['file'] for f in evidence['frames']], evidence, extra=extra))
+                                                            [r['file'] for r in references] + [f['file'] for f in evidence['frames']],
+                                                            evidence, extra=extra))
+            if references:
+                match = result.get('source_match')
+                if not isinstance(match, dict) or type(match.get('matches')) is not bool:
+                    raise AgentReview('QC cảnh chưa so sánh với shot gốc (thiếu source_match).')
+                if match['matches'] is False:
+                    result['passed'] = False  # không giống shot gốc thì không đạt, dù AI chấm phần khác ổn
+                result['source_references'] = [{k: r[k] for k in ('shot', 'time', 'run', 'name')} for r in references]
             if any(o['time'] > evidence['info']['duration'] for o in result['observations']):
                 raise AgentReview('AI báo bằng chứng ngoài thời lượng clip.')
             evidence['frames'] = self.evidence_frames(folder, evidence['frames'])

@@ -392,6 +392,41 @@ class AgentTests(unittest.TestCase):
         self.assertEqual([t['scene_id'] for t in scripts],[None])
         self.assertTrue(any(t['stage']=='bible' for t in board['tasks']))
 
+    def test_shot_qc_compares_take_with_source_shot_frames(self):
+        root=Path(self.temp.name)
+        f=video_tools.ffmpeg()
+        take=root/'take.mp4'
+        self.assertEqual(video_tools.run([f,'-v','error','-y','-f','lavfi','-i','color=c=green:s=160x90:r=25:d=2','-c:v','libx264',str(take)],60).returncode,0)
+        research=self.task('research')
+        run_id='c'*32
+        evidence=self.agents.root/self.project/run_id/'evidence'/'shots'
+        evidence.mkdir(parents=True)
+        frames=[]
+        for label,time in (('dau',2.04),('giua',3.5),('cuoi',4.88)):
+            target=evidence/f'shot-002-{label}.jpg'
+            self.assertEqual(video_tools.run([f,'-v','error','-y','-f','lavfi','-i','color=c=red:s=64x36','-frames:v','1',str(target)],30).returncode,0)
+            frames.append(dict(label=label,time=time,name=f'shots/shot-002-{label}'))
+        with self.store.connect() as db:
+            db.execute("INSERT INTO production_runs(id,project_id,task_id,status,fingerprint,result,created,updated) VALUES(?,?,?,'done','x',?,0,0)",
+                       (run_id,self.project,research['id'],json.dumps(dict(shots=[dict(id='002',frames=frames)]))))
+            db.execute("UPDATE scenes SET source_shots=? WHERE id=?",(json.dumps(['002']),self.scene))
+        self.prepare_video()
+        self.store.enqueue(['Goat'],1,'source-compare-000001',scene_ids=[self.scene])
+        with self.store.connect() as db:db.execute("UPDATE jobs SET status='done',output=?",(str(take),))
+        self.agents.sync_muse(self.task('video')['id'])
+        config=self.agents.settings(self.project);config['agents']['shot_qc'].update(reviewer='');self.agents.configure(self.project,config)
+        report={'passed':True,'needs_review':False,'observations':[{'time':.5,'description':'Dê đứng'}],'issues':[],
+                'source_match':{'matches':False,'differences':['Gốc chạy trái sang phải, take chạy ngược lại']}}
+        self.server.gemini_web.answers=[report]
+        run=self.run_agent('shot_qc')
+        sent=self.server.gemini_web.calls[-1]
+        self.assertEqual(len(sent[2]['lines']['files']),7)  # 3 khung shot gốc + 4 khung video Muse
+        self.assertTrue(sent[2]['lines']['files'][0].endswith('shot-002-dau.jpg'))
+        self.assertIn('SOURCE video shot',sent[1])
+        self.assertFalse(run['result']['passed'])  # không giống shot gốc → không đạt
+        self.assertEqual([r['shot'] for r in run['result']['source_references']],['002','002','002'])
+        with self.assertRaises(ValueError):self.agents.apply(run['id'],human=True)
+
     def test_muse_sync_requires_unambiguous_scene_take(self):
         self.prepare_video()
         self.store.enqueue(['Goat'],1,'muse-sync-000000001',scene_ids=[self.scene])
