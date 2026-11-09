@@ -238,3 +238,13 @@ Dữ liệu và phiên đăng nhập nằm trong `data/`, chỉ trên máy cài 
 Tài liệu kỹ thuật dùng khi triển khai:
 - https://www.selenium.dev/documentation/webdriver/browsers/chrome/
 - https://developer.chrome.com/docs/chromedriver/capabilities
+
+## Wildlife · Sản xuất phim và AI Agent
+
+Mục **Wildlife · Sản xuất phim** bổ sung tám công đoạn sản xuất trên Project/Scene ID hiện có. Bạn có thể phân công **Gemini, ChatGPT và Claude trên trình duyệt**, chọn agent phản biện, xem lịch sử hội ý, kiểm tra QC bằng FFmpeg và frame mẫu, duyệt timeline để Auto Edit render, rồi tạo hồ sơ bàn giao có SHA-256. Không cần API key hoặc Zalo.
+
+Đăng nhập từng AI bằng nút trong bảng agent, đóng cửa sổ đăng nhập rồi bấm **Giao agent** ở công đoạn sẵn sàng. Nghiên cứu, QC từ ảnh mẫu, timeline và âm thanh vẫn cần người dùng kiểm tra; adapter website thật cần xác minh trên tài khoản của bạn. Xem [hướng dẫn sử dụng, thiết kế và giới hạn kiểm chứng](docs/wildlife-production.md).
+
+### API dùng chung cho nhiều người
+
+Tool hỗ trợ **Máy chủ dùng chung / API riêng / Trình duyệt** theo phòng ban. Gateway giữ khóa nhà cung cấp trên máy chủ, cấp mã riêng cho từng người, áp dụng hạn mức ngày và chống gọi trùng. Không đưa khóa của chủ tool vào bản `.exe` phân phối. Xem [thiết lập máy chủ và cấp quyền](docs/shared-api.md).
