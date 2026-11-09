@@ -84,17 +84,19 @@ class AgentTests(unittest.TestCase):
         run=self.run_agent('bible');self.agents.apply(run['id'],human=True)
         self.assertEqual(self.store.production.snapshot(self.project)['characters'][0]['code'],'SNOW_LEOPARD_01')
         hard=next(t for t in self.store.production.snapshot(self.project)['tasks'] if t['stage']=='prompt' and t['difficult'])
-        self.server.chatgpt_web.answers=[{'prompt':'Snow leopard pounces on a goat. Natural ambience.','subjects':['SNOW_LEOPARD_01'],'needs_review':False}]
+        self.server.chatgpt_web.answers=[{'prompt':'SCENE 2 — SETTING: Rocky slope at noon; CHARACTERS: One goat, left of frame; CAMERA: Wide shot, static; CHARACTER BEHAVIOR: Calm; ACTION: Snow leopard pounces on a goat; ENDING FRAME: Goat stands on the right rock','subjects':['SNOW_LEOPARD_01'],'needs_review':False}]
         run=self.agents.start(hard['id']);self.agents.thread.join(30)
         board=self.store.production.snapshot(self.project)
-        self.assertTrue(board['scenes'][1]['prompt'].startswith('Snow leopard'))
+        self.assertTrue(board['scenes'][1]['prompt'].startswith('SETTING: Rocky slope'))  # bỏ 'SCENE 2 —', đúng thứ tự trường
+        self.assertIn('ACTION: Snow leopard pounces on a goat',board['scenes'][1]['prompt'])
+        self.assertTrue(board['scenes'][1]['prompt'].endswith('DURATION: 10 seconds; ASPECT RATIO: 16:9.'))
         sent=self.server.chatgpt_web.calls[-1][1]
-        for rule in ('4K','1.0x','no slow motion','no background music','watermarks'):self.assertIn(rule,sent)  # MASTER PROMPT V3.0
+        for rule in ('MASTER PROMPT 08','4K UHD','real-time 1x','no slow motion','no music','watermark','ENDING FRAME','POSITION LOCK'):self.assertIn(rule,sent)
         self.assertEqual(board['scenes'][1]['characters'],[board['characters'][0]['id']])
         # Cảnh khó được tạo video trước; cảnh thường chờ duyệt tạo thử.
         video=lambda i:next(t for t in board['tasks'] if t['stage']=='video' and t['scene_id']==board['scenes'][i]['id'])
         self.assertTrue(video(1)['ready']);self.assertFalse(video(0)['ready'])
-        self.server.chatgpt_web.answers=[{'prompt':'Bad','subjects':['UNKNOWN_01'],'needs_review':False}]
+        self.server.chatgpt_web.answers=[{'prompt':'SETTING: Rocky slope at noon; CHARACTERS: One goat, left of frame; CAMERA: Wide shot, static; CHARACTER BEHAVIOR: Calm; ACTION: Goat walks; ENDING FRAME: Goat stands on the right rock','subjects':['UNKNOWN_01'],'needs_review':False}]
         easy=next(t for t in board['tasks'] if t['stage']=='prompt' and not t['difficult'])
         self.agents.start(easy['id']);self.agents.thread.join(30)
         self.assertIn('mã cá thể',next(r for r in self.agents.public(self.project)['runs'] if r['task_id']==easy['id'])['error'])
@@ -218,7 +220,7 @@ class AgentTests(unittest.TestCase):
     def test_api_transport_records_usage_and_does_not_open_browser(self):
         [self.complete_manual(stage) for stage in ('research','script','bible')]
         self.agents.api.vault.save('gemini',key='test-owner-only',max_output_tokens=128)
-        script=dict(prompt='Goat steps over rocks. Natural ambience.',needs_review=False)
+        script=dict(prompt='SETTING: Rocky slope at noon; CHARACTERS: One goat, left of frame; CAMERA: Wide shot, static; CHARACTER BEHAVIOR: Calm; ACTION: Goat steps over rocks; ENDING FRAME: Goat stands on the right rock',needs_review=False)
         self.agents.api.post=lambda *args:{'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':json.dumps(script)}]}}],
                                           'usageMetadata':{'promptTokenCount':20,'candidatesTokenCount':10}}
         config=self.agents.settings(self.project);config['agents']['prompt'].update(transport='api',provider='gemini',reviewer='',consultant='')
@@ -235,7 +237,7 @@ class AgentTests(unittest.TestCase):
         self.agents.gateway_enabled=True  # máy chủ trung gian đang tạm ẩn với người dùng; vẫn giữ đường chạy
         owner=APIClients(Path(self.temp.name)/'owner')
         owner.vault.save('gemini',key='test-gateway-owner-only',max_output_tokens=128)
-        script=dict(prompt='Goat steps over rocks. Natural ambience.',needs_review=False)
+        script=dict(prompt='SETTING: Rocky slope at noon; CHARACTERS: One goat, left of frame; CAMERA: Wide shot, static; CHARACTER BEHAVIOR: Calm; ACTION: Goat steps over rocks; ENDING FRAME: Goat stands on the right rock',needs_review=False)
         owner.post=lambda *args:{'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':json.dumps(script)}]}}],
                                   'usageMetadata':{'promptTokenCount':20,'candidatesTokenCount':10}}
         service=GatewayService(Path(self.temp.name)/'owner',api=owner)
@@ -355,7 +357,7 @@ class AgentTests(unittest.TestCase):
         self.store.characters.add_scenes(self.project,[{'action':'Báo rình'}])
         self.store.production.enable(self.project)
         for stage in ('research','script','bible'):self.complete_manual(stage)
-        prompt={'prompt':'Goat. Natural ambience.','needs_review':False}
+        prompt={'prompt':'SETTING: Rocky slope at noon; CHARACTERS: One goat, left of frame; CAMERA: Wide shot, static; CHARACTER BEHAVIOR: Calm; ACTION: Goat walks; ENDING FRAME: Goat stands on the right rock','needs_review':False}
         self.server.chatgpt_web.answers=[prompt,dict(prompt)]
         config=self.agents.settings(self.project);config['agents']['prompt'].update(reviewer='');config['auto_run']=True
         self.agents.configure(self.project,config)

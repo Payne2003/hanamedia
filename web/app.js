@@ -227,7 +227,7 @@ $('importButton').onclick=()=>$('importFile').click();$('importFile').onchange=a
 // ---- Viết content: Prompt + link video gốc → Gemini Pro (tự động trên gemini.google.com) → cảnh → hàng loạt prompt ----
 const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior','Hành vi nhân vật'],['action','Nội dung hành động nhân vật']];
 const defaultBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 15 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
-let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',englishAspect:'16:9',englishStructured:true,englishSeconds:15,english:'',englishMissing:[],englishEngine:'chatgpt',englishChatgpt:'',englishChatgptMissing:[]};
+let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',englishAspect:'16:9',englishStructured:true,englishSeconds:8,englishIssues:[],english:'',englishMissing:[],englishEngine:'chatgpt',englishChatgpt:'',englishChatgptMissing:[]};
 try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,brief:saved.brief??content.brief,video:saved.video||'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,englishSeconds:[5,8,10,15].includes(Number(saved.englishSeconds))?Number(saved.englishSeconds):15,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:'chatgpt',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
 // Bản nháp còn đúng câu mẫu cũ (8 giây) thì đổi sang câu mẫu mới (15 giây).
 if(content.brief==='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.')content.brief=defaultBrief;
@@ -347,8 +347,10 @@ function renderEnglish(){
   const [textKey,missingKey]=englishKey(content.englishEngine);
   const lines=englishLines(),filled=lines.filter(line=>line.trim()).length,missing=content[missingKey]||[];
   $('englishCount').textContent=content[textKey]?`${filled} prompt · ${engineNames[content.englishEngine]}`:'';
-  $('englishMissing').hidden=!missing.length;
-  $('englishMissing').innerHTML=missing.length?`<b>Còn thiếu hoặc chưa phải tiếng Anh</b><ul><li>Cảnh ${missing.join(', ')} — dòng tương ứng đang để trống hoặc còn tiếng Việt. Bấm viết lại hoặc tự sửa.</li></ul>`:'';
+  const issues=content[textKey+'Issues']||[];
+  $('englishMissing').hidden=!missing.length&&!issues.length;
+  $('englishMissing').innerHTML=(missing.length?`<b>Còn thiếu hoặc chưa đủ trường</b><ul><li>Cảnh ${missing.join(', ')} — dòng tương ứng đang để trống, còn tiếng Việt hoặc thiếu trường của Master Prompt 08. Bấm viết lại hoặc tự sửa.</li></ul>`:'')+
+    (issues.length?`<b>AI báo mâu thuẫn trong kịch bản (Master Prompt 08 · mục 9)</b><ul>${issues.map(i=>`<li>${esc(i)}</li>`).join('')}</ul>`:'');
 }
 function renderEnglishRun(){
   const engine=content.englishEngine,job=englishJob(engine),web=state?.content?.[engine==='chatgpt'?'chatgpt':'web'];
@@ -367,7 +369,7 @@ function renderEnglishEngine(){
 }
 function finishEnglish(engine,result){
   const [textKey,missingKey]=englishKey(engine);
-  content[textKey]=result.english.join('\n');content[missingKey]=result.missing;content[textKey+'Sources']=result.lines||splitSceneLines(content.englishInput);saveContent();
+  content[textKey]=result.english.join('\n');content[missingKey]=result.missing;content[textKey+'Issues']=result.issues||[];content[textKey+'Sources']=result.lines||splitSceneLines(content.englishInput);saveContent();
   if(content.englishEngine===engine)renderEnglishEngine();
   const name=engineNames[engine];
   toast(result.missing.length?`${name} viết ${result.total-result.missing.length}/${result.total} prompt; còn thiếu cảnh ${result.missing.join(', ')}. Bấm chạy lại hoặc tự sửa.`:`${name}: đủ ${result.total} prompt tiếng Anh (${result.rounds} lượt trả lời).`,Boolean(result.missing.length));

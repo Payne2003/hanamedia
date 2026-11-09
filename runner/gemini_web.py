@@ -660,6 +660,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
     answer = session.ask(content.english_request(lines, style=style, aspect=aspect, structured=structured, seconds=seconds), status, stop, email,
                          label=f"{name} đang viết {total} prompt tiếng Anh")
     found = content.parse_english(answer, total)
+    issues = content.parse_issues(answer)
     if not found:
         where = session.dump("Không đọc được prompt nào trong câu trả lời đầu tiên", answer) if hasattr(session, "dump") else ""
         raise GeminiWebError(f"Tool không đọc được prompt nào trong câu trả lời của {name} nên đã dừng (không gửi lại). "
@@ -674,6 +675,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
                              label=f"Đã có {len(found)}/{total} prompt · {name} đang viết tiếp")
         rounds += 1
         more = content.parse_english(answer, total, range(after + 1, total + 1))
+        issues += [i for i in content.parse_issues(answer) if i not in issues]
         if not any(number > after for number in more):
             break
         for number, prompt in more.items():
@@ -688,6 +690,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
                              label=f"Thiếu {len(missing)} prompt hoặc thiếu trường · {name} đang viết lại (lần {attempt + 1})")
         rounds += 1
         fixed = 0
+        issues += [i for i in content.parse_issues(answer) if i not in issues]
         for number, prompt in content.parse_english(answer, total, missing).items():
             good = content.is_english(prompt) and (not structured or content.structured_complete(prompt))
             if number in missing and (number not in found or good):
@@ -696,7 +699,10 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         if not fixed:
             break  # Hỏi lại mà không có cảnh nào được sửa: dừng, không gửi lặp.
     missing = content.missing_english(found, total, structured)
+    if structured:  # dựng lại đúng cấu trúc MASTER PROMPT 08, STYLE/DURATION/ASPECT RATIO chuẩn
+        found = {number: content.muse_prompt(prompt, seconds, aspect, style) for number, prompt in found.items()}
     return {"english": [found.get(number, "") for number in range(1, total + 1)], "missing": missing, "lines": lines,
+            "issues": issues,
             "structured": structured,
             "total": total, "rounds": rounds}
 

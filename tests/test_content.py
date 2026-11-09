@@ -365,9 +365,8 @@ END OF LIST"""
         self.assertNotIn("1. Cảnh A", request)
         self.assertIn("cinematic 9:16", request)
         self.assertIn("16:9 widescreen", request)
-        self.assertIn('"16:9 aspect ratio"', request)
         self.assertIn("9:16 vertical", content.english_request(["A"], aspect="9:16"))
-        self.assertNotIn("aspect ratio", content.english_request(["A"], aspect="none"))
+        self.assertNotIn("widescreen", content.english_request(["A"], aspect="none"))
 
     def test_run_english_continues_and_retries_missing_scenes(self):
         from runner import gemini_web
@@ -654,9 +653,10 @@ class ChatGPT2026DomTests(unittest.TestCase):
 
 
 class StructuredPromptTests(unittest.TestCase):
-    LINE = ("Setting: A steep limestone mountainside, bright daylight, a light brown mother goat; Camera: Static eye-level "
-            "close-up; Character behavior: Calm, focused on grazing; Action: She chews fresh grass between rocks; "
-            "Style: Photorealistic documentary; 16:9 aspect ratio.")
+    LINE = ("SETTING: A steep limestone mountainside, bright daylight; CHARACTERS: One light brown mother goat, left of "
+            "frame; CAMERA: Static eye-level close-up; CHARACTER BEHAVIOR: Calm, focused on grazing; ACTION: She chews "
+            "fresh grass between rocks; ENDING FRAME: She lifts her head, facing right; Style: Photorealistic documentary; "
+            "16:9 aspect ratio.")
 
     def test_fields_are_split_from_labelled_prompt(self):
         fields = content.parse_structured(self.LINE)
@@ -664,15 +664,34 @@ class StructuredPromptTests(unittest.TestCase):
         self.assertEqual(fields["behavior"], "Calm, focused on grazing")
         self.assertEqual(fields["action"], "She chews fresh grass between rocks")
         self.assertEqual(fields["style"], "Photorealistic documentary")
+        self.assertEqual(fields["characters"], "One light brown mother goat, left of frame")
+        self.assertEqual(fields["ending"], "She lifts her head, facing right")
         self.assertTrue(content.structured_complete(self.LINE))
         self.assertFalse(content.structured_complete("Setting: A cliff; Camera: Wide; Action: A leopard runs."))
         bold = "Setting: A cliff; Camera angle: Low angle; Behaviour: Alert; Action: Runs; 9:16 aspect ratio"
         self.assertEqual(content.parse_structured(bold)["behavior"], "Alert")
 
-    def test_request_asks_for_labels_only_when_structured(self):
-        self.assertIn("Character behavior:", content.english_request(["A"]))
-        self.assertNotIn("Character behavior:", content.english_request(["A"], structured=False))
-        self.assertNotIn("aspect ratio", content.english_request(["A"], aspect="none"))
+    def test_request_follows_master_prompt_08(self):
+        request = content.english_request(["A"])
+        for part in ("MASTER PROMPT 08", "SETTING:", "CHARACTERS:", "CAMERA:", "CHARACTER BEHAVIOR:", "ACTION:",
+                     "ENDING FRAME:", "0–3s", "CHARACTER LOCK", "POSITION LOCK", "never swap predator and prey", "ISSUE:"):
+            self.assertIn(part, request)
+        self.assertIn("split the 10 seconds proportionally", content.english_request(["A"], seconds=10))
+
+    def test_muse_prompt_is_rebuilt_in_master_order_with_standard_style(self):
+        messy = ("ENDING FRAME: Goat faces right; ACTION: Goat chews; SETTING: Cliff at noon; CAMERA: Wide; "
+                 "CHARACTERS: One goat; CHARACTER BEHAVIOR: Calm; STYLE: cinematic slow motion; 15 seconds")
+        prompt = content.muse_prompt(messy, 8, "16:9")
+        self.assertEqual(prompt.split(": ")[0], "SETTING")
+        order = [prompt.index(label + ":") for label in ("SETTING", "CHARACTERS", "CAMERA", "CHARACTER BEHAVIOR", "ACTION",
+                                                         "ENDING FRAME", "STYLE", "DURATION", "ASPECT RATIO")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("STYLE: " + content.MUSE_STYLE, prompt)
+        self.assertNotIn("cinematic slow motion", prompt)  # STYLE của AI bị thay bằng STYLE chuẩn
+        self.assertTrue(prompt.endswith("DURATION: 8 seconds; ASPECT RATIO: 16:9."))
+        self.assertEqual(content.muse_prompt("SETTING: Cliff; ACTION: runs", 8), "SETTING: Cliff; ACTION: runs")
+        self.assertEqual(content.parse_issues("1. x\nISSUE: Scene 3 — too many actions\n**ISSUE:** Scene 4 — eagle missing"),
+                         ["Scene 3 — too many actions", "Scene 4 — eagle missing"])
 
     def test_scene_missing_a_field_is_requested_again(self):
         from runner import gemini_web
@@ -682,7 +701,7 @@ class StructuredPromptTests(unittest.TestCase):
             def __init__(self):
                 self.sent = []
                 self.answers = [good(1) + "\n2. Setting: A ledge; Camera: Wide shot; Action: The leopard walks slowly along it.\n"
-                                + content.END_EN, good(2) + "\n" + content.END_EN]
+                                "ISSUE: Scene 2 — eagle appears without setup\n" + content.END_EN, good(2) + "\n" + content.END_EN]
             def new_chat(self):
                 pass
             def wait_ready(self, status, stop, email=""):
@@ -698,6 +717,9 @@ class StructuredPromptTests(unittest.TestCase):
         self.assertEqual(result["missing"], [])
         self.assertTrue(content.structured_complete(result["english"][1]))
         self.assertIn("2. Bối cảnh 2: B", session.sent[1])
+        self.assertTrue(result["english"][0].startswith("SETTING: A steep limestone mountainside"))
+        self.assertIn(content.MUSE_STYLE, result["english"][1])
+        self.assertEqual(result["issues"], ["Scene 2 — eagle appears without setup"])
         self.assertNotIn("1. Bối cảnh 1: A", session.sent[1])
 
     def test_queue_takes_fields_from_prompt_itself(self):
@@ -711,13 +733,11 @@ class StructuredPromptTests(unittest.TestCase):
 
 
 class SecondsTests(unittest.TestCase):
-    def test_default_duration_is_15_seconds(self):
+    def test_default_duration(self):
         self.assertEqual(content.DEFAULT_SECONDS, 15)
         self.assertIn("15 giây", content.SCENE_RULES)
-        request = content.english_request(["Bối cảnh 1: A"])
-        self.assertIn("about 15 seconds", request)
-        self.assertIn("; 15 seconds; 16:9 aspect ratio.", request)
-        self.assertIn("about 8 seconds", content.english_request(["A"], seconds=8))
+        self.assertIn("fitting 8 seconds", content.english_request(["Bối cảnh 1: A"]))  # MASTER PROMPT 08: mặc định 8 giây
+        self.assertIn("fitting 10 seconds", content.english_request(["A"], seconds=10))
 
     def test_duration_tail_is_not_part_of_a_field(self):
         line = ("Setting: A cliff; Camera: Wide shot; Character behavior: Alert; Action: The leopard runs; "

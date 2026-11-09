@@ -923,13 +923,24 @@ class ProductionAgents:
             result['needs_review'] = True
             return result
         if stage == 'prompt':
-            schema = '{"prompt":string,"subjects":[subject ids],"needs_review":boolean}'
+            from . import content
             clip = int(project.get('clip_seconds') or 10)
-            extra = (f'Write one English text-to-video prompt for this {clip}-second clip of a wildlife documentary: the locked '
-                     'subjects with their traits, environment, camera (shot size, angle, movement), the action from start to end '
-                     'state, and continuity with neighbouring scenes (entry/exit direction, positions). Video specification: ' +
-                     VIDEO_DEFAULTS + '.')
+            schema = '{"prompt":string,"subjects":[subject ids],"issues":[strings],"needs_review":boolean}'
+            # MASTER PROMPT 08: cùng quy tắc với Content Studio; "prompt" là một dòng gồm các trường có nhãn.
+            rules = content.english_request(['(see CONTEXT)'], seconds=clip).split('\n\nScenes:')[0]
+            rules = rules.replace('exactly ONE line per scene', 'the "prompt" value is ONE line').replace(
+                f'- After the last line write exactly: {content.END_EN}', '').replace(
+                'add a line after the last scene: ISSUE: Scene N — <problem>', 'put it in "issues"')
+            extra = ('Write the Muse prompt for THIS scene only (use neighbouring scenes for the continuity locks). '
+                     'Follow these rules exactly:\n' + rules)
             result = validate_result('prompt', self.discussion(run_id, task, snapshot, config, schema, extra=extra))
+            result['prompt'] = re.sub(r'^\W*SCENE\s*\d+\s*[—:.\-–]\s*', '', result['prompt'].strip(), flags=re.I)
+            if not content.structured_complete(result['prompt']):
+                raise AgentReview('Prompt thiếu trường của MASTER PROMPT 08 (SETTING, CHARACTERS, CAMERA, CHARACTER BEHAVIOR, '
+                                  'ACTION, ENDING FRAME).')
+            result['prompt'] = content.muse_prompt(result['prompt'], clip, '16:9')
+            if result.get('issues'):
+                result['needs_review'] = True  # AI báo mâu thuẫn: người dùng xem trước khi giao Muse
             bible = self.output(snapshot, 'bible') or {}
             known = {s['id'] for s in bible.get('subjects', [])} if isinstance(bible, dict) else set()
             subjects = result.get('subjects', [])
