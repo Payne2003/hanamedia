@@ -22,6 +22,7 @@ from runner.flow import default_chrome_profile
 from runner.gemini_web import chrome_executable, login_url
 from runner.profiles import SharedProfile
 from runner.engine import Engine
+from runner.claude_web import claude_runner
 from runner.characters import NeedsConfirm
 from runner.media import MediaError, MediaInUse
 from runner import license as licensing
@@ -57,6 +58,7 @@ class AppServer(ThreadingHTTPServer):
         threading.Thread(target=self.license_watch, name="license-check", daemon=True).start()
         self.gemini_web = GeminiWebRunner(self.data_dir / "profiles" / "gemini-web")
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
+        self.claude_web = claude_runner(self.data_dir / "profiles" / "claude-web")
         # Tài khoản chung: Gemini, ChatGPT, Flow dùng một hồ sơ Chrome (đăng nhập Google một lần).
         self.shared = SharedProfile(self.data_dir)
         self.gemini_web.gate = self.chatgpt_web.gate = self.shared
@@ -67,6 +69,13 @@ class AppServer(ThreadingHTTPServer):
             self.shared.register("Flow", engine.release_flow)
         if store.setting("shared_google_profile") is True:
             self.apply_shared(True)
+        from runner.production_agents import ProductionAgents
+        self.agents = ProductionAgents(self)
+
+    def server_close(self):
+        if hasattr(self, "agents"):
+            self.agents.close()
+        super().server_close()
 
     def license_watch(self):
         """Máy khách: tải danh sách thu hồi khi mở app rồi mỗi giờ (lỗi mạng thì thử lại sau 10 phút).
@@ -109,11 +118,12 @@ class AppServer(ThreadingHTTPServer):
 
     def jobs_running(self):
         with self.store.connect() as db:
-            return db.execute("SELECT COUNT(*) FROM jobs WHERE status='running'").fetchone()[0] > 0
+            return (db.execute("SELECT COUNT(*) FROM jobs WHERE status='running'").fetchone()[0] > 0 or
+                    hasattr(self, "agents") and db.execute("SELECT COUNT(*) FROM production_runs WHERE status='running'").fetchone()[0] > 0)
 
     def exit_for_update(self):
         """Bộ cài đã chạy: đóng Chrome của tool rồi tắt app để bộ cài chép đè (bộ cài tự mở lại app)."""
-        for close in (self.engine.close_browsers, self.gemini_web.close, self.chatgpt_web.close):
+        for close in (self.agents.close, self.engine.close_browsers, self.gemini_web.close, self.chatgpt_web.close, self.claude_web.close):
             try:
                 close()
             except Exception:
@@ -300,7 +310,8 @@ class Handler(BaseHTTPRequestHandler):
     # Bản quyền: chạy video / tải media cần quyền tương ứng còn hạn. Xem dữ liệu, cài đặt, kích hoạt luôn được phép.
     JOB_PATHS = {"/api/jobs", "/api/start", "/api/jobs/update", "/api/jobs/rerun", "/api/retry", "/api/jobs/fetch", "/api/batch/stitch",
                  "/api/jobs/characters", "/api/jobs/attach-characters", "/api/login", "/api/accounts/login-all",
-                 "/api/review", "/api/accounts/check", "/api/accounts/check-all"}
+                 "/api/review", "/api/accounts/check", "/api/accounts/check-all",
+                 "/api/production/agent/run", "/api/production/agent/approve", "/api/production/agent/api-test"}
     MEDIA_PATHS = {"/api/media/upload", "/api/media/delete-batch", "/api/library/image-upload", "/api/image-upload",
                    "/api/library/delete", "/api/library/import-flow"}
 
@@ -457,6 +468,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({"images": self.server.store.library_images()})
         if path.startswith("/api/media") and self.media_get(path):
             return
+        if path == "/api/production":
+            return self.reply({"projects": self.server.store.production.list_projects()})
+        production_match = re.fullmatch(r"/api/production/([a-f0-9]{32})", path)
+        if production_match:
+            try:
+                return self.reply({**self.server.store.production.snapshot(production_match.group(1)),
+                                   "agent_state": self.server.agents.public(production_match.group(1)),
+                                   "execution_mode": "department_agents_with_manual_review"})
+            except ValueError as error:
+                return self.reply({"error": str(error)}, 404)
         if path == "/api/projects":
             return self.reply({"projects": self.server.store.characters.projects()})
         project_match = re.fullmatch(r"/api/project/([a-f0-9]{32})", path)
@@ -465,6 +486,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(self.server.store.characters.project(project_match.group(1)))
             except ValueError as error:
                 return self.reply({"error": str(error)}, 404)
+        production_file = re.fullmatch(r"/api/production/run/([a-f0-9]{32})/(film|manifest|frame/[1-4])", path)
+        if production_file:
+            run_id, part = production_file.groups()
+            with self.server.store.connect() as db:
+                run = db.execute("SELECT project_id FROM production_runs WHERE id=?", (run_id,)).fetchone()
+            if not run:
+                return self.reply({"error": "Không tìm thấy lần chạy."}, 404)
+            folder = self.server.agents.root / run["project_id"] / run_id
+            relative = "film.mp4" if part == "film" else "manifest.json" if part == "manifest" else "evidence/frame-" + part.rsplit("/", 1)[1] + ".jpg"
+            file = (folder / relative).resolve()
+            if not file.is_relative_to(folder.resolve()) or not file.is_file():
+                return self.reply({"error": "Chưa có tệp đầu ra."}, 404)
+            kind = "video/mp4" if part == "film" else "application/json" if part == "manifest" else "image/jpeg"
+            return self.send_file(file, kind, "attachment" if part == "manifest" else "inline", file.name)
         library_image = re.fullmatch(r"/api/library/image/([a-f0-9]{32})", path)
         if library_image:
             image = self.server.store.image_file(library_image.group(1))
@@ -528,6 +563,7 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             return
         mapping = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css",
+                   "/production.js": "production.js", "/production-agents.js": "production-agents.js",
                    "/logo.png": "logo.png", "/logo.svg": "logo.svg", "/favicon.ico": "favicon.ico"}
         if path not in mapping:
             return self.reply({"error": "Không tìm thấy."}, 404)
@@ -580,7 +616,65 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(size))
             if not isinstance(body, dict):
                 raise ValueError("Dữ liệu không hợp lệ.")
-            if path == "/api/accounts":
+            if path == "/api/production/agent/api-save":
+                return self.reply(self.server.agents.api.vault.save(body.get("provider"),key=body.get("key"),model=body.get("model"),
+                    max_output_tokens=body.get("max_output_tokens"),remove=body.get("remove") is True))
+            elif path == "/api/production/agent/gateway-info":
+                return self.reply(self.server.agents.api.relay_info())
+            elif path == "/api/production/agent/gateway-save":
+                return self.reply(self.server.agents.api.vault.save_gateway(body.get("url",""),body.get("token"),body.get("remove") is True))
+            elif path == "/api/production/agent/api-test":
+                if body.get("transport")=="gateway":
+                    if not self.server.agents.gateway_enabled:
+                        raise ValueError("Máy chủ trung gian chưa mở. Dùng trình duyệt hoặc API riêng trên máy này.")
+                    result=self.server.agents.api.relay(body.get("provider"), 'Return only JSON: {"ok":true}.')
+                    return self.reply({"ok":True,"model":result.get("model"),"usage":result.get("usage",{})})
+                return self.reply(self.server.agents.api.test(body.get("provider")))
+            elif path == "/api/production/agent/login":
+                provider = body.get("provider")
+                if provider not in self.server.agents.runners():
+                    raise ValueError("AI không được hỗ trợ.")
+                if provider in ("gemini", "chatgpt") and self.server.shared.enabled:
+                    raise ValueError("Đang dùng hồ sơ chung. Vào Cài đặt → Đăng nhập tài khoản chung.")
+                self.server.agents.runners()[provider].open_login()
+                return self.reply({"ok": True})
+            elif path == "/api/production/agent/configure":
+                return self.reply(self.server.agents.configure(body["project_id"], body.get("config")))
+            elif path == "/api/production/agent/run":
+                return self.reply(self.server.agents.start(body["task_id"]))
+            elif path == "/api/production/agent/approve":
+                return self.reply(self.server.agents.apply(body["run_id"], human=True,
+                                                          audio_confirmed=body.get("audio_confirmed") is True))
+            elif path == "/api/production/agent/rework":
+                return self.reply(self.server.agents.rework(body["run_id"], body.get("target")))
+            elif path == "/api/production/agent/reject":
+                return self.reply(self.server.agents.reject(body["run_id"]))
+            elif path == "/api/production/agent/stop":
+                return self.reply(self.server.agents.cancel())
+            elif path == "/api/production/agent/sync-muse":
+                return self.reply(self.server.agents.sync_muse(body["task_id"], body.get("job_id")))
+            elif path == "/api/production/create":
+                scenes = body.get("scenes")
+                if not isinstance(scenes, list) or not 1 <= len(scenes) <= 200:
+                    raise ValueError("Nhập từ 1 đến 200 mô tả cảnh.")
+                if any(not isinstance(scene, dict) or not str(scene.get("action", "")).strip() for scene in scenes):
+                    raise ValueError("Mỗi cảnh cần mô tả hành động.")
+                project_id = store.characters.create_project(body.get("name"), body.get("brief"), body.get("source_url"))
+                try:
+                    store.characters.add_scenes(project_id, scenes)
+                    result = store.production.enable(project_id)
+                except Exception:
+                    store.characters.delete_project(project_id)
+                    raise
+                return self.reply(result)
+            elif path == "/api/production/enable":
+                return self.reply(store.production.enable(body["project_id"]))
+            elif path == "/api/production/control":
+                return self.reply(store.production.control(body["project_id"], body.get("action")))
+            elif path == "/api/production/task":
+                return self.reply(store.production.transition(body["task_id"], body.get("action"),
+                                                             body.get("output", ""), body.get("job_id")))
+            elif path == "/api/accounts":
                 if "emails" in body:
                     return self.reply({"ok": True, **store.add_accounts(body["emails"], body["budget"])})
                 store.add_account(body["email"], body.get("mailbox", ""), body["budget"])
@@ -876,6 +970,7 @@ def start_runner(port=8765):
 def stop_runner(server, engine, instance, wait=None):
     """Dừng nhận tác vụ mới, đợi tác vụ đang chạy (tối đa `wait` giây; None = đợi hết), đóng mọi Chrome."""
     import time
+    server.agents.close()
     threads = engine.shutdown()
     deadline = None if wait is None else time.monotonic() + wait
     try:
@@ -887,6 +982,7 @@ def stop_runner(server, engine, instance, wait=None):
         engine.close_browsers()
         server.gemini_web.close()
         server.chatgpt_web.close()
+        server.claude_web.close()
         server.server_close()
         instance.close()
 

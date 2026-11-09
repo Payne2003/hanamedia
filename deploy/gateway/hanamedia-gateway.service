@@ -1,0 +1,24 @@
+[Unit]
+Description=HANA MEDIA shared AI gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hanamedia
+Group=hanamedia
+WorkingDirectory=/opt/hanamedia
+ExecStart=/opt/hanamedia/.venv/bin/python -m runner.ai_gateway --data-dir /var/lib/hanamedia-gateway --port 8899
+StateDirectory=hanamedia-gateway
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hanamedia-gateway
+
+[Install]
+WantedBy=multi-user.target

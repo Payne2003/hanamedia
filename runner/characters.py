@@ -144,6 +144,9 @@ class CharacterRegistry:
             if db.execute("""SELECT 1 FROM image_tasks t JOIN characters c ON c.id=t.character_id
                              WHERE c.project_id=? AND t.status='running'""", (project_id,)).fetchone():
                 raise ValueError("Dự án đang có ảnh nhân vật đang tạo. Đợi xong hoặc hủy trước khi xóa.")
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='production_runs'").fetchone():
+                if db.execute("SELECT 1 FROM production_runs WHERE project_id=? AND status='running'", (project_id,)).fetchone():
+                    raise ValueError("Dự án đang có agent xử lý. Dừng và đợi agent kết thúc trước khi xóa.")
             db.execute("UPDATE jobs SET scene_id=NULL WHERE scene_id IN (SELECT id FROM scenes WHERE project_id=?)", (project_id,))
             if db.execute("DELETE FROM projects WHERE id=?", (project_id,)).rowcount != 1:
                 raise ValueError("Không tìm thấy dự án.")

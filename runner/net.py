@@ -19,9 +19,17 @@ def certifi_context():
     return ssl.create_default_context(cafile=certifi.where())
 
 
-def urlopen(request, timeout=20):
+def urlopen(request, timeout=20, handlers=()):
+    """handlers: handler urllib thêm vào (vd. chặn chuyển hướng). Lần thử lại bằng certifi vẫn giữ các handler đó."""
+    def open_once(context=None):
+        if not handlers:
+            if context is None:
+                return urllib.request.urlopen(request, timeout=timeout)
+            return urllib.request.urlopen(request, timeout=timeout, context=context)
+        extra = [urllib.request.HTTPSHandler(context=context)] if context is not None else []
+        return urllib.request.build_opener(*handlers, *extra).open(request, timeout=timeout)
     try:
-        return urllib.request.urlopen(request, timeout=timeout)
+        return open_once()
     except urllib.error.HTTPError:
         raise
     except (urllib.error.URLError, ssl.SSLError) as error:
@@ -31,4 +39,4 @@ def urlopen(request, timeout=20):
             context = certifi_context()
         except ImportError:
             raise error from None
-        return urllib.request.urlopen(request, timeout=timeout, context=context)
+        return open_once(context)

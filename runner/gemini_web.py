@@ -439,6 +439,52 @@ class GeminiWebSession:
             from selenium.webdriver.common.keys import Keys
             field.send_keys(Keys.ENTER)
 
+    def attach_images(self, files, status, stop, email=""):
+        """Attach local evidence images. Fail closed if the current page cannot confirm uploads."""
+        files = [Path(file).resolve() for file in files]
+        if not 1 <= len(files) <= 8 or any(not f.is_file() or f.suffix.lower() not in (".jpg", ".jpeg", ".png") for f in files):
+            raise GeminiWebError("Ảnh bằng chứng không hợp lệ (tối đa 8 ảnh).")
+        self.wait_ready(status, stop, email)
+        for file in files:
+            inputs = self.driver.find_elements("css selector", 'input[type="file"]')
+            if not inputs:
+                # Accessible labels used by the two supported web clients; never guess unrelated controls.
+                buttons = self.driver.find_elements("css selector", 'button[aria-label]')
+                for button in buttons:
+                    label = (button.get_attribute("aria-label") or "").lower()
+                    if any(word in label for word in ("add files", "upload files", "attach", "thêm tệp", "tải tệp", "thêm ảnh")):
+                        button.click()
+                        break
+                inputs = self.driver.find_elements("css selector", 'input[type="file"]')
+            if not inputs:
+                raise GeminiWebError("Không tìm thấy nút đính kèm ảnh của AI. Giao diện có thể đã thay đổi; chưa gửi yêu cầu QC.")
+            compatible = [field for field in inputs if not field.get_attribute("accept") or
+                          any(kind in field.get_attribute("accept").lower() for kind in ("image", "jpg", "jpeg", "png", "*"))]
+            if not compatible:
+                raise GeminiWebError("Trang AI không có ô tải ảnh phù hợp; chưa gửi QC.")
+            compatible[-1].send_keys(str(file))
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline:
+                if stop.is_set():
+                    raise GeminiWebError("Đã dừng tải ảnh bằng chứng.")
+                uploaded = self.driver.execute_script("""const name=arguments[0];
+                    const body=document.body.innerText||'';
+                    const found=body.includes(name)||[...document.querySelectorAll('[aria-label],[title],img')].some(e=>
+                      [e.getAttribute('aria-label'),e.getAttribute('title'),e.getAttribute('alt')].some(v=>v&&v.includes(name)));
+                    return found&&!document.querySelector('[role=progressbar],[aria-busy=true]');""", file.name)
+                if uploaded:
+                    break
+                time.sleep(.5)
+            else:
+                raise GeminiWebError("Không xác nhận được ảnh đã tải xong. Dừng trước khi gửi QC.")
+
+        confirmed = self.driver.execute_script("""return arguments[0].every(name=>
+          (document.body.innerText||'').includes(name)||[...document.querySelectorAll('[aria-label],[title],img')].some(e=>
+          [e.getAttribute('aria-label'),e.getAttribute('title'),e.getAttribute('alt')].some(v=>v&&v.includes(name))));""",
+          [file.name for file in files])
+        if not confirmed:
+            raise GeminiWebError("Trang AI chưa giữ đủ ảnh bằng chứng; chưa gửi QC.")
+
     def ask(self, text, status, stop, email="", timeout=1200, label="Gemini đang viết"):
         field = self.wait_ready(status, stop, email)
         self.wait_idle(status, stop)
@@ -770,6 +816,18 @@ class GeminiWebRunner:
                         self.session.take_now = self.take
                     except Exception:
                         pass
+                if kind == "production":
+                    self.session.new_chat()
+                    self.session.wait_ready(status, self.stop, email)
+                    if model and not self.session.choose_model(model):
+                        raise GeminiWebError(f"Không chọn được model {model} trên {self.name}. Kiểm tra model trên website.")
+                    files = lines.get("files", []) if isinstance(lines, dict) else []
+                    if files:
+                        self.session.attach_images(files, status, self.stop, email)
+                    answer = self.session.ask(prompt, status, self.stop, email, timeout=1200,
+                                              label=f"{self.name} đang xử lý công đoạn")
+                    self.set(busy=False, result={"answer": answer}, status="Đã nhận kết quả agent")
+                    continue
                 if kind == "characters":
                     result = run_characters(self.session, prompt, lines, status, self.stop, email, model)
                     self.set(busy=False, result=result,
