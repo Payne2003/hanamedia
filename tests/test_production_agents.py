@@ -87,6 +87,8 @@ class AgentTests(unittest.TestCase):
         run=self.agents.start(hard['id']);self.agents.thread.join(5)
         board=self.store.production.snapshot(self.project)
         self.assertTrue(board['scenes'][1]['prompt'].startswith('Snow leopard'))
+        sent=self.server.chatgpt_web.calls[-1][1]
+        for rule in ('4K','1.0x','no slow motion','no background music','watermarks'):self.assertIn(rule,sent)  # MASTER PROMPT V3.0
         self.assertEqual(board['scenes'][1]['characters'],[board['characters'][0]['id']])
         # Cảnh khó được tạo video trước; cảnh thường chờ duyệt tạo thử.
         video=lambda i:next(t for t in board['tasks'] if t['stage']=='video' and t['scene_id']==board['scenes'][i]['id'])
@@ -298,29 +300,55 @@ class AgentTests(unittest.TestCase):
             production_media.run([video_tools.ffmpeg(),'-v','error','-re','-f','lavfi','-i','color=c=black:s=64x64:r=5:d=60','-f','null','-'],60,stop)
         self.assertLess(time.monotonic()-started,10)
 
-    def test_research_analyses_frames_of_the_source_video(self):
+    def test_master_prompt_reverse_engineering_of_the_source_video(self):
         source=Path(self.temp.name)/'source.mp4'
-        result=video_tools.run([video_tools.ffmpeg(),'-v','error','-y','-f','lavfi','-i','testsrc=s=160x90:r=10:d=12',
-                                '-c:v','libx264','-threads','1',str(source)],60)
+        f=video_tools.ffmpeg()
+        result=video_tools.run([f,'-v','error','-y','-f','lavfi','-i','color=c=red:s=320x180:r=25:d=2','-f','lavfi','-i',
+                                'color=c=green:s=320x180:r=25:d=3','-f','lavfi','-i','testsrc=s=320x180:r=25:d=2.5','-f','lavfi','-i','sine=d=7.5',
+                                '-filter_complex','[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]','-map','[v]','-map','3:a','-c:v','libx264',
+                                '-c:a','aac','-shortest',str(source)],60)
         self.assertEqual(result.returncode,0,result.stderr)
-        board=self.store.production.create('Nguồn',source_video=str(source),target_seconds=60)
+        board=self.store.production.create('Nguồn',source_video=str(source),target_seconds=60,clip_seconds=8)
         project=board['project']['id']
         config=self.agents.settings(project);config['agents']['research'].update(reviewer='');self.agents.configure(project,config)
-        frames={'frames':[{'time':.75,'species':'không rõ','count':'0','action':'thử','terrain':'','camera':'tĩnh','uncertain':True}],'notes':'hình thử'}
-        report={'summary':'Video thử nghiệm','species':[],'terrain':'','timeline':[{'start':0,'end':12,'event':'Màn hình màu','action':'',
-                'camera':'tĩnh','audio_hint':'đoán','evidence':[.75],'uncertain':True}],'audio_notes':'','limitations':[],'needs_review':False}
-        self.server.gemini_web.answers=[frames,report]
+        shot=lambda n:{'cut_check':{'is_real_cut':True,'note':'đổi màu'},'environment':{'terrain':'nền màu'},'characters':[],
+                       'character_count':0,'camera':{'shot_size':'toàn cảnh','movement':'cố định','movement_evidence':'5 khung giống nhau'},
+                       'action':{'opening':f'mở {n}','middle':[{'time':99,'description':'ngoài shot'}],'ending':f'kết {n}'},
+                       'behavior':'không có động vật','ai_difficulty':'Dễ','verification':'Đã xác minh bằng quan sát video','confidence':'Cao'}
+        story={'summary':'Ba màn hình thử','who':'Không có động vật','what':'Đổi màu','where':'—','when':'—','why':'—','how':'—',
+               'structure':'3 phần','editing':'cắt đều','chapters':[{'name':'Chương 1','start':0,'end':7.5,'shots':['001','002',3]}],
+               'emotion_timeline':[],'needs_review':False}
+        continuity={'pairs':[{'previous':'001','next':'002','link':'Liên tục do dựng phim tạo ra','issue':'đổi bối cảnh','suggestion':'cắt thẳng'}]}
+        self.server.gemini_web.answers=[shot(1),shot(2),shot(3),story,continuity]
         task=next(t for t in board['tasks'] if t['stage']=='research')
-        run=self.agents.start(task['id']);self.agents.thread.join(30)
+        run=self.agents.start(task['id']);self.agents.thread.join(60)
         run=next(r for r in self.agents.public(project)['runs'] if r['id']==run['run_id'])
-        self.assertEqual(run['status'],'review',run['error']);self.assertTrue(run['result']['reference_video_verified'])
-        self.assertEqual(len(run['result']['evidence']['frames']),8)
-        self.assertEqual(run['result']['evidence']['frames'][0]['name'],'src-001')
-        self.assertEqual(len(self.server.gemini_web.calls[0][2]['lines']['files']),8)  # khung hình được gửi kèm
-        self.assertTrue(run['result']['needs_review'])
-        with self.assertRaisesRegex(AgentReview,'khung hình'):
-            from runner.production_agents import validate_report
-            validate_report(dict(report,timeline=[dict(report['timeline'][0],evidence=[7.1])]),12,[.75,2.25])
+        self.assertEqual(run['status'],'review',run['error'])
+        result=run['result']
+        self.assertEqual(result['master_prompt'],'V3.0')
+        self.assertEqual([(s['start'],s['end']) for s in result['shots']],[(0.0,2.0),(2.0,5.0),(5.0,7.5)])  # điểm cắt thật
+        self.assertEqual(result['counts']['shots'],3);self.assertTrue(result['qc']['ok'])
+        self.assertEqual(result['verification']['fps'],25);self.assertTrue(result['verification']['audio'])
+        # Ảnh tĩnh: không được ghi "đã xác minh bằng quan sát video"; hành động ngoài mốc shot bị loại.
+        self.assertEqual(result['shots'][0]['analysis']['verification'],'Ước lượng từ khung hình')
+        self.assertEqual(result['shots'][0]['analysis']['action']['middle'],[])
+        self.assertIn('Chưa xác minh',result['shots'][0]['analysis']['sound']['natural'])
+        files=[c[2]['lines']['files'] for c in self.server.gemini_web.calls[:3]]
+        self.assertEqual([len(x) for x in files],[5,6,6])  # shot sau gửi kèm khung cuối shot trước để kiểm tra điểm cắt
+        self.assertEqual(result['story']['chapters'][0]['shots'],['001','002','003'])
+        self.assertEqual(result['continuity'][0]['link'],'Liên tục do dựng phim tạo ra')
+        self.assertEqual(result['continuity'][1]['link'],'Không đủ bằng chứng xác định')
+        from openpyxl import load_workbook
+        book=load_workbook(result['excel'])
+        self.assertEqual(book.sheetnames,['OVERVIEW','SHOT BY SHOT','STORY STRUCTURE','CONTINUITY MAP','VERIFICATION & QC'])
+        self.assertEqual(book['SHOT BY SHOT'].max_row,4);self.assertEqual(book['SHOT BY SHOT'].max_column,28)
+        self.assertEqual(book['SHOT BY SHOT'].freeze_panes,'A2');self.assertTrue(book['SHOT BY SHOT'].auto_filter.ref)
+        self.assertTrue(result['needs_review'])  # dừng, chờ người dùng yêu cầu bước kịch bản
+        # Chạy lại: shot đã phân tích của cùng video không gọi AI lại.
+        self.agents.reject(run['id']);self.store.production.transition(task['id'],'retry')
+        calls=len(self.server.gemini_web.calls);self.server.gemini_web.answers=[story,continuity]
+        self.agents.start(task['id']);self.agents.thread.join(60)
+        self.assertEqual(len(self.server.gemini_web.calls),calls+2)
 
     def test_ai_manager_runs_ready_tasks_until_a_review_gate(self):
         self.store.characters.add_scenes(self.project,[{'action':'Báo rình'}])
@@ -342,11 +370,12 @@ class AgentTests(unittest.TestCase):
     def test_queue_muse_and_sync_all_follow_scene_codes(self):
         self.prepare_video()
         enqueued=[]
-        def enqueue(prompts,batch,scene_ids):
-            enqueued.append(batch);self.store.enqueue(prompts,1,batch,scene_ids=scene_ids)
+        def enqueue(prompts,batch,scene_ids,options):
+            enqueued.append((batch,options));self.store.enqueue(prompts,1,batch,scene_ids=scene_ids,options=options)
         self.assertEqual(self.agents.queue_muse(self.project,enqueue)['queued'],1)
         self.assertEqual(self.agents.queue_muse(self.project,enqueue)['queued'],0)  # không gửi trùng
-        self.assertTrue(enqueued[0].startswith('production-'))
+        self.assertTrue(enqueued[0][0].startswith('production-'))
+        self.assertEqual(enqueued[0][1],{'duration':10,'aspect':'16:9','resolution':'4K'})
         with self.store.connect() as db:db.execute("UPDATE jobs SET status='done',output='take.mp4'")
         self.assertEqual(self.agents.sync_all(self.project),{'synced':1,'ambiguous':0})
         self.assertEqual(self.task('video')['status'],'done')
@@ -396,6 +425,15 @@ class MediaTests(unittest.TestCase):
         out=render_timeline(plan,takes,self.root/'film.mp4',sounds={'s'*32:spec})
         self.assertTrue(out['info']['audio']);self.assertAlmostEqual(out['info']['duration'],1.0,delta=.2)
         self.assertEqual(out['audio_policy'],'natural_layers_unverified')
+
+    def test_continuous_motion_is_not_a_cut(self):
+        from runner.reverse_engineer import detect_shots
+        path=self.root/'pan.mp4'
+        result=video_tools.run([video_tools.ffmpeg(),'-v','error','-y','-f','lavfi','-i','testsrc2=s=320x180:r=25:d=4',
+                                '-vf',"crop=200:120:'t*25':'t*10'",'-c:v','libx264',str(path)],60)
+        self.assertEqual(result.returncode,0,result.stderr)
+        shots=detect_shots(path,4.0,25)
+        self.assertEqual(len(shots),1);self.assertEqual((shots[0]['start'],shots[0]['end']),(0.0,4.0))
 
     def test_real_ffmpeg_decode_frames_and_trimmed_mixed_audio_render(self):
         files=[self.clip('red.mp4','red',True),self.clip('blue.mp4','blue')]

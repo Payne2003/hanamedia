@@ -42,6 +42,7 @@ def self_check():
         manager = SeleniumManager()._get_binary()
         if not manager.exists():
             raise RuntimeError(f"Thiếu selenium-manager: {manager}")
+        import openpyxl  # noqa: F401 — xuất Excel báo cáo phân tích ngược video
         import certifi  # bộ chứng chỉ dự phòng cho HTTPS (cập nhật app, thu hồi bản quyền)
         if not os.path.isfile(certifi.where()):
             raise RuntimeError("thiếu bộ chứng chỉ certifi")

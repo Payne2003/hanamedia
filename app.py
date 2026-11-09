@@ -487,8 +487,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(self.server.store.characters.project(project_match.group(1)))
             except ValueError as error:
                 return self.reply({"error": str(error)}, 404)
-        production_file = re.fullmatch(r"/api/production/run/([a-f0-9]{32})/(film|manifest|plan\.csv|plan\.json|"
-                                       r"frame/(?:[a-f0-9]{32}/)?[a-z0-9-]{1,40})", path)
+        production_file = re.fullmatch(r"/api/production/run/([a-f0-9]{32})/(film|manifest|plan\.csv|plan\.json|report\.xlsx|"
+                                       r"frame/(?:[a-z0-9]{1,32}/)?[a-z0-9-]{1,40})", path)
         if production_file:
             run_id, part = production_file.groups()
             with self.server.store.connect() as db:
@@ -497,7 +497,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"error": "Không tìm thấy lần chạy."}, 404)
             folder = self.server.agents.root / run["project_id"] / run_id
             files = {"film": ("film.mp4", "video/mp4"), "manifest": ("manifest.json", "application/json"),
-                     "plan.csv": ("edit_plan.csv", "text/csv; charset=utf-8"), "plan.json": ("edit_plan.json", "application/json")}
+                     "plan.csv": ("edit_plan.csv", "text/csv; charset=utf-8"), "plan.json": ("edit_plan.json", "application/json"),
+                     "report.xlsx": ("reverse_engineering.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
             relative, kind = files.get(part) or ("evidence/" + part.split("/", 1)[1] + ".jpg", "image/jpeg")
             file = (folder / relative).resolve()
             if not file.is_relative_to(folder.resolve()) or not file.is_file():
@@ -693,10 +694,10 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/production/agent/sync-all":
                 return self.reply(self.server.agents.sync_all(body["project_id"]))
             elif path == "/api/production/queue-muse":
-                def enqueue(prompts, batch, scene_ids):
+                def enqueue(prompts, batch, scene_ids, options):
                     reserved = self.server.license.reserve_jobs(len(prompts))
                     try:
-                        store.enqueue(prompts, 1, batch, None, "text", None, scene_ids, {"duration": 10, "aspect": "16:9"})
+                        store.enqueue(prompts, 1, batch, None, "text", None, scene_ids, options)
                     except Exception:
                         self.server.license.refund_jobs(reserved, len(prompts))
                         raise
@@ -722,7 +723,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(self.server.agents.sync_muse(body["task_id"], body.get("job_id")))
             elif path == "/api/production/create" and "scenes" not in body:
                 return self.reply(store.production.create(body.get("name"), body.get("brief", ""), body.get("source_video", ""),
-                                                          body.get("target_seconds", 510), body.get("source_url", "")))
+                                                          body.get("target_seconds", 510), body.get("source_url", ""),
+                                                          body.get("clip_seconds", 10)))
             elif path == "/api/production/create":
                 scenes = body.get("scenes")
                 if not isinstance(scenes, list) or not 1 <= len(scenes) <= 200:
