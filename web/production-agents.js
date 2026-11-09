@@ -4,7 +4,6 @@ const providers={gemini:'Gemini',chatgpt:'ChatGPT / OpenAI',claude:'Claude / Ant
 const transports={browser:'Trình duyệt trên máy này',api:'API riêng (khóa của bạn)',gateway:'Máy chủ dùng chung'};
 const transportList=()=>Object.fromEntries(Object.entries(transports).filter(([id])=>id!=='gateway'||current?.agent_state?.gateway_enabled));
 const stageProblems=(board,stage)=>board.agent_state?.readiness?.stages?.[stage]||[];
-function loginLabel(p){const a=p.account||{};if(p.busy)return ['working','Đang bận'];if(a.logged_in===true)return ['done','Đã đăng nhập'+(a.email?' · '+a.email:'')];if(a.logged_in===false)return ['error','Chưa đăng nhập'];return ['waiting','Chưa kiểm tra — chạy thử một công đoạn'];}
 let host,current;
 const labels={running:'Đang chạy',review:'Chờ bạn kiểm tra',done:'Đã áp dụng',rejected:'Đã trả lại',superseded:'Đã thay thế do làm lại'};
 export function taskAgentButtons(board,task){
@@ -17,28 +16,12 @@ export function taskAgentButtons(board,task){
   return `<button type="button" class="accent-outline" data-agent-run="${task.id}">${label}</button>`;}
  return '';
 }
-function readinessBlock(board){
- const state=board.agent_state,cfg=state.config,ready=state.readiness||{stages:{}};
- const used=new Set(),apiUsed=new Set();
- Object.values(cfg.agents).forEach(a=>[a.provider,a.reviewer,a.consultant].filter(Boolean).forEach(p=>((a.transport||'browser')==='api'?apiUsed:used).add(p)));
- const rows=Object.entries(state.providers).filter(([id])=>used.has(id)).map(([id,p])=>{const [cls,text]=loginLabel(p);
-  const action=p.shared?'<small>Đăng nhập trong Cài đặt → Tài khoản chung</small>':`<button type="button" data-agent-login="${id}">Đăng nhập ${esc(p.name)}</button>`;
-  return `<li><span class="production-status ${cls}">${esc(providers[id])} · ${esc(text)}</span>${action}</li>`;});
- [...apiUsed].forEach(id=>{const a=state.api?.[id];rows.push(`<li><span class="production-status ${a?.configured?'done':'error'}">${esc(providers[id])} · API ${a?.configured?'đã có khóa':'chưa có khóa'}</span>${a?.configured?'':'<button type="button" data-agent-connections>Nhập khóa</button>'}</li>`);});
- rows.push(`<li><span class="production-status ${ready.ffmpeg?'done':'error'}">FFmpeg (QC & dựng phim) · ${ready.ffmpeg?'sẵn sàng':'thiếu — cài lại app'}</span></li>`);
- const blocked=Object.entries(ready.stages||{}).filter(([,list])=>list.length);
- const stageName=id=>board.stages.find(s=>s.id===id)?.name||id;
- return `<div class="production-ready ${ready.ready?'ok':'warn'}"><b>${ready.ready?'✓ Máy này sẵn sàng chạy agent':'⚠ Cần chuẩn bị trước khi giao agent'}</b>
-  <ul class="production-ready-list">${rows.join('')}</ul>
-  ${blocked.length?`<details><summary>${blocked.length} công đoạn chưa chạy được</summary><ul>${blocked.map(([id,list])=>`<li><b>${esc(stageName(id))}:</b> ${esc(list.join(' '))}</li>`).join('')}</ul></details>`:''}
-  <p class="detail">Agent chạy ngay trên máy này bằng tài khoản Gemini / ChatGPT / Claude bạn đã đăng nhập trong Chrome của tool (hoặc API riêng nếu bạn chọn). Mỗi lúc chỉ một agent chạy; đừng dùng Content Studio cùng AI đó khi agent đang làm. ${cfg.discussion_rounds} vòng phản biện · tối đa ${cfg.max_calls} lượt AI mỗi tác vụ (dựng phim: mỗi cảnh). Trạng thái đăng nhập là lần kiểm tra gần nhất.</p></div>`;
-}
 export function taskHasAgent(board,task){return board.agent_state?.runs.some(r=>r.task_id===task.id&&['running','review'].includes(r.status));}
 export function agentPanel(board){
  current=board;
  const state=board.agent_state;if(!state)return '';
  const paused=board.project.production_status==='paused';
- return `<section class="card production-work"><div class="production-heading"><div><div class="eyebrow">AI AGENTS · HỘI Ý TRONG TOOL</div><h2>Phòng điều phối AI</h2></div><div class="production-actions"><button type="button" data-agent-connections>Kết nối AI</button><button type="button" data-agent-config>Cấu hình phòng ban</button><button type="button" data-agent-stop>Dừng agent</button></div></div>${readinessBlock(board)}
+ return `<section class="card production-work"><div class="production-heading"><div><div class="eyebrow">AI AGENTS · HỘI Ý TRONG TOOL</div><h2>Phòng điều phối AI</h2></div><div class="production-actions"><button type="button" data-agent-connections>Kết nối AI</button><button type="button" data-agent-config>Cấu hình phòng ban</button><button type="button" data-agent-stop>Dừng agent</button></div></div><p class="detail">${state.config.discussion_rounds} vòng phản biện · tối đa ${state.config.max_calls} lượt AI mỗi tác vụ (dựng phim: mỗi cảnh). Đăng nhập AI trong Cài đặt.</p>${Object.values(state.config.agents).some(a=>(a.transport||'browser')==='browser'&&[a.provider,a.reviewer,a.consultant].includes('claude'))&&state.providers.claude?'<button type="button" data-agent-login="claude">Đăng nhập Claude</button>':''}
  <div class="production-agent-runs">${state.runs.length?state.runs.map(run=>{const task=board.tasks.find(t=>t.id===run.task_id),result=run.result||{},stage=task?.stage;return `<article class="production-agent-run"><div class="production-heading"><b>${esc(board.stages.find(s=>s.id===stage)?.name||stage)} ${task?.scene_id?'· '+esc(board.scenes.find(s=>s.id===task.scene_id)?.code):''}</b><span class="production-status ${run.status==='done'?'done':run.status==='running'?'working':''}">${esc(labels[run.status]||run.status)}</span></div><p>${esc(run.phase)}</p>${run.error?`<p class="production-error">${esc(run.error)}</p>`:''}${result.passed===false?'<p class="production-error">QC không đạt. Xem bằng chứng và xử lý lỗi trước khi chạy lại.</p>':''}
  ${Object.keys(result).length?`<details data-agent-details="${run.id}-result"><summary>Kết quả agent</summary><pre>${esc(JSON.stringify(result,null,2))}</pre></details>`:''}
  ${result.evidence?.frames?`<div class="production-evidence">${result.evidence.frames.map((f,i)=>`<figure><img src="/api/production/run/${run.id}/frame/${i+1}" alt="Khung hình bằng chứng tại ${f.time} giây" loading="lazy"><figcaption>${f.time}s</figcaption></figure>`).join('')}</div>`:''}

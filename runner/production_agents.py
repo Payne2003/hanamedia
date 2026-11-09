@@ -197,7 +197,8 @@ class ProductionAgents:
             if login_open and login_open():
                 problems.append(f'Cửa sổ đăng nhập {name} vẫn mở. Đăng nhập xong thì đóng hẳn cửa sổ đó.')
             if runner.account().get('logged_in') is False:
-                where = 'Cài đặt → Đăng nhập tài khoản chung' if self.shared_enabled() and provider in ('gemini', 'chatgpt') else f'nút Đăng nhập {name}'
+                where = ('Cài đặt → Đăng nhập tài khoản chung' if self.shared_enabled() and provider in ('gemini', 'chatgpt')
+                         else 'nút Đăng nhập Claude trong Phòng điều phối AI' if provider == 'claude' else f'Cài đặt → Đăng nhập {name}')
                 problems.append(f'{name} chưa đăng nhập trên máy này. Bấm {where}.')
         return problems
 
