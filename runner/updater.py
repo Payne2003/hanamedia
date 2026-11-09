@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -38,19 +39,52 @@ def newer(candidate, current=APP_VERSION):
     return a + (0,) * (width - len(a)) > b + (0,) * (width - len(b))
 
 
-def http_get(url, timeout=20):
-    """GET qua HTTPS, có dự phòng chứng chỉ certifi (runner/net.py). Không bao giờ tắt xác minh."""
+RETRY_WAITS = (2, 5)  # giây chờ giữa các lần thử lại khi mạng chập chờn (VPN vừa bật/tắt, đổi Wi-Fi)
+
+
+def http_get(url, timeout=20, headers=None):
+    """GET qua HTTPS: đọc lại proxy mỗi lần, thử certifi và bỏ proxy khi hỏng (runner/net.py). Luôn xác minh."""
     from .net import urlopen
-    return urlopen(urllib.request.Request(url, headers={"User-Agent": "HanaMedia-Updater"}), timeout=timeout)
+    return urlopen(urllib.request.Request(url, headers={"User-Agent": "HanaMedia-Updater", **(headers or {})}),
+                   timeout=timeout)
+
+
+def curl_path():
+    """curl.exe có sẵn trong Windows 10/11: đi qua mạng và kho chứng chỉ của Windows (giống trình duyệt)."""
+    if os.name != "nt":
+        return None
+    system = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "curl.exe"
+    return str(system) if system.is_file() else shutil.which("curl.exe")
+
+
+def curl_fetch(url, target, timeout=60, resume=False):
+    """Tải `url` về `target` bằng curl.exe. Trả về địa chỉ cuối sau chuyển hướng. Chỉ HTTPS."""
+    curl = curl_path()
+    if not curl:
+        raise OSError("Máy không có curl.exe")
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    base = [curl, "-sS", "-L", "--fail", "--proto", "=https", "--proto-redir", "=https", "--retry", "2",
+            "--connect-timeout", "20", "--max-time", str(int(timeout)), "-A", "HanaMedia-Updater",
+            "-w", "%{url_effective}", "-o", str(target)] + (["-C", "-"] if resume else [])
+    # Một số VPN/diệt virus chặn bước kiểm tra thu hồi chứng chỉ của Windows; chứng chỉ vẫn được xác minh đầy đủ.
+    for extra in (["--ssl-revoke-best-effort"], []):
+        result = subprocess.run(base + extra + [url], capture_output=True, text=True, timeout=timeout + 30,
+                                creationflags=flags)
+        if result.returncode == 2 and extra:  # curl cũ không biết tùy chọn này
+            continue
+        if result.returncode:
+            raise OSError(f"curl mã {result.returncode}: {result.stderr.strip()[:160]}")
+        return result.stdout.strip()
+    raise OSError("curl không chạy được")
 
 
 class Updater:
     def __init__(self, data, busy=lambda: False, exit_app=None, repo=UPDATE_REPO, opener=http_get, clock=time.time,
-                 launcher=None, sleep=time.sleep):
+                 launcher=None, sleep=time.sleep, curl=curl_fetch):
         self.dir = Path(data) / "updates"
         self.busy, self.exit_app, self.repo = busy, exit_app, repo
         self.opener, self.clock, self.launcher = opener, clock, launcher or self.launch_installer
-        self.sleep = sleep
+        self.sleep, self.curl = sleep, curl
         self.lock = threading.Lock()
         self.state = {"current": APP_VERSION, "latest": None, "available": False, "notes": "", "size": 0,
                       "checked_at": None, "error": "", "phase": "idle", "progress": 0,
@@ -107,11 +141,14 @@ class Updater:
             return self.status()
         base = f"https://github.com/{self.repo}/releases"
         try:
-            tag = self.latest_tag(base)
+            tag, via_curl = self.find_latest(base)
             version = tag.lstrip("v")
             name = f"HanaMedia-Setup-{version}.exe"
+            digest = self.release_digest(base, tag, name)
+            if not digest and via_curl:
+                digest = self.curl_digest(base, tag, name)
             asset = {"name": name, "browser_download_url": f"{base}/download/{tag}/{name}", "size": 0,
-                     "digest": self.release_digest(base, tag, name)}
+                     "digest": digest}
             self.asset = asset if ASSET.match(name) else None
             available = bool(self.asset) and newer(tag)
             self.set(latest=version or None, available=available, notes="", size=0, checked_at=self.clock(), error="")
@@ -122,10 +159,56 @@ class Updater:
             self.set(checked_at=self.clock(), error=message, available=False)
             self.log("Kiểm tra lỗi: " + message)
         except (OSError, ValueError) as error:
-            self.set(checked_at=self.clock(), error=f"Không kiểm tra được cập nhật (mạng?): {str(error)[:120]}",
-                     available=False)
+            message = str(error) if "Chưa có bản phát hành" in str(error) else (
+                "Không kết nối được GitHub để kiểm tra cập nhật. Nếu đang bật VPN (1.1.1.1…) hoặc vừa đổi mạng, "
+                "đợi mạng ổn định rồi bấm Kiểm tra lại.")
+            self.set(checked_at=self.clock(), error=message, available=False)
             self.log(f"Kiểm tra lỗi: {type(error).__name__}: {str(error)[:200]}")
         return self.status()
+
+    def find_latest(self, base):
+        """Tag mới nhất, thử lại khi mạng chập chờn; cuối cùng hỏi qua curl.exe của Windows. Trả (tag, qua_curl)."""
+        error = None
+        for wait in (*RETRY_WAITS, None):
+            try:
+                return self.latest_tag(base), False
+            except ValueError as failure:
+                if "Chưa có bản phát hành" in str(failure):
+                    raise
+                error = failure
+                self.log(f"Kiểm tra lỗi mạng, thử lại: {str(failure)[:300]}")
+            if wait:
+                self.sleep(wait)
+        try:
+            tag = self.curl_latest(base)
+        except (OSError, ValueError, subprocess.SubprocessError) as failure:
+            self.log(f"curl.exe cũng không kiểm tra được: {str(failure)[:200]}")
+            raise error from None
+        self.log(f"Kiểm tra qua curl.exe của Windows: {tag}")
+        return tag, True
+
+    def curl_latest(self, base):
+        self.dir.mkdir(parents=True, exist_ok=True)
+        page = self.dir / "latest.html"
+        try:
+            final = self.curl(f"{base}/latest", page, timeout=40)
+        finally:
+            page.unlink(missing_ok=True)
+        match = re.search(r"/releases/tag/(v?[0-9][0-9.]*)$", final or "")
+        if not match:
+            raise ValueError("curl không thấy bản phát hành")
+        return match.group(1)
+
+    def curl_digest(self, base, tag, name):
+        target = self.dir / (name + ".sha256.txt")
+        try:
+            self.curl(f"{base}/download/{tag}/{name}.sha256", target, timeout=40)
+            found = re.search(r"\b([0-9a-fA-F]{64})\b", target.read_text("ascii", "ignore"))
+            return "sha256:" + found.group(1).lower() if found else ""
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return ""
+        finally:
+            target.unlink(missing_ok=True)
 
     def latest_tag(self, base):
         """Tag bản mới nhất: trang github.com (không giới hạn), không được thì hỏi API (60 lần/giờ/địa chỉ mạng)."""
@@ -188,32 +271,75 @@ class Updater:
         return self.status()
 
     def download(self):
+        """Tải bộ cài: tải tiếp phần dở khi mạng rớt, thử lại; không được thì nhờ curl.exe của Windows.
+        Bộ cài chỉ được chạy khi khớp kích thước và mã SHA-256 GitHub công bố."""
         asset = self.asset
         name, size = str(asset["name"]), int(asset.get("size") or 0)
         digest = str(asset.get("digest") or "")
         expected = digest.split(":", 1)[1].lower() if digest.startswith("sha256:") else ""
         self.dir.mkdir(parents=True, exist_ok=True)
         target, part = self.dir / name, self.dir / (name + ".part")
-        hasher, done = hashlib.sha256(), 0
-        with self.opener(asset["browser_download_url"], timeout=60) as response, open(part, "wb") as handle:
-            size = size or int(response.headers.get("Content-Length") or 0)
-            while True:
-                chunk = response.read(1 << 20)
-                if not chunk:
-                    break
-                handle.write(chunk)
-                hasher.update(chunk)
-                done += len(chunk)
-                if size:
-                    self.set(progress=min(99, int(done * 100 / size)))
+        part.unlink(missing_ok=True)
+        errors = []
+        for wait in (*RETRY_WAITS, None):
+            try:
+                size = self.download_part(asset["browser_download_url"], part, size)
+                break
+            except urllib.error.HTTPError:
+                raise
+            except (OSError, ValueError) as error:
+                errors.append(str(error)[:200])
+                self.log(f"Tải lỗi, thử lại (giữ phần đã tải): {str(error)[:300]}")
+            if wait:
+                self.sleep(wait)
+        else:
+            if not expected:
+                part.unlink(missing_ok=True)
+                raise ValueError("Không tải được bộ cài (mạng/VPN). Tắt VPN hoặc đợi mạng ổn định rồi bấm Cập nhật lại.")
+            try:
+                self.set(progress=0)
+                self.log("Tải bằng curl.exe của Windows.")
+                self.curl(asset["browser_download_url"], part, timeout=1800, resume=part.exists())
+            except (OSError, subprocess.SubprocessError) as error:
+                self.log(f"curl.exe cũng không tải được: {str(error)[:300]}")
+                part.unlink(missing_ok=True)
+                raise ValueError("Không tải được bộ cài từ GitHub (đã thử lại nhiều cách). Nếu đang bật VPN "
+                                 "(1.1.1.1…), tắt VPN rồi bấm Cập nhật lại.") from None
+        done = part.stat().st_size if part.exists() else 0
         if size and done != size:
             part.unlink(missing_ok=True)
             raise ValueError("Tải bộ cài chưa đủ dung lượng. Thử lại.")
+        hasher = hashlib.sha256()
+        with open(part, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                hasher.update(chunk)
         if expected and hasher.hexdigest() != expected:
             part.unlink(missing_ok=True)
             raise ValueError("Bộ cài tải về không khớp mã kiểm tra của GitHub. Đã hủy, không cài.")
         os.replace(part, target)
         return target
+
+    def download_part(self, url, part, size):
+        """Tải tiếp vào `part` (Range). Trả về tổng dung lượng nếu biết."""
+        have = part.stat().st_size if part.exists() else 0
+        headers = {"Range": f"bytes={have}-"} if have else None
+        with (self.opener(url, timeout=60, headers=headers) if headers else self.opener(url, timeout=60)) as response:
+            resumed = have and getattr(response, "status", None) == 206
+            length = int(response.headers.get("Content-Length") or 0)
+            total = size or ((have + length) if resumed else length)
+            done = have if resumed else 0
+            with open(part, "ab" if resumed else "wb") as handle:
+                while True:
+                    chunk = response.read(1 << 20)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    done += len(chunk)
+                    if total:
+                        self.set(progress=min(99, int(done * 100 / total)))
+        if total and done < total:
+            raise ValueError(f"Mạng rớt khi đang tải ({done}/{total} byte).")
+        return total
 
     def install_worker(self):
         try:

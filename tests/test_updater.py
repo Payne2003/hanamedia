@@ -41,7 +41,7 @@ class UpdaterTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
 
-    def opener(self, url, timeout=20):
+    def opener(self, url, timeout=20, headers=None):
         self.seen.append(url)
         final = self.redirect.get(url, url)
         if final not in self.files:
@@ -59,11 +59,16 @@ class UpdaterTests(unittest.TestCase):
             self.files[f"https://api.github.com/repos/{REPO}/releases/tags/{tag}"] = (
                 '{"assets":[{"name":"%s","digest":"sha256:%s"}]}' % (name, api_digest)).encode()
 
-    def make(self):
+    def make(self, opener=None, curl=None):
         u = Updater(self.root, busy=lambda: self.busy, exit_app=lambda: self.exited.append(1), repo=REPO,
-                    opener=self.opener, launcher=lambda path: self.launched.append(Path(path)), sleep=lambda s: None)
+                    opener=opener or self.opener, launcher=lambda path: self.launched.append(Path(path)),
+                    sleep=lambda s: None, curl=curl or self.no_curl)
         u.state["supported"] = True
         return u
+
+    @staticmethod
+    def no_curl(*args, **kwargs):
+        raise OSError("Máy không có curl.exe")
 
     def wait(self, u):
         for _ in range(200):
@@ -132,6 +137,89 @@ class UpdaterTests(unittest.TestCase):
         self.files[f"{BASE}/latest"] = b"<html>"  # không chuyển tới /tag/
         u = Updater(self.root, repo=REPO, opener=self.opener)
         self.assertIn("Chưa có bản phát hành", u.check()["error"])
+
+
+    # ---- VPN / đổi mạng --------------------------------------------------------------------------------------------
+    def test_network_drop_during_check_is_retried(self):
+        self.publish()
+        failures = [2]
+
+        def flaky(url, timeout=20, headers=None):
+            if failures[0]:
+                failures[0] -= 1
+                raise urllib.error.URLError(ConnectionResetError("VPN vừa đổi"))
+            return self.opener(url, timeout)
+        status = self.make(flaky).check()
+        self.assertTrue(status["available"])
+        self.assertFalse(status["error"])
+
+    def test_download_resumes_after_connection_drop(self):
+        self.publish()
+        u = self.make()
+        u.check()
+        url = u.asset["browser_download_url"]
+        calls = []
+
+        def dropping(request_url, timeout=20, headers=None):
+            calls.append(headers)
+            if request_url != url:
+                return self.opener(request_url, timeout)
+            if not headers:
+                response = Response(BODY[:5000], url)
+                response.headers = {"Content-Length": str(len(BODY))}  # mạng rớt giữa chừng
+                return response
+            start = int(headers["Range"].split("=")[1].rstrip("-"))
+            response = Response(BODY[start:], url)
+            response.status = 206
+            return response
+        u.opener = dropping
+        installer = u.download()
+        self.assertEqual(installer.read_bytes(), BODY)
+        self.assertEqual(calls, [None, {"Range": "bytes=5000-"}])
+
+    def test_windows_curl_is_used_when_python_cannot_connect(self):
+        self.publish()
+        tag, name = "v1.1.60", "HanaMedia-Setup-1.1.60.exe"
+        used = []
+
+        def offline(url, timeout=20, headers=None):
+            raise urllib.error.URLError(TimeoutError("timed out"))
+
+        def curl(url, target, timeout=60, resume=False):
+            used.append(url)
+            final = self.redirect.get(url, url)
+            Path(target).write_bytes(self.files[final])
+            return final
+        u = self.make(offline, curl)
+        status = u.check()
+        self.assertTrue(status["available"], status)
+        self.assertTrue(u.asset["digest"].startswith("sha256:"))
+        self.assertEqual(u.download().read_bytes(), BODY)
+        self.assertIn(f"{BASE}/download/{tag}/{name}", used)
+        self.assertIn("curl.exe", (self.root / "logs" / "update.log").read_text(encoding="utf-8"))
+
+    def test_curl_download_with_wrong_hash_is_not_installed(self):
+        self.publish(payload=b"MZ tampered")
+
+        def offline(url, timeout=20, headers=None):
+            raise urllib.error.URLError(TimeoutError("timed out"))
+
+        def curl(url, target, timeout=60, resume=False):
+            final = self.redirect.get(url, url)
+            Path(target).write_bytes(self.files[final])
+            return final
+        u = self.make(offline, curl)
+        u.check()
+        with self.assertRaisesRegex(ValueError, "không khớp"):
+            u.download()
+        self.assertFalse(list((self.root / "updates").glob("*.exe")))
+
+    def test_offline_without_curl_explains_vpn(self):
+        def offline(url, timeout=20, headers=None):
+            raise urllib.error.URLError(TimeoutError("timed out"))
+        status = self.make(offline).check()
+        self.assertFalse(status["available"])
+        self.assertIn("VPN", status["error"])
 
 
 if __name__ == "__main__":
