@@ -74,7 +74,7 @@ def self_check():
 def main():
     if "--self-check" in sys.argv:
         return self_check()
-    if "--pick-folder" in sys.argv:
+    if "--pick-folder" in sys.argv or "--pick-video" in sys.argv:
         import app
         return app.main()
     import app

@@ -30,16 +30,18 @@ class ProductionTests(unittest.TestCase):
 
     def test_dependencies_are_per_scene_then_join_before_edit(self):
         with self.assertRaises(ValueError):
-            self.board.transition(self.task('script', self.scenes[0])['id'], 'start')
+            self.board.transition(self.task('script')['id'], 'start')
         self.complete('research')
-        self.complete('script', self.scenes[0])
+        self.complete('script')
+        self.assertFalse(self.task('prompt', self.scenes[0])['ready'])
+        self.complete('bible')
         self.assertTrue(self.task('prompt', self.scenes[0])['ready'])
-        self.assertFalse(self.task('prompt', self.scenes[1])['ready'])
         for index, scene in enumerate(self.scenes):
-            if index:
-                self.complete('script', scene)
             self.complete('prompt', scene)
             self.assertEqual(self.store.characters.project(self.project)['scenes'][index]['prompt'], 'Kết quả thực tế')
+        self.assertFalse(self.task('video', self.scenes[0])['ready'])  # chờ duyệt tạo thử
+        self.complete('pilot')
+        for index, scene in enumerate(self.scenes):
             self.store.enqueue(['Prompt'], 1, 'production-test-batch-'+str(index), scene_ids=[scene])
             job = next(j for j in self.store.snapshot()['jobs'] if j['scene_id'] == scene)
             # Simulate an engine result; the production board must inspect the persisted job.
@@ -57,10 +59,12 @@ class ProductionTests(unittest.TestCase):
         self.assertEqual(result['audio_policy'], 'natural_only')
 
     def test_video_requires_completed_job_of_correct_scene(self):
-        self.complete('research')
         scene = self.scenes[0]
-        self.complete('script', scene)
-        self.complete('prompt', scene)
+        for stage in ('research', 'script', 'bible'):
+            self.complete(stage)
+        for other in self.scenes:
+            self.complete('prompt', other)
+        self.complete('pilot')
         task = self.task('video', scene)
         self.board.transition(task['id'], 'start')
         self.store.enqueue(['Other scene'], 1, 'production-other-scene', scene_ids=[self.scenes[1]])
@@ -145,6 +149,25 @@ class ProductionHTTPTests(unittest.TestCase):
         conn.close()
         return result
 
+    def test_sound_library_upload_serve_and_delete(self):
+        from runner import video_tools
+        wav = Path(self.temp.name) / 'wind.wav'
+        video_tools.run([video_tools.ffmpeg(), '-v', 'error', '-y', '-f', 'lavfi', '-i', 'anoisesrc=d=0.5:a=0.1', str(wav)], 30)
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_port)
+        conn.request('POST', '/api/production/sounds/upload', wav.read_bytes(), {'Origin': self.server.origin,
+                     'X-Runner-Key': self.server.secret, 'X-Sound-Name': 'gi%C3%B3%20n%C3%BAi.wav', 'Content-Type': 'application/octet-stream'})
+        response = conn.getresponse(); body = json.loads(response.read()); conn.close()
+        self.assertEqual(response.status, 200, body)
+        sound = body['sound']; self.assertEqual(sound['name'], 'gió núi')
+        self.assertEqual(self.request('/api/production/sound/' + sound['id'])[0], 200)
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_port)
+        conn.request('POST', '/api/production/sounds/upload', b'not audio', {'Origin': self.server.origin,
+                     'X-Runner-Key': self.server.secret, 'X-Sound-Name': 'x.mp3'})
+        self.assertEqual(conn.getresponse().status, 400); conn.close()
+        status, raw = self.request('/api/production/sounds/delete', {'id': sound['id']})
+        self.assertEqual((status, json.loads(raw)['sounds']), (200, []))
+        self.assertEqual(self.request('/api/production/sound/' + sound['id'])[0], 404)
+
     def test_agent_configuration_endpoints_keep_security_and_validate_inputs(self):
         _, raw=self.request('/api/production/create',dict(name='Agents',scenes=[dict(action='Goat')]))
         project=json.loads(raw)['project']['id']
@@ -178,7 +201,7 @@ class ProductionHTTPTests(unittest.TestCase):
         status, body = self.request('/api/production/create', payload)
         self.assertEqual(status, 200, body)
         data = json.loads(body)
-        self.assertEqual(len(data['tasks']), 8)
+        self.assertEqual(len(data['tasks']), 10)  # 7 công đoạn toàn phim + 3 theo cảnh
         project = data['project']['id']
         self.assertEqual(self.request('/api/production/'+project)[0], 200)
         self.assertEqual(json.loads(self.request('/api/production')[1])['projects'][0]['name'], 'Phim núi')
