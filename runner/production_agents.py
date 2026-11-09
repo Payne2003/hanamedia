@@ -425,9 +425,9 @@ class ProductionAgents:
                 raise AgentReview('Đã đạt giới hạn lượt AI cho ' + ('phần này' if scope else 'tác vụ') + '. Không gọi thêm.')
             call_id = db.execute('INSERT INTO production_calls(run_id,provider,role,prompt,status,created,scope) VALUES(?,?,?,?,?,?,?)',
                                  (run_id, provider, role, prompt, 'sending', time.time(), scope)).lastrowid
-        self.update(run_id, phase=f'{runner.name} · {role}')
-        with self.store.connect() as db:
+        with self.store.connect() as db:  # một lần ghi cho cả trạng thái lần chạy và thông tin lượt gọi
             db.execute('UPDATE production_calls SET transport=?,model=? WHERE id=?', (transport, model, call_id))
+            db.execute('UPDATE production_runs SET phase=?,updated=? WHERE id=?', (f'{runner.name} · {role}', time.time(), run_id))
         if transport in ('api', 'gateway'):
             try:
                 response = (self.api.complete(provider, prompt, files, model) if transport == 'api' else

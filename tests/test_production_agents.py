@@ -50,7 +50,8 @@ class AgentTests(unittest.TestCase):
         """Hoàn tất thủ công các công đoạn trước video (dự án có sẵn cảnh, không có cảnh khó)."""
         for stage in ('research','script','bible','prompt','pilot'):self.complete_manual(stage)
     def run_agent(self,stage):
-        run=self.agents.start(self.task(stage)['id']);self.agents.thread.join(5)
+        # Máy build Windows ghi SQLite chậm hơn nhiều: chờ đủ lâu, vẫn khẳng định agent đã kết thúc.
+        run=self.agents.start(self.task(stage)['id']);self.agents.thread.join(30)
         self.assertFalse(self.agents.thread.is_alive())
         return next(r for r in self.agents.public(self.project)['runs'] if r['id']==run['run_id'])
 
@@ -84,7 +85,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(self.store.production.snapshot(self.project)['characters'][0]['code'],'SNOW_LEOPARD_01')
         hard=next(t for t in self.store.production.snapshot(self.project)['tasks'] if t['stage']=='prompt' and t['difficult'])
         self.server.chatgpt_web.answers=[{'prompt':'Snow leopard pounces on a goat. Natural ambience.','subjects':['SNOW_LEOPARD_01'],'needs_review':False}]
-        run=self.agents.start(hard['id']);self.agents.thread.join(5)
+        run=self.agents.start(hard['id']);self.agents.thread.join(30)
         board=self.store.production.snapshot(self.project)
         self.assertTrue(board['scenes'][1]['prompt'].startswith('Snow leopard'))
         sent=self.server.chatgpt_web.calls[-1][1]
@@ -95,7 +96,7 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(video(1)['ready']);self.assertFalse(video(0)['ready'])
         self.server.chatgpt_web.answers=[{'prompt':'Bad','subjects':['UNKNOWN_01'],'needs_review':False}]
         easy=next(t for t in board['tasks'] if t['stage']=='prompt' and not t['difficult'])
-        self.agents.start(easy['id']);self.agents.thread.join(5)
+        self.agents.start(easy['id']);self.agents.thread.join(30)
         self.assertIn('mã cá thể',next(r for r in self.agents.public(self.project)['runs'] if r['task_id']==easy['id'])['error'])
 
     def test_unresolved_disagreement_cannot_self_approve(self):
