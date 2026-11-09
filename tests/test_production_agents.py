@@ -175,7 +175,7 @@ class AgentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'âm thanh'):self.agents.apply(film['id'],human=True)
         self.agents.apply(film['id'],human=True,audio_confirmed=True)
         delivery=self.run_agent('delivery');self.assertEqual(delivery['status'],'done')
-        manifest=json.loads(Path(delivery['result']['manifest']).read_text())
+        manifest=json.loads(Path(delivery['result']['manifest']).read_text(encoding='utf-8'))
         self.assertEqual(manifest['scenes'][0]['scene_id'],self.scene)
         self.assertEqual(len(manifest['sha256']),64)
         self.assertEqual(self.store.production.snapshot(self.project)['summary']['progress'],100)
