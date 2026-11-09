@@ -160,6 +160,7 @@ class ProductionAgents:
         self.root = Path(self.store.path).parent / 'production'
         self.lock, self.stop = threading.RLock(), threading.Event()
         self.thread = None
+        self.manager = None  # luồng AI Manager tìm việc kế tiếp sau mỗi lần chạy
         self.closing = False
         self.active_browser_job = None
         from .ai_api import APIClients
@@ -843,13 +844,18 @@ class ProductionAgents:
             return None
 
     def follow_up(self, project_id):
+        if self.closing:
+            return
         finished = threading.current_thread()
 
         def later():
             if finished is not threading.current_thread():
                 finished.join(30)
-            self.kick(project_id)
-        threading.Thread(target=later, daemon=True, name='production-manager').start()
+            if not self.closing:
+                self.kick(project_id)
+        with self.lock:
+            self.manager = threading.Thread(target=later, daemon=True, name='production-manager')
+            self.manager.start()
 
     # ---- duyệt -------------------------------------------------------------------------------------------------------
     def apply(self, run_id, human=False, audio_confirmed=False):
@@ -1121,3 +1127,6 @@ class ProductionAgents:
         self.cancel()
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=8)  # FFmpeg bị tắt khi dừng; đợi ghi trạng thái xong
+        manager = self.manager
+        if manager and manager.is_alive() and manager is not threading.current_thread():
+            manager.join(timeout=8)  # không để luồng Manager còn mở cơ sở dữ liệu khi app đóng
