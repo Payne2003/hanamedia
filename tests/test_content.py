@@ -745,6 +745,45 @@ class ShotInputTests(unittest.TestCase):
         self.assertIn("source-shot analysis", content.english_request(lines))
 
 
+class AngleModeTests(unittest.TestCase):
+    BASE = "SETTING: Slope; CHARACTERS: One bear; CAMERA: {}; CHARACTER BEHAVIOR: Running; ACTION: Bear runs; ENDING FRAME: Still running"
+
+    def test_angle_plan_and_validation(self):
+        self.assertEqual(content.angle_plan(10), "0–3s, 3–5s, 5–8s, 8–10s")
+        good = self.BASE.format("0–3s: wide shot / 3–5s: side tracking / 5–8s: close-up / 8–10s: low angle")
+        self.assertEqual(content.angle_problem(good, 10), "")
+        self.assertIn("phủ đủ", content.angle_problem(self.BASE.format("0–3s: wide / 3–6s: close-up"), 10))
+        self.assertIn("dài 5s", content.angle_problem(self.BASE.format("0–5s: wide / 5–10s: close-up"), 10))
+        self.assertIn("chưa chia", content.angle_problem(self.BASE.format("Medium side tracking shot"), 10))
+        self.assertEqual(content.missing_english({1: good, 2: self.BASE.format("wide")}, 2, True, 10, 3), [2])
+        self.assertEqual(content.missing_english({1: good, 2: self.BASE.format("wide")}, 2, True, 10, 0), [])
+        request = content.english_request(["A"], seconds=10, angles=3)
+        self.assertIn("CHANGE THE CAMERA ANGLE EVERY 2–3 SECONDS", request)
+        self.assertIn("0–3s, 3–5s, 5–8s, 8–10s", request)
+        self.assertIn("at most 3 angles", content.english_request(["A"], seconds=10))
+
+    def test_run_english_asks_again_until_angles_are_right(self):
+        from runner import gemini_web
+        bad = "1. " + self.BASE.format("Medium side tracking shot")
+        good = "1. " + self.BASE.format("0–3s: wide shot / 3–5s: side tracking / 5–8s: close-up / 8–10s: low angle")
+
+        class Session:
+            answers = [bad + "\n" + content.END_EN, good + "\n" + content.END_EN]
+            sent = []
+            def new_chat(self): pass
+            def wait_ready(self, *a, **k): pass
+            def choose_model(self, name): return ""
+            def ask(self, text, *a, **k):
+                self.sent.append(text)
+                return self.answers.pop(0)
+        session = Session()
+        result = gemini_web.run_english(session, ["SHOT 1 — Gấu chạy"], lambda _: None, threading.Event(), seconds=10, angles=3)
+        self.assertEqual(result["missing"], [])
+        self.assertEqual(len(session.sent), 2)
+        self.assertIn("CAMERA: 0–3s: wide shot / 3–5s", result["english"][0])
+        self.assertIn("DURATION: 10 seconds", result["english"][0])
+
+
 class SecondsTests(unittest.TestCase):
     def test_default_duration(self):
         self.assertEqual(content.DEFAULT_SECONDS, 15)

@@ -309,6 +309,34 @@ def muse_prompt(prompt, seconds=8, aspect="16:9", style=""):
     return "; ".join(parts) + "."
 
 
+ANGLE_CHOICES = (0, 3)  # 0: theo kịch bản (tối đa 3 góc, Master Prompt 08); 3: đổi góc máy mỗi 2–3 giây
+SEGMENT = re.compile(r"(\d+(?:[.,]\d+)?)\s*s?\s*(?:[–—\-]|to)\s*(\d+(?:[.,]\d+)?)\s*(?:s|sec|seconds?)\b", re.IGNORECASE)
+
+
+def camera_segments(prompt):
+    """Các mốc góc máy trong trường CAMERA: [(bắt đầu, kết thúc), …] theo thứ tự xuất hiện."""
+    camera = parse_structured(prompt).get("camera", "")
+    return [(float(a.replace(",", ".")), float(b.replace(",", "."))) for a, b in SEGMENT.findall(camera)]
+
+
+def angle_problem(prompt, seconds, step=3):
+    """Kiểm tra chế độ đổi góc mỗi 2–3 giây: mốc phủ kín 0→hết clip, nối liền, mỗi góc 2–3 giây (góc cuối có thể
+    ngắn hơn một chút). Trả về lý do sai, hoặc "" nếu đúng."""
+    segments = camera_segments(prompt)
+    if len(segments) < 2:
+        return "CAMERA chưa chia góc máy theo mốc thời gian"
+    if abs(segments[0][0]) > .25 or abs(segments[-1][1] - seconds) > .25:
+        return f"mốc góc máy không phủ đủ 0–{seconds}s"
+    for (start, end), following in zip(segments, segments[1:] + [None]):
+        if end <= start:
+            return "mốc góc máy sai thứ tự"
+        if following and abs(following[0] - end) > .25:
+            return "các góc máy không nối liền nhau"
+        if end - start > step + .5 or (end - start < 1.5 and following):
+            return f"có góc máy dài {end - start:g}s (cần 2–{step}s)"
+    return ""
+
+
 ISSUE_LINE = re.compile(r"^\W*ISSUE\s*[:：]\s*(.+)$", re.IGNORECASE)
 
 
@@ -322,7 +350,17 @@ def parse_issues(text):
     return issues
 
 
-def english_request(lines, numbers=None, style="", aspect="16:9", structured=True, seconds=8):
+def angle_plan(seconds, step=3):
+    """Mốc gợi ý chia clip thành các góc 2–3 giây, ví dụ 10s → 0–3s, 3–5s, 5–8s, 8–10s."""
+    marks, at = [0], 0
+    while seconds - at > step:
+        at += 3 if (seconds - at - 3) != 1 and len(marks) % 2 else 2
+        marks.append(at)
+    marks.append(seconds)
+    return ", ".join(f"{a:g}–{b:g}s" for a, b in zip(marks, marks[1:]))
+
+
+def english_request(lines, numbers=None, style="", aspect="16:9", structured=True, seconds=8, angles=0):
     """Yêu cầu gửi Gemini/ChatGPT: viết prompt Muse tiếng Anh theo MASTER PROMPT 08 (numbers=None: tất cả cảnh)."""
     numbers = numbers or list(range(1, len(lines) + 1))
     partial = len(numbers) < len(lines)
@@ -352,10 +390,17 @@ def english_request(lines, numbers=None, style="", aspect="16:9", structured=Tru
         "Action rules: state the initial state, who acts, the main movement, direction and speed, reactions of the other "
         "animals and the end state. Prefer ONE clear main action per clip. Runs, chases and attacks move at the natural "
         "speed of the species, no slow motion.\n"
-        "Camera rules: at most 3 angles, only when the script needs them (extreme wide, wide, medium, close-up, extreme "
-        "close-up, low-angle, high-angle, frontal, side tracking, rear tracking, aerial wide). With 3 angles: " + timing + ". "
-        "For continuous action prefer \"One continuous shot, no cuts\". A new angle must never reverse movement direction "
-        "or move the animals.\n"
+        + (("Camera rules: CHANGE THE CAMERA ANGLE EVERY 2–3 SECONDS. The CAMERA field MUST be a timeline covering the whole "
+            f"clip from 0 to {seconds}s, each angle 2–3 seconds, consecutive, written like \"{angle_plan(seconds, angles)}\" "
+            "with one angle per mark separated by \" / \" (for example \"0–3s: wide shot, static, from the left / 3–5s: "
+            "side tracking medium shot …\"). Use a different angle for each mark (extreme wide, wide, medium, close-up, "
+            "extreme close-up, low-angle, high-angle, frontal, side tracking, rear tracking, aerial wide). ACTION follows "
+            "the same time marks so each angle shows a different moment of the same continuous action. A new angle must "
+            "never reverse movement direction or move the animals.\n") if angles else
+           ("Camera rules: at most 3 angles, only when the script needs them (extreme wide, wide, medium, close-up, extreme "
+            "close-up, low-angle, high-angle, frontal, side tracking, rear tracking, aerial wide). With 3 angles: " + timing + ". "
+            "For continuous action prefer \"One continuous shot, no cuts\". A new angle must never reverse movement direction "
+            "or move the animals.\n")) +
         "Continuity locks — compare each scene with the previous and next scene: CHARACTER LOCK (species, count, looks, "
         "marks), ENVIRONMENT LOCK (terrain, plants, rocks, water, light, fixed objects), POSITION LOCK (positions, order, "
         "direction, distance), ACTION LOCK (start pose, movement, reaction, end state), CONTINUITY LOCK (the end of the "
@@ -424,8 +469,9 @@ def parse_english(text, total, numbers=None):
     return {number: prompt for number, prompt in zip(order, paragraphs)}
 
 
-def missing_english(found, total, structured=False):
-    """Số cảnh còn thiếu, chưa phải tiếng Anh, hoặc (khi dùng khung chuẩn) thiếu một trong 4 trường."""
+def missing_english(found, total, structured=False, seconds=0, angles=0):
+    """Số cảnh còn thiếu, chưa phải tiếng Anh, thiếu trường Master Prompt 08, hoặc (chế độ đổi góc) sai mốc góc máy."""
     return [number for number in range(1, total + 1)
             if number not in found or not is_english(found[number])
-            or (structured and not structured_complete(found[number]))]
+            or (structured and not structured_complete(found[number]))
+            or (angles and seconds and angle_problem(found[number], seconds, angles))]

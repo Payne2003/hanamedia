@@ -924,7 +924,8 @@ class Handler(BaseHTTPRequestHandler):
                                                     body.get("aspect") if body.get("aspect") in content.ASPECTS else "16:9",
                                                     body.get("structured") is not False,
                                                     body.get("seconds") if body.get("seconds") in content.SECONDS_CHOICES
-                                                    else content.DEFAULT_SECONDS))
+                                                    else content.DEFAULT_SECONDS,
+                                                    body.get("angles") if body.get("angles") in content.ANGLE_CHOICES else 0))
                 return self.reply({"ok": True, "id": job, "total": len(lines), "engine": "chatgpt" if chatgpt else "gemini"})
             elif path == "/api/projects/create":
                 registry = store.characters
