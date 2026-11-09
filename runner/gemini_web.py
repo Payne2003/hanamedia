@@ -165,16 +165,22 @@ if (last) {
     /sao chép|copy|thích|good response|bad response|chia sẻ|share|thử lại|redo|regenerate/i.test(
       (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('mattooltip') || '') + ' ' + (b.getAttribute('data-test-id') || '')));
 }
-const busy = [...document.querySelectorAll('button, [role="button"]')].some(b => {
+const stopping = [...document.querySelectorAll('button, [role="button"]')].some(b => {
   const label = (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('mattooltip') || '') + ' ' + (b.className || '');
   return visible(b) && /stop|dừng|đang tạo|generating/i.test(label);
-}) || Boolean(last && last.querySelector('[aria-busy="true"], .loading, .pending, mat-progress-bar, [class*="spinner"]'));
+});
+// Giao diện mới: khung "đang suy nghĩ" (thinking-overlay) có chấm động; chữ bên trong cho biết Gemini đang làm gì.
+const overlay = last && [...last.querySelectorAll('thinking-overlay, model-thoughts, [data-test-id="thinking-overlay-content"]')].find(visible);
+const thinking = overlay ? (overlay.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 160) : '';
+const marker = Boolean(last && last.querySelector('[aria-busy="true"], .loading, .pending, mat-progress-bar, [class*="spinner"], thinking-dots-animation'));
+// Nút Sao chép/Thích chỉ hiện khi đã viết xong: khi đó dấu "aria-busy" còn sót lại không được giữ tool chờ mãi.
+const busy = stopping || (marker && !done);
 const account = [...document.querySelectorAll('a[aria-label*="@"], button[aria-label*="@"]')]
   .map(e => e.getAttribute('aria-label')).join(' ');
 const email = (account.match(/[\w.+-]+@[\w-]+\.[\w.-]+/) || [''])[0].toLowerCase();
 const signIn = location.hostname.startsWith('accounts.') ||
   [...document.querySelectorAll('a,button')].some(e => /^(đăng nhập|sign in)$/i.test((e.innerText || '').trim()));
-return {count: responses.length, busy, done, text, email, signIn, host: location.hostname,
+return {count: responses.length, busy, done, text, thinking, email, signIn, host: location.hostname,
   rejected: location.hostname.startsWith('accounts.') && /rejected|disallowed/i.test(location.pathname)};
 """
 
@@ -546,7 +552,9 @@ class GeminiWebSession:
             if current != last_text:
                 last_text, stable_since = current, time.monotonic()
             steady = time.monotonic() - stable_since
-            status(f"{label}… {len(current):,} ký tự".replace(",", ".") + ("" if current.strip() else f" ({self.NAME} đang suy nghĩ)"))
+            thinking = str(page.get("thinking") or "").strip()
+            status(f"{label}… {len(current):,} ký tự".replace(",", ".") + ("" if current.strip() else
+                   f" ({self.NAME} đang suy nghĩ{': ' + thinking if thinking else ''} · {int(time.monotonic() - started)} giây)"))
             # Xong khi: không còn nút Dừng, có chữ, đứng yên; và đã hiện nút Sao chép/Thích (hoặc đứng yên lâu hẳn).
             if not page.get("busy") and current.strip() and (
                     (page.get("done") and steady >= 4) or steady >= 25):
