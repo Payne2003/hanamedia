@@ -95,6 +95,55 @@ def quick_shots(path, stop=None):
     return detect_shots(path, info["duration"], float(match.group(1)) if match else 0.0, stop), info["duration"]
 
 
+TILE = (320, 180)
+
+
+def contact_sheets(path, windows, folder, stop=None, status=lambda text: None, columns=6, max_sheets=8):
+    """Ảnh khung hình cho Gemini: mỗi hàng một cảnh, mỗi ô một góc máy (khung giữa của góc đó), ô đen = không có góc.
+    Gộp thành tối đa `max_sheets` ảnh (Gemini web nhận giới hạn số tệp mỗi tin nhắn). Trả về danh sách ảnh JPG."""
+    import math
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    if not windows:
+        return []
+    rows = max(6, math.ceil(len(windows) / max_sheets))
+    width, height = TILE
+    fit = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
+    black = folder / "black.jpg"
+    video.run([video.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}",
+               "-frames:v", "1", str(black)], 30)
+    sheets = []
+    for first in range(0, len(windows), rows):
+        group = windows[first:first + rows]
+        cols = min(columns, max(len(w["angles"]) for w in group))
+        tiles = folder / f"tiles-{len(sheets) + 1}"
+        tiles.mkdir(exist_ok=True)
+        index = 0
+        for number, window in enumerate(group, first + 1):
+            angles = window["angles"]
+            if len(angles) > cols:  # nhiều góc hơn số ô: lấy đều
+                angles = [angles[round(i * (len(angles) - 1) / (cols - 1))] for i in range(cols)] if cols > 1 else angles[:1]
+            status(f"Đang trích khung hình cảnh {number}/{len(windows)} bằng FFmpeg…")
+            for column in range(cols):
+                if stop is not None and stop.is_set():
+                    raise RuntimeError("Đã dừng.")
+                index += 1
+                target = tiles / f"{index:04d}.jpg"
+                if column < len(angles):
+                    a, b = angles[column]
+                    moment = window["start"] + (a + b) / 2
+                    video.run([video.ffmpeg(), "-v", "error", "-y", "-ss", f"{moment:.2f}", "-i", str(path), "-frames:v", "1",
+                               "-vf", fit, "-q:v", "4", str(target)], 60)
+                if not target.is_file():
+                    target.write_bytes(black.read_bytes())
+        sheet = folder / f"khung-hinh-{len(sheets) + 1}.jpg"
+        video.run([video.ffmpeg(), "-v", "error", "-y", "-framerate", "1", "-start_number", "1", "-i", str(tiles / "%04d.jpg"),
+                   "-vf", f"tile={cols}x{len(group)}", "-frames:v", "1", "-q:v", "3", str(sheet)], 120)
+        if sheet.is_file():
+            sheets.append(sheet)
+    return sheets
+
+
 def detect_shots(path, duration, fps, stop=None):
     """GIAI ĐOẠN 3: ứng viên điểm cắt = khung hình sai khác mạnh so với cả tuyệt đối lẫn xung quanh.
     Trả về danh sách shot liên tục phủ toàn bộ thời lượng, kèm điểm số và mức tin cậy của điểm cắt đầu shot."""

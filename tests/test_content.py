@@ -271,13 +271,16 @@ class GeminiVideoFileTests(unittest.TestCase):
                 seen["files"] = [Path(f) for f in files]
                 seen["exists"] = all(Path(f).is_file() for f in files)
             def ask(self, text, status, stop, email="", label=""):
-                seen["prompt"] = text
+                seen.setdefault("first_prompt", text)
                 return line(1) + "\n" + line(2) + "\n" + gemini_web.END_MARK
 
         with tempfile.TemporaryDirectory() as folder:
             video = Path(folder) / "Một tiêu đề rất dài [abc].mp4"
             video.write_bytes(b"video")
-            with mock.patch.object(reverse_engineer, "quick_shots", return_value=(self.shots[:2], 3.5)):
+            sheet = Path(folder) / "khung-hinh-1.jpg"
+            sheet.write_bytes(b"jpg")
+            with mock.patch.object(reverse_engineer, "quick_shots", return_value=(self.shots[:2], 3.5)), \
+                    mock.patch.object(reverse_engineer, "contact_sheets", return_value=[sheet]):
                 runner = gemini_web.GeminiWebRunner(Path(folder) / "profile", Session)
                 runner.start("generate", "Yêu cầu", lines={"video": str(video), "measure": True})
                 for _ in range(100):
@@ -287,10 +290,14 @@ class GeminiVideoFileTests(unittest.TestCase):
                 runner.close()
             snap = runner.snapshot()
             self.assertEqual(snap["error"], "")
-            self.assertEqual(snap["result"]["shots"], 2)
+            self.assertEqual(snap["result"]["shots"], 1)  # video 3,5 giây = 1 cảnh 10 giây
+            self.assertEqual(snap["result"]["windows"][0]["angles"], [(0.0, 2.0), (2.0, 3.5)])
             self.assertTrue(seen["exists"])
             self.assertTrue(seen["files"][0].name.startswith("video-goc-"))
-            self.assertIn("BẢNG ĐIỂM CẮT", seen["prompt"])
+            self.assertEqual(seen["files"][1], sheet)  # ảnh khung hình gửi kèm video
+            self.assertIn("BẢNG CẢNH 10 GIÂY", seen["first_prompt"])
+            self.assertIn("ẢNH KHUNG HÌNH ĐÍNH KÈM (1 ảnh", seen["first_prompt"])
+            self.assertIn("Cảnh 1: góc quay mới có 0 mốc giây", " ".join(snap["result"]["issues"]))
             self.assertTrue(video.exists())  # file gốc của người dùng giữ nguyên
 
     def test_clear_field_refuses_to_send_when_old_text_stays(self):
@@ -902,8 +909,8 @@ class AngleModeTests(unittest.TestCase):
 
 class SecondsTests(unittest.TestCase):
     def test_default_duration(self):
-        self.assertEqual(content.DEFAULT_SECONDS, 15)
-        self.assertIn("15 giây", content.SCENE_RULES)
+        self.assertEqual(content.DEFAULT_SECONDS, 10)
+        self.assertIn("10 giây", content.SCENE_RULES)
         self.assertIn("fitting 8 seconds", content.english_request(["Bối cảnh 1: A"]))  # MASTER PROMPT 08: mặc định 8 giây
         self.assertIn("fitting 10 seconds", content.english_request(["A"], seconds=10))
 
@@ -1019,3 +1026,47 @@ class ChallengeTests(unittest.TestCase):
                 patch("runner.gemini_web.time.monotonic", lambda: clock[0]):
             self.assertEqual(session.ask("YÊU CẦU", lambda _: None, threading.Event()), "Ok")
         self.assertEqual(sends, ["YÊU CẦU"])  # ChatGPT đang viết sau xác minh: không gửi trùng
+
+
+class TenSecondSceneTests(unittest.TestCase):
+    shots = [dict(start=0, end=2.4), dict(start=2.4, end=6.1), dict(start=6.1, end=13.0), dict(start=13, end=21.5)]
+
+    def test_video_is_cut_into_10_second_scenes_with_measured_angles(self):
+        windows = content.scene_windows(self.shots, 21.5)
+        self.assertEqual([(w["start"], w["end"]) for w in windows], [(0, 10), (10, 21.5)])  # đuôi 1,5 giây gộp vào cảnh trước
+        self.assertEqual(windows[0]["angles"], [(0, 2.4), (2.4, 6.1), (6.1, 10)])
+        self.assertEqual(windows[1]["angles"], [(0, 3.0), (3, 11.5)])
+        self.assertEqual(len(content.scene_windows(self.shots, 25)), 3)  # đuôi 5 giây: cảnh riêng
+
+    def test_camera_must_follow_the_measured_cuts(self):
+        window = content.scene_windows(self.shots, 21.5)[0]
+        self.assertEqual(content.camera_problem("0–2.4s: cận mắt hổ, máy tĩnh; 2.4–6.1s: toàn cảnh, lia; 6.1–10s: trung", window), "")
+        self.assertIn("cần ít nhất 3", content.camera_problem("Trung cảnh, máy tĩnh", window))
+        self.assertIn("2.4s", content.camera_problem("0–4s: a; 4–6.1s: b; 6.1–10s: c", window))
+        self.assertIn("10s", content.camera_problem("0–2.4s: a; 2.4–6.1s: b; 6.1–7s: c", window))
+
+    def test_reference_analyst_rewrites_only_scenes_that_miss_cuts(self):
+        from runner import gemini_web
+        windows = content.scene_windows(self.shots, 21.5)
+        good = "0–2.4s: cận; 2.4–6.1s: toàn; 6.1–10s: trung"
+        line = lambda n, camera: (f"Bối cảnh {n}: Rừng, góc quay: {camera}, hành vi nhân vật: Đi, "
+                                  f"Nội dung hành động nhân vật: Bước {n};")
+
+        class Session:
+            sent = []
+            answers = ["DANH SÁCH CẢNH:\n" + line(1, good) + "\n" + line(2, "Toàn cảnh") + "\n" + gemini_web.END_MARK,
+                       line(2, "0–3s: cận; 3–7s: trung, cùng góc; 7–11.5s: toàn")]
+            def new_chat(self): pass
+            def wait_ready(self, status, stop, email=""): pass
+            def choose_model(self, name): return name
+            def attach_images(self, files, status, stop, email=""): pass
+            def ask(self, text, status, stop, email="", label=""):
+                self.sent.append(text)
+                return self.answers.pop(0)
+
+        session = Session()
+        result = gemini_web.run_conversation(session, "Yêu cầu", lambda _: None, threading.Event(), windows=windows)
+        self.assertIn("Bối cảnh 2 (00:10.0–00:21.5)", session.sent[1])
+        self.assertNotIn("Bối cảnh 1 (", session.sent[1])
+        self.assertTrue(result["scenes"][1]["camera"].startswith("0–3s"))
+        self.assertEqual((result["issues"], result["verified"]), ([], 2))

@@ -923,6 +923,14 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Email Google không hợp lệ.")
                 store.save_setting("gemini_web_email", email[:254])
                 store.save_setting("gemini_web_model", str(body.get("model") or "").strip()[:40])
+            elif path == "/api/content/export-xlsx":
+                folder = self.server.data_dir / "exports"
+                folder.mkdir(parents=True, exist_ok=True)
+                target = folder / "kich-ban.xlsx"
+                content.script_workbook(body.get("scenes"), body.get("windows") if isinstance(body.get("windows"), list) else None,
+                                        str(body.get("script") or "")[:40000], target)
+                return self.send_file(target, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                      "attachment", "kich-ban.xlsx", cache_control="no-store")
             elif path == "/api/content/web-run":
                 kind = "review" if body.get("kind") == "review" else "generate"
                 from runner.gemini_web import VIDEO_LIMIT, VIDEO_TYPES

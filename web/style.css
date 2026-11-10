@@ -655,3 +655,4 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 .ld-short{display:block;font-size:20px;letter-spacing:2px;font-weight:700;padding:10px 12px;margin:6px 0;border-radius:8px;background:var(--c-surface-3);user-select:all}#ldShortBox{margin:8px 0}
 .vs-folder{display:grid;gap:4px;margin:10px 0;font-size:var(--fs-xs);color:var(--muted)}.vs-folder input{margin:0}
 .content-video-file{display:grid;gap:6px;margin:4px 0 10px}.content-video-actions{display:flex;flex-wrap:wrap;gap:6px}.content-video-file progress{width:100%}#contentVideoFile{margin:0}
+.scene-time{margin-left:8px;font-size:var(--fs-xs);color:var(--muted)}
