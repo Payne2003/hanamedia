@@ -1,7 +1,8 @@
-# Build HANA MEDIA cho Windows mỗi lần cập nhật main (tải ở tab Actions → Artifacts).
+# Build HANA MEDIA cho Windows (.exe) và macOS (.dmg) mỗi lần cập nhật main (tải ở tab Actions → Artifacts).
 # Mỗi lần cập nhật main: tự đánh số phiên bản 1.1.<số lần build> và đăng bộ cài lên mục Releases;
 # app đã cài thấy "Có bản mới" và tự cập nhật từ đó (runner/updater.py). Đẩy tag v* thì dùng đúng số của tag.
 name: Windows app
+# (Cùng workflow có job macOS: cùng số phiên bản, file .dmg đăng chung Release với bộ cài Windows.)
 
 on:
   push:
@@ -89,3 +90,87 @@ jobs:
           files: |
             dist/HanaMedia-Setup-*.exe
             dist/HanaMedia-Setup-*.exe.sha256
+
+  mac:
+    # Bản macOS (Apple Silicon M1/M2/M3/M4). Chưa ký Apple Developer ID: lần đầu mở cần chuột phải → Mở.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cài thư viện
+        run: python -m pip install -r requirements-app.txt
+      - name: Kiểm thử
+        run: python -m unittest discover -s tests
+      - name: Đặt số phiên bản
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="1.1.${{ github.run_number }}"; fi
+          python - "$v" <<'PY'
+          import re, sys
+          from pathlib import Path
+          f = Path("runner/version.py")
+          f.write_text(re.sub(r'APP_VERSION = "[^"]*"', f'APP_VERSION = "{sys.argv[1]}"', f.read_text(encoding="utf-8")), encoding="utf-8")
+          PY
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Phiên bản: $v"
+      - name: Biểu tượng app (.icns)
+        run: python -c "from PIL import Image; Image.open('web/logo.png').convert('RGBA').resize((1024, 1024), Image.LANCZOS).save('packaging/hanamedia.icns')"
+      - name: Đóng gói app
+        run: python -m PyInstaller --noconfirm --clean packaging/HanaMedia.spec
+      - name: Kiểm tra thư viện trong bản đóng gói (Selenium, Chrome, cửa sổ app)
+        run: |
+          out="$RUNNER_TEMP/self-check.txt"
+          set +e
+          dist/HanaMedia.app/Contents/MacOS/HanaMedia --self-check "$out"
+          code=$?
+          set -e
+          cat "$out"
+          test $code -eq 0
+      - name: Kiểm tra app khởi động
+        run: |
+          export HANAMEDIA_DATA="$RUNNER_TEMP/hana-data"
+          dist/HanaMedia.app/Contents/MacOS/HanaMedia --server-only &
+          pid=$!
+          ok=0
+          for i in $(seq 1 40); do
+            sleep 1
+            if curl -fsS http://127.0.0.1:8765/api/state >/dev/null 2>&1; then ok=1; break; fi
+          done
+          kill $pid || true
+          test $ok -eq 1
+      - name: Ký ad-hoc và tạo file .dmg
+        run: |
+          codesign --force --deep --sign - dist/HanaMedia.app
+          v="${{ steps.version.outputs.version }}"
+          mkdir -p dmg
+          cp -R dist/HanaMedia.app dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "HANA MEDIA" -srcfolder dmg -ov -format UDZO "dist/HanaMedia-$v-mac.dmg"
+          (cd dist && shasum -a 256 "HanaMedia-$v-mac.dmg" > "HanaMedia-$v-mac.dmg.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HanaMedia-mac
+          path: |
+            dist/HanaMedia-*-mac.dmg
+            dist/HanaMedia-*-mac.dmg.sha256
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+  release-mac:
+    # Đăng file .dmg vào cùng Release với bộ cài Windows (sau khi job Windows đã tạo Release).
+    needs: [build, mac]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: HanaMedia-mac
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.mac.outputs.version }}
+          files: |
+            dist/HanaMedia-*-mac.dmg
+            dist/HanaMedia-*-mac.dmg.sha256

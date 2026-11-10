@@ -30,6 +30,8 @@ def data_root():
     if configured:
         return Path(configured).expanduser().resolve()
     if frozen():
+        if sys.platform == "darwin":  # macOS: ~/Library/Application Support/HanaMedia/data
+            return Path.home() / "Library" / "Application Support" / APP_NAME / "data"
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         return Path(base) / APP_NAME / "data"
     return SOURCE_ROOT / "data"

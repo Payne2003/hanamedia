@@ -378,7 +378,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(self.agents.queue_muse(self.project,enqueue)['queued'],1)
         self.assertEqual(self.agents.queue_muse(self.project,enqueue)['queued'],0)  # không gửi trùng
         self.assertTrue(enqueued[0][0].startswith('production-'))
-        self.assertEqual(enqueued[0][1],{'duration':10,'aspect':'16:9','resolution':'4K'})
+        self.assertEqual(enqueued[0][1],{'duration':10,'aspect':'16:9','resolution':'4K','folder':'Wildlife'})
         with self.store.connect() as db:db.execute("UPDATE jobs SET status='done',output='take.mp4'")
         self.assertEqual(self.agents.sync_all(self.project),{'synced':1,'ambiguous':0})
         self.assertEqual(self.task('video')['status'],'done')

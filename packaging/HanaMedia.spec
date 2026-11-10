@@ -1,10 +1,15 @@
-# PyInstaller: đóng gói HANA MEDIA thành thư mục dist/HanaMedia (HanaMedia.exe + thư viện).
-# Dùng dạng thư mục (không phải một file .exe) để khởi động nhanh và ít bị phần mềm diệt virus báo nhầm.
+# PyInstaller: đóng gói HANA MEDIA.
+# - Windows: thư mục dist/HanaMedia (HanaMedia.exe + thư viện); dạng thư mục để khởi động nhanh, ít bị diệt virus báo nhầm.
+# - macOS: dist/HanaMedia.app (đóng thành .dmg trong workflow).
+import re
+import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 root = Path(SPECPATH).parent
-icon = root / "packaging" / "hanamedia.ico"
+mac = sys.platform == "darwin"
+icon = root / "packaging" / ("hanamedia.icns" if mac else "hanamedia.ico")
+version = re.search(r'APP_VERSION = "([^"]+)"', (root / "runner" / "version.py").read_text(encoding="utf-8")).group(1)
 
 a = Analysis(
     [str(root / "desktop.py")],
@@ -25,3 +30,21 @@ exe = EXE(
     icon=str(icon) if icon.exists() else None,
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="HanaMedia")
+if mac:
+    app = BUNDLE(
+        coll,
+        name="HanaMedia.app",
+        icon=str(icon) if icon.exists() else None,
+        bundle_identifier="media.hana.studio",
+        version=version,
+        info_plist={
+            "CFBundleDisplayName": "HANA MEDIA",
+            "CFBundleName": "HANA MEDIA",
+            "CFBundleShortVersionString": version,
+            "CFBundleVersion": version,
+            "LSMinimumSystemVersion": "12.0",
+            "NSHighResolutionCapable": True,
+            # Tool điều khiển Chrome và mở cửa sổ chọn file/thư mục.
+            "NSAppleEventsUsageDescription": "HANA MEDIA điều khiển Chrome để tạo video và mở hộp chọn file.",
+        },
+    )

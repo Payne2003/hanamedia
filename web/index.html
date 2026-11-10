@@ -63,6 +63,7 @@
             <label>Độ phân giải<select id="vResolution"><option value="4K">4K Ultra HD</option><option value="1080p">1080p Full HD</option><option value="720p">720p HD</option><option value="">Giữ nguyên của Muse</option></select></label>
             <label>Nick Muse xử lý<select id="vAccount"><option value="">🔄 Xoay vòng nick</option></select></label>
           </div>
+          <label class="vs-folder">📁 Thư mục dự án <small>(tuỳ chọn)</small><input id="vFolder" maxlength="80" placeholder="Ví dụ: Dê núi tập 1 — để trống thì lưu thẳng"><small>Video lưu thành <b>1.mp4, 2.mp4…</b> trong thư mục này (tạo trong thư mục lưu). Mỗi prompt đúng 1 video.</small></label>
           <label class="check vs-stitch"><input id="vStitch" type="checkbox"><span>🔗 Tự ghép thành một video dài<small>Xong hết các cảnh thì ghép theo thứ tự prompt (dùng bản đã nâng độ phân giải nếu có). Video từng cảnh vẫn giữ.</small></span></label>
           <div class="fixed-chars"><div class="fc-head"><span><b>Ảnh nhân vật cố định</b><small>gắn vào mọi cảnh</small></span><button id="vCharacters" type="button">👤 + Nhân vật</button><button id="vClearCharacters" type="button" class="danger-outline" hidden>Xóa hết</button></div><div id="vCharacterChips" class="image-chips"></div></div>
           <p class="detail vs-note">Thông số được ghi vào yêu cầu gửi Muse (Muse tối đa 10 giây/cảnh). Video tải về nhỏ hơn độ phân giải đã chọn sẽ được tool phóng lên trên máy (giữ file gốc; phóng to không thêm chi tiết như AI).</p>
@@ -143,7 +144,7 @@
         <p id="licenseMessage" class="detail"></p>
         <dl id="licenseInfo" class="license-info"></dl>
         <div class="lm-machine"><span>Mã máy</span><code id="licenseMachine">—</code><button type="button" id="copyMachine">📋 Sao chép mã máy</button><small>Gửi nguyên chuỗi này cho người bán để nhận key. Nếu được cấp role quản lý, máy này sẽ tự cấp key được cho khách của mình.</small></div>
-        <form id="licenseActivate" class="lm-activate"><textarea id="licenseKey" rows="3" spellcheck="false" placeholder="Dán key HANA1.… vào đây"></textarea><div><button type="submit" class="primary">Kích hoạt</button><button type="button" id="licenseRemove" class="danger-outline">Gỡ key</button></div></form>
+        <form id="licenseActivate" class="lm-activate"><textarea id="licenseKey" rows="3" spellcheck="false" placeholder="Nhập mã kích hoạt HANA-XXXX-XXXX-XXXX hoặc dán key HANA1.…"></textarea><div><button type="submit" class="primary">Kích hoạt</button><button type="button" id="licenseRemove" class="danger-outline">Gỡ key</button></div></form>
         <div id="licenseOnline" class="lm-online" hidden><span id="licenseOnlineText"></span><button type="button" id="licenseCheck">↻ Kiểm tra lại</button></div>
       </section>
       <details id="issuerInit" class="card license-init" hidden><summary>Dành cho Super Admin: khởi tạo khóa ký trên máy này</summary>
@@ -184,7 +185,7 @@
             <div class="ld-perms"><span>Quyền (Permissions)</span><div id="ldPerms"></div></div>
             <button type="button" id="ldSave" class="primary">💾 Lưu &amp; tạo key</button>
             <div class="ld-actions"><button type="button" id="ldRenew">↻ Gia hạn ngay</button><button type="button" id="ldLock" class="danger-outline">🔒 Khóa</button><button type="button" id="ldDelete" class="danger-outline">🗑 Xóa</button></div>
-            <div id="ldKeyBox" class="ld-key" hidden><b id="ldKeyName">Key gửi khách</b><textarea id="ldKey" rows="4" readonly spellcheck="false"></textarea><button type="button" id="ldCopyKey">📋 Sao chép key</button></div>
+            <div id="ldKeyBox" class="ld-key" hidden><b id="ldKeyName">Key gửi khách</b><div id="ldShortBox" hidden><small>Mã kích hoạt ngắn (gửi khách mã này):</small><code id="ldShort" class="ld-short"></code><button type="button" id="ldCopyShort" class="primary">📋 Sao chép mã ngắn</button></div><small id="ldShortNote" class="detail"></small><details id="ldLongKey"><summary>Key đầy đủ (dùng khi máy khách không có mạng tới GitHub)</summary><textarea id="ldKey" rows="4" readonly spellcheck="false"></textarea><button type="button" id="ldCopyKey">📋 Sao chép key đầy đủ</button></details></div>
             <p id="ldRevokeNote" class="detail"></p>
           </aside>
         </div>

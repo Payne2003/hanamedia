@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -88,7 +89,9 @@ class Updater:
         self.lock = threading.Lock()
         self.state = {"current": APP_VERSION, "latest": None, "available": False, "notes": "", "size": 0,
                       "checked_at": None, "error": "", "phase": "idle", "progress": 0,
-                      "supported": frozen() and os.name == "nt"}
+                      "supported": frozen() and (os.name == "nt" or sys.platform == "darwin"),
+                      # macOS: chưa có bộ cài tự chạy; bấm cập nhật sẽ mở trang tải file .dmg mới.
+                      "manual": sys.platform == "darwin"}
         self.asset = None
         self.log_file = Path(data) / "logs" / "update.log"
         self.check_previous()
@@ -258,6 +261,13 @@ class Updater:
     # ---- tải và cài --------------------------------------------------------------------------------------------------
     def start_install(self):
         status = self.status()
+        if status.get("manual") and status["supported"]:
+            if not status["available"]:
+                raise ValueError("Không có bản mới để cập nhật. Bấm Kiểm tra cập nhật trước.")
+            import webbrowser
+            webbrowser.open(self.release_page())
+            self.log(f"macOS: mở trang tải bản {status['latest']}.")
+            return self.status()
         if not status["supported"]:
             raise ValueError("Tự cập nhật chỉ có ở bản app đã cài trên Windows.")
         if status["phase"] in ("downloading", "installing"):

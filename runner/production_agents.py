@@ -1340,7 +1340,8 @@ class ProductionAgents:
         """Giao Muse các cảnh sẵn sàng (đã có prompt duyệt, chưa có job đang chờ/chạy).
         enqueue(prompts, batch, scene_ids, options) — clip 8 hoặc 10 giây, 16:9, 4K theo MASTER PROMPT V3.0."""
         snapshot = self.board.snapshot(project_id)
-        options = {'duration': int(snapshot['project'].get('clip_seconds') or 10), 'aspect': '16:9', 'resolution': '4K'}
+        options = {'duration': int(snapshot['project'].get('clip_seconds') or 10), 'aspect': '16:9', 'resolution': '4K',
+                   'folder': snapshot['project'].get('name') or snapshot['project'].get('title') or ''}  # mỗi dự án 1 thư mục
         queued = []
         for task in snapshot['tasks']:
             if task['stage'] != 'video':

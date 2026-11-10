@@ -229,7 +229,10 @@ class FakeGitHub:
             return 201, b"{}"
         if path.startswith("/repos/Owner/app/contents/"):
             import base64
-            name = path.split("?")[0].rsplit("/", 1)[1]
+            name = path.split("?")[0][len("/repos/Owner/app/contents/"):]
+            if method == "DELETE":
+                self.files.pop((json.loads(body)["branch"], name), None)
+                return 200, b"{}"
             if method == "GET":
                 branch = path.split("ref=")[1]
                 if branch not in self.branches:
@@ -289,6 +292,37 @@ class RevocationTests(unittest.TestCase):
         self.assertEqual(self.customer.status()["state"], "revoked")
         with self.assertRaises(LicenseError):
             self.root_m.delete_account(account["id"])
+
+    def test_short_activation_code(self):
+        from runner.license import normalize_short
+        no_token = self.root_m.save_account({"name": "A", "role": "user", "plan": "1y", "start": "2026-01-01",
+                                             "devices": [self.customer.request_code()]})
+        self.assertIn("token GitHub", self.root_m.share_code(no_token[0]["id"], no_token[1])["error"])
+        self.root_m.set_publisher_token(TOKEN)
+        account, token = self.root_m.save_account({"name": "Anh Tuyên", "role": "user", "plan": "1m", "start": "2026-01-01",
+                                                   "devices": [self.customer.request_code()]})
+        short = self.root_m.share_code(account["id"], token)
+        self.assertEqual(short["error"], "")
+        self.assertRegex(short["code"], r"^HANA-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$")
+        stored = next(text for (branch, name), text in self.github.files.items() if name.startswith("keys/"))
+        self.assertNotIn("Tuy", stored)  # trên kho công khai chỉ có bản mã hóa, không lộ tên khách hay key
+        self.assertNotIn(token[:20], stored)
+        # Khách gõ thường, có khoảng trắng, nhầm O/0 vẫn được.
+        typed = " " + short["code"].lower().replace("0", "o") + " "
+        self.assertEqual(normalize_short(typed), short["code"])
+        self.assertEqual(self.customer.activate(typed)["state"], "active")
+        self.assertEqual(self.customer.store.setting("license_token"), token)
+        # Gia hạn: mã giữ nguyên, nội dung trên kho là key mới.
+        _, renewed = self.root_m.renew(account["id"], "1y")
+        self.assertEqual(self.root_m.share_code(account["id"], renewed)["code"], short["code"])
+        self.assertEqual(next(a for a in self.root_m.dashboard()["accounts"] if a["id"] == account["id"])["short_code"],
+                         short["code"])
+        with self.assertRaisesRegex(LicenseError, "Không tìm thấy mã"):
+            self.customer.activate("HANA-0000-0000-0000-0000")
+        self.root_m.delete_account(account["id"])
+        self.assertFalse(any(name.startswith("keys/") for _, name in self.github.files))
+        with self.assertRaises(LicenseError):
+            self.customer.activate(short["code"])
 
     def test_renewing_a_locked_account_unrevokes_it(self):
         self.root_m.set_publisher_token(TOKEN)

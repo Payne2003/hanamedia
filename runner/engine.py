@@ -126,9 +126,8 @@ class Engine:
             return
         first = scenes[0]
         size = target_size(first["aspect"], first["resolution"]) if first["resolution"] else None
-        folder = self.store.setting("output_folder")
-        parent = sources[0].parent  # video cũ nằm trong thư mục huy-<id>: ghép ra thư mục cha như trước
-        root = Path(folder) if folder and Path(folder).is_dir() else parent.parent if parent.name.startswith("huy-") else parent
+        parent = sources[0].parent  # thư mục dự án / thư mục lưu; video cũ nằm trong huy-<id> thì ghép ra thư mục cha
+        root = parent.parent if parent.name.startswith("huy-") else parent
         destination = root / f"Video ghép {time.strftime('%Y-%m-%d %H%M')} ({len(sources)} cảnh).mp4"
         try:
             self.store.set_stitch(batch, "running")
@@ -347,8 +346,7 @@ class Engine:
     def work(self, job, account, headless, folder, automatic):
         browser = file = None
         try:
-            target = Path(folder) / ("huy-" + job["id"])
-            target.mkdir(parents=True, exist_ok=True)
+            target = self.download_dir(job)
             browser = self.session(job, account, headless, target)
             browser.set_download_directory(target)
             browser.url_seen = lambda url, job_id=job["id"]: self.store.set_source(job_id, url)
@@ -363,7 +361,7 @@ class Engine:
                 if not error.pending or not automatic or not hasattr(browser, "fetch_existing"):
                     raise
                 file = self.chase_video(job, browser, error)  # tải được rồi mới nhận prompt tiếp theo
-            self.complete(job, target, file)
+            self.complete(job, target, file, folder)
         except Exception as error:
             known = isinstance(error, MuseFailure)
             technical = self.log_failure(job, account, error) if known else self.log_error(job, account, error)
@@ -398,15 +396,30 @@ class Engine:
             if not known and self.store.requeue_unsent(job["id"], f"lỗi Chrome trước khi gửi ({technical})", account_state):
                 return
             # Chrome tắt ngang SAU khi đã gửi: mở Chrome mới, vào lại đúng cuộc trò chuyện, tải video (không gửi lại).
-            if not known and automatic and not alive and self.recover_after_crash(job, account, headless, target):
+            if not known and automatic and not alive and self.recover_after_crash(job, account, headless, target, folder):
                 return
             self.store.finish(job["id"], error=message, account_state=account_state)
 
-    def place(self, job, target, file):
-        """Video tải xong: chuyển ra thẳng thư mục lưu, đặt tên theo số thứ tự prompt (1.mp4, 2.mp4…).
-        Chrome vẫn tải vào thư mục tạm riêng của tác vụ để các luồng không lẫn file; thư mục tạm trống thì xóa.
-        Không bao giờ ghi đè: tên đã có (lượt chạy khác) thì thêm " (2)", " (3)"…"""
-        root, number = Path(target).parent, job["ordinal"] + 1
+    def download_dir(self, job):
+        """Thư mục tạm Chrome tải về, nằm trong dữ liệu app (không hiện trong thư mục lưu của người dùng)."""
+        target = self.data / "downloads" / job["id"]
+        shutil.rmtree(target, ignore_errors=True)  # bỏ file thừa của lần chạy trước: chỉ nhận video của lần này
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    @staticmethod
+    def output_dir(job, folder):
+        """Thư mục lưu / <thư mục dự án người dùng đặt>."""
+        root = Path(folder) if folder else None
+        name = str(job.get("folder") or "").strip()
+        return (root / name) if root and name else root
+
+    def place(self, job, target, file, folder=None):
+        """Video tải xong: chỉ giữ đúng 1 video của prompt, đặt vào thư mục lưu (hoặc thư mục dự án), tên theo số
+        thứ tự prompt (1.mp4, 2.mp4…), rồi xóa sạch thư mục tạm. Không ghi đè: tên đã có thì thêm " (2)", " (3)"…"""
+        root = self.output_dir(job, folder) or Path(target).parent
+        number = job["ordinal"] + 1
+        root.mkdir(parents=True, exist_ok=True)
         with self.place_lock:
             final, copy = root / f"{number}.mp4", 2
             while final.exists() and final != file:
@@ -416,19 +429,22 @@ class Engine:
                     os.replace(file, final)
                 except OSError:
                     final = file  # video đã tải về: giữ tên/chỗ cũ chứ không báo lỗi tác vụ
-        try:
-            Path(target).rmdir()  # chỉ xóa được khi trống
-        except OSError:
-            pass
+        if Path(target).resolve().is_relative_to((self.data / "downloads").resolve()):
+            shutil.rmtree(target, ignore_errors=True)  # thư mục tạm của app: xóa cả file thừa (chỉ giữ 1 video)
+        else:
+            try:
+                Path(target).rmdir()
+            except OSError:
+                pass
         return final
 
-    def complete(self, job, target, file):
-        final = self.place(job, target, file)
+    def complete(self, job, target, file, folder=None):
+        final = self.place(job, target, file, folder)
         self.store.finish(job["id"], output=str(final))
         if job.get("resolution") or self.store.batch_stitch(job["batch"]):
             self.post_requests.put(job["id"])  # nâng độ phân giải / ghép video chạy riêng, không giữ tài khoản Muse
 
-    def recover_after_crash(self, job, account, headless, target):
+    def recover_after_crash(self, job, account, headless, target, folder=None):
         """Prompt đã gửi, Chrome chết giữa chừng: mở Chrome mới và tự tải video về. True nếu đã xong tác vụ."""
         state = self.store.job_state(job["id"])
         url = str(state.get("source_url") or "")
@@ -443,7 +459,7 @@ class Engine:
                 return False
             file = self.chase_video(job, browser, MuseFailure("Chrome bị đóng sau khi gửi.", pending=True), url=url,
                                     first_now=True)
-            self.complete(job, target, file)
+            self.complete(job, target, file, folder)
             return True
         except Exception as again:
             self.log_failure(job, account, MuseFailure(f"Không lấy lại được video sau khi Chrome bị đóng: {again}"))
@@ -485,12 +501,11 @@ class Engine:
     def fetch_work(self, job, account, headless, folder):
         browser = None
         try:
-            target = Path(folder) / ("huy-" + job["id"])
-            target.mkdir(parents=True, exist_ok=True)
+            target = self.download_dir(job)
             browser = self.session(job, account, headless, target)
             browser.set_download_directory(target)
             file = browser.fetch_existing(job["id"], job["source_url"])
-            final = self.place(job, target, file)
+            final = self.place(job, target, file, folder)
             self.store.finish(job["id"], output=str(final))
             if job.get("resolution") or self.store.batch_stitch(job["batch"]):
                 self.post_requests.put(job["id"])

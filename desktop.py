@@ -15,6 +15,17 @@ import webbrowser
 
 def message(text, title="HANA MEDIA", question=False):
     """Hộp thông báo của Windows (bản .exe không có cửa sổ dòng lệnh để in lỗi)."""
+    if sys.platform == "darwin":  # macOS: hộp thoại của hệ thống qua AppleScript
+        try:
+            import subprocess
+            escape = lambda value: str(value).replace("\\", "\\\\").replace('"', '\\"')
+            buttons = '{"Không", "Có"} default button "Có"' if question else '{"OK"} default button "OK"'
+            result = subprocess.run(["osascript", "-e", f'display dialog "{escape(text)}" with title "{escape(title)}" '
+                                     f"buttons {buttons}"], capture_output=True, text=True, timeout=600)
+            return "Có" in result.stdout
+        except Exception:
+            print(text)
+            return False
     try:
         import ctypes
         flags = 0x40 | (0x04 if question else 0x00) | 0x40000  # thông tin | Có/Không | luôn ở trên

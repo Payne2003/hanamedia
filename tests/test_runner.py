@@ -60,6 +60,15 @@ class StoreTests(unittest.TestCase):
             other = target / "b.mp4"; other.write_bytes(b"two")
             self.assertEqual(engine.place({"ordinal": 1}, target, other), out / "2.mp4")
             self.assertTrue(target.exists())  # còn file khác: giữ thư mục tạm
+            # Tải vào thư mục tạm trong dữ liệu app → chỉ giữ 1 video trong thư mục dự án, xóa sạch thư mục tạm.
+            temp = engine.download_dir({"id": "xyz"})
+            self.assertTrue(str(temp).startswith(str(self.root / "data")))
+            (temp / "extra.mp4").write_bytes(b"dup"); video = temp / "muse.mp4"; video.write_bytes(b"one")
+            final = engine.place({"ordinal": 4, "folder": "Dê núi"}, temp, video, out)
+            self.assertEqual(final, out / "Dê núi" / "5.mp4")
+            self.assertEqual(sorted(p.name for p in (out / "Dê núi").iterdir()), ["5.mp4"])
+            self.assertFalse(temp.exists())
+            self.assertFalse(any(p.name.startswith("huy-") for p in (out / "Dê núi").iterdir()))
         finally:
             engine.shutdown()
 
@@ -749,6 +758,7 @@ class StoreTests(unittest.TestCase):
         ids = [self.account(str(i))["id"] for i in range(7)]
         self.store.set_account(ids[0], "ready")
         engine = Engine(self.store, self.root / "engine-data")
+        engine.max_parallel = 4  # không phụ thuộc RAM của máy chạy test (máy Mac CI chỉ đủ cho 1 Chrome)
         FakeBrowser = self.session_browser()
         peak, open_now, guard = [0], [0], __import__("threading").Lock()
         original_init, original_close = FakeBrowser.__init__, FakeBrowser.close

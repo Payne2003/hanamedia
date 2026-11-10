@@ -8,6 +8,8 @@
 import ctypes
 import os
 import subprocess
+import sys
+import re
 import threading
 
 PER_CHROME_GB = 1.5   # RAM một Chrome Muse dùng khi tải ảnh tham chiếu / phát video 4K
@@ -18,6 +20,7 @@ ENCODERS = {
     "h264_nvenc": ("NVIDIA (NVENC)", ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "19", "-b:v", "0"]),
     "h264_qsv": ("Intel (Quick Sync)", ["-c:v", "h264_qsv", "-global_quality", "20", "-preset", "medium"]),
     "h264_amf": ("AMD (AMF)", ["-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", "18", "-qp_p", "20"]),
+    "h264_videotoolbox": ("Apple (VideoToolbox)", ["-c:v", "h264_videotoolbox", "-q:v", "65", "-allow_sw", "0"]),
 }
 CPU_ARGS = ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
 
@@ -41,6 +44,15 @@ def memory_gb():
         except (AttributeError, OSError):
             pass
         return None, None
+    if sys.platform == "darwin":
+        try:
+            total = int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5).stdout)
+            page = int(subprocess.run(["sysctl", "-n", "hw.pagesize"], capture_output=True, text=True, timeout=5).stdout)
+            vm = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5).stdout
+            free = sum(int(n) for n in re.findall(r"Pages (?:free|inactive|speculative):\s+(\d+)", vm)) * page
+            return total / 1024 ** 3, free / 1024 ** 3
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None, None
     try:
         values = {}
         with open("/proc/meminfo") as handle:

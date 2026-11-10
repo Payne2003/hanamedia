@@ -1,6 +1,9 @@
 import os
+import sys
 import time
 from pathlib import Path
+# Phím tắt dán / chọn tất cả: Cmd trên macOS, Ctrl trên Windows (giá trị phím của Selenium).
+MOD_KEY = "\ue03d" if sys.platform == "darwin" else "\ue009"
 
 
 FLOW_URL = "https://flow.google.com"  # địa chỉ cũ labs.google/fx/tools/flow chuyển về đây
@@ -126,7 +129,7 @@ class FlowImageSession:
             if box:
                 try:
                     box.click()
-                    box.send_keys(Keys.CONTROL, "a")
+                    box.send_keys(MOD_KEY, "a")
                     box.send_keys(text)
                     return
                 except Exception:

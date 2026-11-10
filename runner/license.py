@@ -17,6 +17,8 @@ Giới hạn (nói rõ với người dùng): người rành kỹ thuật vẫn 
 import base64
 import calendar
 import hashlib
+import subprocess
+import sys
 import json
 import os
 import re
@@ -62,6 +64,35 @@ PUBLIC = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 
 _KEY_LOCK = threading.Lock()
+
+
+# Mã kích hoạt ngắn: HANA-XXXX-XXXX-XXXX (Crockford base32, 80 bit ngẫu nhiên). Key đầy đủ được mã hóa bằng chính mã
+# này rồi đăng lên kho GitHub công khai; chỉ người có mã mới giải mã được, và key vẫn phải qua kiểm tra chữ ký.
+SHORT_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+SHORT_CODE = re.compile(r"^HANA-[0-9A-HJKMNP-TV-Z]{4}(?:-[0-9A-HJKMNP-TV-Z]{4}){3}$")
+
+
+def normalize_short(text):
+    """Chuẩn hóa mã khách gõ: bỏ khoảng trắng, viết hoa, O→0, I/L→1. Không phải mã ngắn thì trả ''."""
+    value = re.sub(r"\s+", "", str(text or "")).upper()
+    if not value.startswith("HANA-") or value.startswith("HANA1."):
+        return ""
+    body = value[5:].replace("-", "").translate(str.maketrans("OIL", "011"))
+    code = "HANA-" + "-".join(body[i:i + 4] for i in range(0, len(body), 4))
+    return code if SHORT_CODE.fullmatch(code) else ""
+
+
+def new_short_code():
+    import secrets
+    body = "".join(secrets.choice(SHORT_ALPHABET) for _ in range(16))
+    return "HANA-" + "-".join(body[i:i + 4] for i in range(0, 16, 4))
+
+
+def short_secret(code):
+    """(tên file trên kho, khóa Fernet) suy ra từ mã ngắn. Tên file không để lộ mã."""
+    name = hashlib.sha256(("hana-short-name:" + code).encode()).hexdigest()[:32]
+    key = base64.urlsafe_b64encode(hashlib.sha256(("hana-short-key:" + code).encode()).digest())
+    return f"keys/{name}.txt", key
 
 
 class LicenseError(ValueError):
@@ -111,6 +142,14 @@ def machine_code():
                                 0, winreg.KEY_READ | getattr(winreg, "KEY_WOW64_64KEY", 0)) as handle:
                 raw = winreg.QueryValueEx(handle, "MachineGuid")[0]
         except OSError:
+            raw = ""
+    elif sys.platform == "darwin":
+        try:
+            output = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True, text=True,
+                                    timeout=10).stdout
+            found = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', output)
+            raw = found.group(1) if found else ""
+        except (OSError, subprocess.SubprocessError):
             raw = ""
     else:
         for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
@@ -316,6 +355,8 @@ class LicenseManager:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(licenses)")}
             if "delegates" not in columns:
                 db.execute("ALTER TABLE licenses ADD COLUMN delegates TEXT NOT NULL DEFAULT '[]'")
+            if "short_code" not in columns:
+                db.execute("ALTER TABLE licenses ADD COLUMN short_code TEXT NOT NULL DEFAULT ''")
 
     # ---- khóa của máy ------------------------------------------------------------------------------------------
     @property
@@ -494,9 +535,29 @@ class LicenseManager:
             raise PermissionError(reason)
         return status
 
+    def fetch_short(self, code):
+        """Mã ngắn → key đầy đủ: tải bản mã hóa trên kho GitHub rồi giải mã bằng chính mã."""
+        from cryptography.fernet import Fernet, InvalidToken
+        r = self.revocation
+        if not r.get("repo") or not r.get("branch"):
+            raise LicenseError("Bản app này chưa hỗ trợ mã kích hoạt ngắn. Dán key đầy đủ HANA1.….")
+        path, key = short_secret(code)
+        code_, raw = self.http("GET", f"https://raw.githubusercontent.com/{r['repo']}/{r['branch']}/{path}", {}, None)
+        if code_ == 404:
+            raise LicenseError("Không tìm thấy mã kích hoạt. Kiểm tra lại mã; mã vừa tạo cần 1–2 phút mới dùng được.")
+        if code_ != 200:
+            raise LicenseError("Không tải được key (mạng/VPN?). Thử lại hoặc dán key đầy đủ HANA1.….")
+        try:
+            return Fernet(key).decrypt(raw.strip()).decode()
+        except (InvalidToken, ValueError):
+            raise LicenseError("Mã kích hoạt không đúng.") from None
+
     def activate(self, token):
         if not self.enforced():
             raise LicenseError("App này chưa gắn khóa công khai HANA MEDIA nên chưa cần kích hoạt.")
+        short = normalize_short(token)
+        if short:
+            token = self.fetch_short(short)
         payload = verify(token, self.trusted)
         if payload.get("devices") and machine_code() not in payload["devices"]:
             raise LicenseError("Key không cấp cho máy này. Gửi mã máy của máy này cho người bán.")
@@ -735,15 +796,17 @@ class LicenseManager:
         context = self.require_issuer()
         with self.store.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT name FROM licenses WHERE id=?", (license_id,)).fetchone()
+            row = db.execute("SELECT name,short_code FROM licenses WHERE id=?", (license_id,)).fetchone()
             if not row:
                 raise LicenseError("Không tìm thấy tài khoản.")
+            short = row["short_code"]
             db.execute("DELETE FROM licenses WHERE id=?", (license_id,))
             if context["mode"] == "root":
                 db.execute("INSERT OR REPLACE INTO license_revoked(id,name,at) VALUES(?,?,?)",
                            (license_id, row["name"], self.clock()))
             db.execute("INSERT INTO license_events(license_id,at,action,actor,detail) VALUES(?,?,?,?,?)",
                        (license_id, self.clock(), "delete", self.actor(context), "Xóa " + row["name"]))
+        self.remove_short(short)
         return self.after_change(context)
 
     # ---- đăng danh sách thu hồi (máy Super Admin) ------------------------------------------------------------------
@@ -837,7 +900,10 @@ class LicenseManager:
         return self.revocation_info()
 
     def push_file(self, token, r, text, count):
-        repo, branch, file = r["repo"], r["branch"], r["file"]
+        return self.push_path(token, r, r["file"], text, f"Cập nhật danh sách thu hồi bản quyền ({count} key)")
+
+    def push_path(self, token, r, file, text, message):
+        repo, branch = r["repo"], r["branch"]
         explain = {401: "Token GitHub sai hoặc đã hết hạn.",
                    403: f"Token không có quyền ghi (Contents: Read and write) vào kho {repo}.",
                    404: f"Token không truy cập được kho {repo}."}
@@ -858,14 +924,48 @@ class LicenseManager:
                     raise LicenseError(explain.get(code, f"Không tạo được nhánh {branch} (mã {code})."))
         elif code != 200:
             raise LicenseError(explain.get(code, f"GitHub trả mã {code}."))
-        body = {"message": f"Cập nhật danh sách thu hồi bản quyền ({count} key)", "branch": branch,
-                "content": base64.b64encode((text + "\n").encode()).decode()}
+        body = {"message": message, "branch": branch, "content": base64.b64encode((text + "\n").encode()).decode()}
         if sha:
             body["sha"] = sha
         code, _ = self.github("PUT", f"/repos/{repo}/contents/{file}", token, body)
         if code not in (200, 201):
             raise LicenseError(explain.get(code, f"GitHub trả mã {code} khi đăng danh sách."))
         return {"ok": True}
+
+    def share_code(self, license_id, token):
+        """Máy Super Admin có token GitHub: đăng key đã mã hóa, trả {"code", "error"} (mã giữ nguyên khi cấp lại key)."""
+        from cryptography.fernet import Fernet
+        context = self.issuer_context()
+        publisher = self.publisher_token()
+        if not context or context["mode"] != "root" or not publisher or not self.revocation_url():
+            return {"code": "", "error": "Mã ngắn chỉ tạo trên máy Super Admin đã lưu token GitHub. Gửi key đầy đủ."}
+        with self.store.connect() as db:
+            row = db.execute("SELECT short_code FROM licenses WHERE id=?", (license_id,)).fetchone()
+            code = (row["short_code"] if row else "") or new_short_code()
+            db.execute("UPDATE licenses SET short_code=? WHERE id=?", (code, license_id))
+        path, key = short_secret(code)
+        try:
+            self.push_path(publisher, self.revocation, path, Fernet(key).encrypt(token.encode()).decode(),
+                           "Cập nhật key bản quyền (mã hóa)")
+        except (OSError, LicenseError) as error:
+            return {"code": "", "error": "Chưa đăng được mã ngắn: " + (str(error)[:200] or "không kết nối được GitHub") +
+                    ". Gửi key đầy đủ."}
+        return {"code": code, "error": ""}
+
+    def remove_short(self, code):
+        """Xóa bản key mã hóa trên kho khi xóa tài khoản (không bắt buộc thành công; thu hồi vẫn chặn key)."""
+        publisher = self.publisher_token()
+        if not code or not publisher or not self.revocation_url():
+            return
+        path, _ = short_secret(code)
+        r = self.revocation
+        try:
+            status, data = self.github("GET", f"/repos/{r['repo']}/contents/{path}?ref={r['branch']}", publisher)
+            if status == 200 and data.get("sha"):
+                self.github("DELETE", f"/repos/{r['repo']}/contents/{path}", publisher,
+                            {"message": "Xóa key bản quyền đã xóa", "sha": data["sha"], "branch": r["branch"]})
+        except OSError:
+            pass
 
     def revocation_info(self):
         info = self.store.setting("license_rev_publish", {}) or {}
@@ -892,7 +992,7 @@ class LicenseManager:
                 "expires": row["expires"], "devices": codes, "quota": row["quota"],
                 "can_issue": bool(delegates) and bool(set(json.loads(row["permissions"])) & set(ISSUE_PERMISSIONS)),
                 "device_codes": json.loads(row["devices"]),
-                "state": state, "days_left": days, "token": row["token"]}
+                "state": state, "days_left": days, "token": row["token"], "short_code": row["short_code"]}
 
     def dashboard(self):
         """Dữ liệu trang quản lý (máy Super Admin hoặc máy được cấp quyền quản lý)."""

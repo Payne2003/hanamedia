@@ -6,9 +6,12 @@ Each driver is created/used/closed by exactly one worker thread.
 import os
 import re
 import struct
+import sys
 import time
 from pathlib import Path
 from urllib.parse import urlparse
+# Phím tắt dán / chọn tất cả: Cmd trên macOS, Ctrl trên Windows (giá trị phím của Selenium).
+MOD_KEY = "\ue03d" if sys.platform == "darwin" else "\ue009"
 
 
 class MuseFailure(Exception):
@@ -286,7 +289,7 @@ class MuseBrowser:
             for box in reversed(boxes):
                 try:
                     box.click()
-                    box.send_keys(Keys.CONTROL, "a")
+                    box.send_keys(MOD_KEY, "a")
                     box.send_keys(Keys.BACKSPACE)
                 except Exception:
                     pass
@@ -296,11 +299,11 @@ class MuseBrowser:
             if len(boxes) >= len(code):
                 for box, digit in zip(boxes, code):
                     box.click()
-                    box.send_keys(Keys.CONTROL, "a")
+                    box.send_keys(MOD_KEY, "a")
                     box.send_keys(digit)
             elif boxes:
                 boxes[0].click()
-                boxes[0].send_keys(Keys.CONTROL, "a")
+                boxes[0].send_keys(MOD_KEY, "a")
                 boxes[0].send_keys(code)
         except Exception:
             pass
@@ -315,7 +318,7 @@ class MuseBrowser:
                 self.driver.execute_script("return navigator.clipboard.writeText(arguments[0])", code)
                 if boxes:
                     boxes[0].click()
-                ActionChains(self.driver).key_down(Keys.CONTROL).send_keys("v").key_up(Keys.CONTROL).perform()
+                ActionChains(self.driver).key_down(MOD_KEY).send_keys("v").key_up(MOD_KEY).perform()
             except Exception:
                 pass
             time.sleep(0.5)
@@ -959,12 +962,14 @@ return !leaves.some(e => e!==mine && !e.innerText.includes(marker)
             new_files = [p for p in self.downloads.iterdir() if p not in files_before and p.is_file()]
             partial = any(p.suffix.lower() in (".crdownload", ".tmp", ".part") for p in new_files)
             videos = [p for p in new_files if matching_download(p)]
-            if not partial and len(videos) == 1:
-                signature = (str(videos[0]), videos[0].stat().st_size)
+            if not partial and videos:
+                # Chỉ nhận 1 video: Chrome/Muse lỡ tải trùng ("x (1).mp4") thì lấy bản tải đầu; bản thừa bị xóa cùng thư mục tạm.
+                video = min(videos, key=lambda p: (p.stat().st_mtime, len(p.name)))
+                signature = (str(video), video.stat().st_size)
                 stable = stable + 1 if signature == previous else 0
                 previous = signature
-                if stable >= 2 and valid_mp4(videos[0]):
-                    return videos[0]
+                if stable >= 2 and valid_mp4(video):
+                    return video
             time.sleep(2)
         raise MuseFailure("Đã bấm Tải xuống nhưng file MP4 chưa tải hoàn tất. Bấm ⇩ Lấy video để thử lại; không gửi lại prompt.",
                           pending=True)

@@ -979,14 +979,14 @@ function renderLibraryIfOpen(){if($('imageLibrary').open)loadPicker();}
 // ===== Thiết lập video của Studio: tỉ lệ, thời lượng, độ phân giải, nick, tự ghép, ảnh nhân vật cố định =====
 function videoOptions(){
   return {aspect:$('vAspect').value,duration:Number($('vDuration').value)||0,resolution:$('vResolution').value,
-    stitch:$('vStitch').checked,characters:fixedCharacters.map(c=>c.token),account_id:$('vAccount').value||null};
+    stitch:$('vStitch').checked,characters:fixedCharacters.map(c=>c.token),account_id:$('vAccount').value||null,folder:$('vFolder').value.trim()};
 }
 function saveVideoSettings(){try{localStorage.setItem(VIDEO_KEY,JSON.stringify({...videoOptions(),fixed:fixedCharacters}));}catch{}}
 function loadVideoSettings(){
   try{const v=JSON.parse(localStorage.getItem(VIDEO_KEY)||'null');if(!v)return;
     for(const [id,key] of [['vAspect','aspect'],['vResolution','resolution']])if([...$(id).options].some(o=>o.value===v[key]))$(id).value=v[key];
     if([...$('vDuration').options].some(o=>o.value===String(v.duration||'')))$('vDuration').value=String(v.duration||'');
-    $('vStitch').checked=Boolean(v.stitch);$('vAccount').dataset.want=v.account_id||'';
+    $('vStitch').checked=Boolean(v.stitch);$('vFolder').value=v.folder||'';$('vAccount').dataset.want=v.account_id||'';
     fixedCharacters=Array.isArray(v.fixed)?v.fixed.filter(c=>/^[a-f0-9]{32}$/.test(c.token||'')).slice(0,10):[];
   }catch{}
 }
@@ -1012,7 +1012,7 @@ function renderStitchPanel(){
 document.addEventListener('click',e=>{const b=e.target.closest('[data-stitch-now]');if(!b)return;
   if(!confirm('Ghép ngay các cảnh đã xong của lượt này? Cảnh lỗi hoặc chưa xong sẽ bị bỏ qua.'))return;
   action(async()=>{await api('/api/batch/stitch',{batch:b.dataset.stitchNow});toast('Đang ghép video. Xem tiến độ ở khung Video ghép.');});});
-for(const id of ['vAspect','vDuration','vResolution','vStitch','vAccount'])$(id).addEventListener('change',saveVideoSettings);
+for(const id of ['vAspect','vDuration','vResolution','vStitch','vAccount','vFolder'])$(id).addEventListener('change',saveVideoSettings);
 $('vCharacters').onclick=()=>openPicker('characters');
 $('vClearCharacters').onclick=()=>{fixedCharacters=[];saveVideoSettings();renderFixedCharacters();};
 $('vCharacterChips').onclick=e=>{const b=e.target.closest('[data-remove-fixed]');if(!b)return;fixedCharacters.splice(Number(b.dataset.removeFixed),1);saveVideoSettings();renderFixedCharacters();};
@@ -1079,7 +1079,7 @@ function renderUpdate(){
   const busy=u.phase==='downloading'||u.phase==='installing';
   const text=u.phase==='downloading'?`⟳ Đang tải bản ${u.latest}… ${u.progress||0}%`:u.phase==='installing'?`⟳ Đang cài bản ${u.latest}. App sẽ tự tắt rồi mở lại sau khoảng 1 phút.`:u.phase==='error'?`⚠ Cập nhật lỗi: ${u.error}`:`✨ Có bản mới ${u.latest} (đang dùng ${state.app_version}). Cập nhật ngay trên app, dữ liệu và bản quyền giữ nguyên.`;
   $('updateBanner').hidden=!(u.supported&&(u.available||busy||u.phase==='error'));
-  $('updateBannerText').textContent=text;$('updateBannerButton').hidden=busy;$('updateBannerButton').textContent=u.phase==='error'?'Thử lại':'⟳ Cập nhật ngay';
+  $('updateBannerText').textContent=text;$('updateBannerButton').hidden=busy;$('updateBannerButton').textContent=u.phase==='error'?'Thử lại':u.manual?'⇩ Tải bản Mac mới':'⟳ Cập nhật ngay';
   $('updateChip').textContent=!u.supported?'Bản chạy thử':busy?'Đang cập nhật':u.available?`Có bản ${u.latest}`:'Mới nhất';
   $('updateChip').className='status-chip '+(u.available?'review':'approved');
   $('updateSummary').textContent=!u.supported?`Phiên bản ${state.app_version}. Tự cập nhật chỉ có ở bản đã cài trên Windows.`:u.available?`Đang dùng ${state.app_version} · bản mới ${u.latest}.`:`Đang dùng ${state.app_version}${u.error?` · ${u.error}`:' (mới nhất)'}.`;
@@ -1127,7 +1127,8 @@ $('updateDialogLater').onclick=()=>$('updateDialog').close();
 $('updateDialogNow').onclick=()=>{$('updateDialog').close();action(async()=>{await api('/api/update/install',{});toast('Đang tải bản cập nhật…');});};
 function renderAssignHint(){if(!state)return;$('assignHint').hidden=!state.assign_hint;$('assignHintText').textContent=state.assign_hint?`⚠ Prompt đang chờ chưa được chia tài khoản: ${state.assign_hint}`:'';}
 setInterval(renderAssignHint,1500);
-async function installUpdate(){if(!confirm(`Cập nhật lên bản ${state.update.latest}?\n\nApp sẽ tải bộ cài, tự tắt, cài đè rồi tự mở lại (khoảng 1–2 phút). Tài khoản, hàng đợi, video và bản quyền giữ nguyên.`))return;
+async function installUpdate(){if(state.update.manual){action(async()=>{await api('/api/update/install',{});toast(`Đã mở trang tải bản ${state.update.latest}. Tải file HanaMedia-…-mac.dmg, mở ra và kéo HANA MEDIA vào Applications (thay bản cũ). Dữ liệu giữ nguyên.`);});return;}
+  if(!confirm(`Cập nhật lên bản ${state.update.latest}?\n\nApp sẽ tải bộ cài, tự tắt, cài đè rồi tự mở lại (khoảng 1–2 phút). Tài khoản, hàng đợi, video và bản quyền giữ nguyên.`))return;
   action(async()=>{await api('/api/update/install',{});toast('Đang tải bản cập nhật…');});}
 $('updateBannerButton').onclick=installUpdate;$('updateInstall').onclick=installUpdate;
 $('updateCheck').onclick=()=>action(async()=>{const r=await api('/api/update/check',{});toast(r.update.available?`Có bản mới ${r.update.latest}.`:r.update.error||'Bạn đang dùng bản mới nhất.',Boolean(r.update.error));});
@@ -1201,7 +1202,9 @@ function renderPerms(selected){const allowed=licenseData.dashboard?.scope?.permi
 function updateExpiryPreview(account){if(account){$('ldExpires').value=account.expires;return;}const start=$('ldStart').value||new Date().toISOString().slice(0,10);
   if(licensePlan==='trial'){const [y,m,d]=start.split('-').map(Number);const e=new Date(y,m-1,d+1);$('ldExpires').value=`${e.getFullYear()}-${String(e.getMonth()+1).padStart(2,'0')}-${String(e.getDate()).padStart(2,'0')}`;return;}
   $('ldExpires').value=addMonthsJs(start,{'1m':1,'1y':12,'3y':36}[licensePlan]);}
-function showKey(key,name){$('ldKey').value=key;$('ldKeyName').textContent=name?`Key gửi khách: ${name}`:'Key gửi khách';$('ldKeyBox').hidden=false;$('ldKey').select();}
+function showKey(key,name,short){$('ldKey').value=key;$('ldKeyName').textContent=name?`Key gửi khách: ${name}`:'Key gửi khách';$('ldKeyBox').hidden=false;
+  const code=short?.code||'';$('ldShort').textContent=code;$('ldShortBox').hidden=!code;$('ldLongKey').open=!code;
+  $('ldShortNote').textContent=code?'Khách mở HANA MEDIA → Bản quyền → nhập mã này → Kích hoạt (máy cần có mạng). Mã giữ nguyên khi gia hạn.':(short?.error||'');}
 $('ldRole').onchange=()=>renderPerms(licenseData.defaults[$('ldRole').value]);
 $('ldPlans').onchange=e=>{licensePlan=e.target.value;updateExpiryPreview(null);};
 $('ldStart').onchange=()=>updateExpiryPreview(null);
@@ -1215,13 +1218,13 @@ $('ldSave').onclick=async()=>{
   if(old&&old.name.trim()!==body.name.trim()&&!confirm(`Bạn đang SỬA tài khoản “${old.name}” thành “${body.name.trim()}”, KHÔNG tạo tài khoản mới.\n\nMuốn thêm khách mới: bấm Hủy rồi bấm “+ Thêm tài khoản”.\n\nVẫn đổi tên tài khoản này?`))return;
   try{const r=await api('/api/license/accounts',body);await loadLicense();
     if(old)fillLicenseForm(r.account);else fillLicenseForm(null);  // tạo xong: khung trở về "Thêm tài khoản" để nhập khách tiếp theo
-    renderLicenseRows();showKey(r.key,r.account.name);toast(old?'Đã lưu thay đổi và tạo key mới.':`Đã tạo tài khoản ${r.account.name}. Sao chép key gửi cho khách.`);}catch(error){toast(error.message,true);}
+    renderLicenseRows();showKey(r.key,r.account.name,r.short);toast(old?'Đã lưu thay đổi và tạo key mới.':`Đã tạo tài khoản ${r.account.name}. Sao chép key gửi cho khách.`);}catch(error){toast(error.message,true);}
 };
 async function renewAccount(id){
   const a=licenseData.dashboard.accounts.find(x=>x.id===id);if(!a)return;
   const plan=prompt(`Gia hạn "${a.name}" (hết hạn ${dmy(a.expires)}).\nNhập gói: 1m = 1 tháng, 1y = 1 năm, 3y = 3 năm, trial = thêm 2 ngày dùng thử`,'1y');if(plan===null)return;
   const amount=prompt('Số tiền thu (VNĐ, để 0 nếu không tính):','0');if(amount===null)return;
-  try{const r=await api('/api/license/renew',{id,plan:plan.trim(),amount:Number(amount)||0});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();showKey(r.key,r.account.name);toast(`Đã gia hạn tới ${dmy(r.account.expires)}. Gửi key mới cho khách.`);}catch(error){toast(error.message,true);}
+  try{const r=await api('/api/license/renew',{id,plan:plan.trim(),amount:Number(amount)||0});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();showKey(r.key,r.account.name,r.short);toast(`Đã gia hạn tới ${dmy(r.account.expires)}. Gửi key mới cho khách.`);}catch(error){toast(error.message,true);}
 }
 $('ldRenew').onclick=()=>licenseEditing&&renewAccount(licenseEditing);
 $('ldLock').onclick=async()=>{const a=licenseData.dashboard.accounts.find(x=>x.id===licenseEditing);if(!a)return;
@@ -1239,7 +1242,8 @@ $('licenseRows').onclick=e=>{const edit=e.target.closest('[data-license-edit]'),
   const find=id=>licenseData.dashboard.accounts.find(a=>a.id===id);
   if(edit){fillLicenseForm(find(edit.dataset.licenseEdit));renderLicenseRows();$('licenseDetail').scrollIntoView({behavior:'smooth',block:'start'});}
   if(renew)renewAccount(renew.dataset.licenseRenew);
-  if(key){const a=find(key.dataset.licenseKey);navigator.clipboard.writeText(a.token).then(()=>toast(`Đã sao chép key của ${a.name}.`)).catch(()=>{fillLicenseForm(a);showKey(a.token,a.name);});}};
+  if(key){const a=find(key.dataset.licenseKey);const text=a.short_code||a.token;navigator.clipboard.writeText(text).then(()=>toast(a.short_code?`Đã sao chép mã kích hoạt ngắn của ${a.name}.`:`Đã sao chép key của ${a.name}.`)).catch(()=>{fillLicenseForm(a);showKey(a.token,a.name,{code:a.short_code||''});});}};
+$('ldCopyShort').onclick=()=>navigator.clipboard.writeText($('ldShort').textContent).then(()=>toast('Đã sao chép mã kích hoạt ngắn.')).catch(()=>toast('Chọn và sao chép mã.',true));
 $('ldCopyKey').onclick=()=>navigator.clipboard.writeText($('ldKey').value).then(()=>toast('Đã sao chép key.')).catch(()=>toast('Chọn và sao chép key trong ô.',true));
 $('copyMachine').onclick=()=>navigator.clipboard.writeText($('licenseMachine').textContent).then(()=>toast('Đã sao chép mã máy.')).catch(()=>toast('Chọn và sao chép mã máy.',true));
 document.addEventListener('click',e=>{if(e.target.id==='copyPubkey')navigator.clipboard.writeText(licenseData.status.public_key).then(()=>toast('Đã sao chép khóa công khai.')).catch(()=>toast('Chọn và sao chép chuỗi khóa.',true));});
