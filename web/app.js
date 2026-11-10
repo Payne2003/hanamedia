@@ -49,7 +49,8 @@ function renderJobs(){
   if(!state)return;
   const totals=state.totals,all=Object.values(totals).reduce((a,b)=>a+b,0);
   $('total').textContent=all;$('n-all').textContent=all;
-  $('topTotal').textContent=all;$('topFiles').textContent=totals.done;$('topRunning').textContent=state.accounts.filter(account=>account.state==='busy').length;$('headerRuns').textContent=$('topRunning').textContent;
+  $('topTotal').textContent=all;$('topFiles').textContent=totals.done;$('topRunning').textContent=state.accounts.reduce((n,account)=>n+Number(account.jobs_running||(account.state==='busy'?1:0)),0);$('headerRuns').textContent=$('topRunning').textContent;
+  document.querySelector('.running-pill').title=state.engine?.keep_awake?'Đang tạo video: tool giữ máy không tự ngủ (màn hình vẫn tắt được) để Chrome không bị ngắt giữa chừng.':'';
   for(const status of Object.keys(statusNames))$(`n-${status}`).textContent=totals[status];
   const query=$('search').value.toLowerCase();
   const jobs=state.jobs.filter(job=>(filter==='all'||job.status===filter)&&job.prompt.toLowerCase().includes(query));

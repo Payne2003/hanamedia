@@ -55,6 +55,8 @@ class Engine:
         self.review_stops = {}
         self.browsers = {}
         self.account_locks = {}
+        from .power import KeepAwake
+        self.awake = KeepAwake()  # máy không tự ngủ khi đang tạo video (chỉ gọi từ luồng supervise)
         self.network_pause = 0.0  # mất mạng (đổi VPN, rớt Wi-Fi): tạm không giao tác vụ mới tới thời điểm này  # mở Chrome / đăng nhập / mở tab của một tài khoản: mỗi lúc một luồng
         self.login_all_status = ""
         self.login_all_running = False
@@ -287,6 +289,9 @@ class Engine:
     def supervise(self):
         planned = 0.0
         while not self.closing:
+            with self.lock:
+                working = bool(self.threads)
+            self.awake.set(working)
             with self.lock:
                 pair = (self.store.claim(self.limit) if self.enabled and self.license_ok()
                         and time.monotonic() >= self.network_pause else None)
@@ -816,6 +821,7 @@ class Engine:
     def snapshot(self):
         with self.lock:
             return {"enabled": self.enabled, "parallel": self.limit, "max_parallel": self.max_parallel,
+                    "keep_awake": self.awake.on,
                     "hardware": {**self.hardware, "gpu": hardware.ENCODERS[self.gpu_name][0] if self.gpu_name else None,
                                  "gpu_enabled": self.store.setting("gpu_encode", True) is not False}, "headless": self.headless, "automatic": self.automatic,
                     "output_folder": self.store.setting("output_folder", ""), "flow_status": self.flow_status,

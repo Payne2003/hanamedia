@@ -138,3 +138,20 @@ class TabRouterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeepAwakeTests(unittest.TestCase):
+    def test_windows_flags_follow_running_state(self):
+        import sys
+        import types
+        from unittest import mock
+        from runner import power
+        calls = []
+        fake = types.SimpleNamespace(windll=types.SimpleNamespace(kernel32=types.SimpleNamespace(
+            SetThreadExecutionState=lambda flags: calls.append(flags))))
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.dict(sys.modules, {"ctypes": fake}):
+            awake = power.KeepAwake()
+            awake.set(True)
+            awake.set(True)  # không gọi lại khi không đổi
+            awake.set(False)
+        self.assertEqual(calls, [power.ES_CONTINUOUS | power.ES_SYSTEM_REQUIRED, power.ES_CONTINUOUS])
