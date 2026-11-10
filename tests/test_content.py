@@ -260,8 +260,10 @@ class GeminiVideoFileTests(unittest.TestCase):
         seen = {}
         line = self.line
 
+        order = []
+
         class Session:
-            def __init__(self, profile): pass
+            def __init__(self, profile): order.append("chrome")
             def alive(self): return True
             def close(self): pass
             def new_chat(self): pass
@@ -279,8 +281,9 @@ class GeminiVideoFileTests(unittest.TestCase):
             video.write_bytes(b"video")
             sheet = Path(folder) / "khung-hinh-1.jpg"
             sheet.write_bytes(b"jpg")
-            with mock.patch.object(reverse_engineer, "quick_shots", return_value=(self.shots[:2], 3.5)), \
-                    mock.patch.object(reverse_engineer, "contact_sheets", return_value=[sheet]):
+            with mock.patch.object(reverse_engineer, "quick_shots",
+                                      side_effect=lambda *a: order.append("ffmpeg") or (self.shots[:2], 3.5)), \
+                    mock.patch.object(reverse_engineer, "contact_sheets", side_effect=lambda *a: order.append("frames") or [sheet]):
                 runner = gemini_web.GeminiWebRunner(Path(folder) / "profile", Session)
                 runner.start("generate", "Yêu cầu", lines={"video": str(video), "measure": True})
                 for _ in range(100):
@@ -299,6 +302,7 @@ class GeminiVideoFileTests(unittest.TestCase):
             self.assertIn("ẢNH KHUNG HÌNH ĐÍNH KÈM (1 ảnh", seen["first_prompt"])
             self.assertIn("Cảnh 1: góc quay mới có 0 mốc giây", " ".join(snap["result"]["issues"]))
             self.assertTrue(video.exists())  # file gốc của người dùng giữ nguyên
+            self.assertEqual(order, ["ffmpeg", "frames", "chrome"])  # cắt cảnh + trích khung hình xong mới mở Gemini
 
     def test_clear_field_refuses_to_send_when_old_text_stays(self):
         from runner import gemini_web

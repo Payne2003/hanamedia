@@ -528,112 +528,96 @@ class GeminiWebSession:
             raise GeminiWebError("Tệp đính kèm không hợp lệ (tối đa 1 video và 8 ảnh).")
         return self.attach_upload(videos + images, status, stop, email, video=bool(videos))
 
-    # Bấm "Tải tệp lên" của trang sẽ mở hộp chọn tệp của Windows (tool không điều khiển được). Chặn trước: ô
-    # <input type=file> mà trang định mở được gắn vào trang (ẩn) để tool đưa đường dẫn tệp vào thẳng.
-    JS_CAPTURE_FILE_INPUT = r"""
-if (!window.__hanaFileCapture) {
-  window.__hanaFileCapture = true;
-  const click = HTMLInputElement.prototype.click;
-  HTMLInputElement.prototype.click = function () {
-    if (this.type === 'file') {
-      this.setAttribute('data-hana-file', '1');
-      if (!this.isConnected) { this.style.display = 'none'; document.body.appendChild(this); }
-      return;
-    }
-    return click.apply(this, arguments);
-  };
-  const show = HTMLInputElement.prototype.showPicker;
-  if (show) HTMLInputElement.prototype.showPicker = function () {
-    if (this.type === 'file') { this.setAttribute('data-hana-file', '1'); if (!this.isConnected) { this.style.display = 'none'; document.body.appendChild(this); } return; }
-    return show.apply(this, arguments);
-  };
-}
+    # Đưa tệp vào ô nhập giống người dùng kéo-thả / dán (Ctrl+V) tệp: không cần tìm nút "+", "Tải tệp lên"…
+    # nên giao diện đổi cũng không ảnh hưởng. Tool tạo một ô chọn tệp ẩn của riêng mình, nạp tệp vào (không mở hộp
+    # thoại Windows), rồi gửi sự kiện thả/dán chứa tệp đó vào ô nhập của trang.
+    JS_DROP_INPUT = r"""
+let box = document.getElementById('hana-file-source');
+if (box) box.remove();
+box = document.createElement('input');
+box.type = 'file'; box.id = 'hana-file-source'; box.style.display = 'none';
+document.body.appendChild(box);
+return box;
 """
-    # Nút "+" / đính kèm cạnh ô nhập (nhãn tiếng Việt/Anh của Gemini, ChatGPT, Claude) và mục "Tải tệp lên" trong menu.
-    UPLOAD_BUTTON = re.compile(r"tải tệp|tệp lên|đính kèm|thêm tệp|thêm ảnh|mở trình đơn|menu tải|upload|attach|add files|add photos|"
-                               r"add file|open upload|thêm nội dung|add content", re.IGNORECASE)
-    UPLOAD_ITEM = re.compile(r"^\s*(tải tệp lên|tải lên tệp|upload files?|upload from computer|tải lên từ máy tính)", re.IGNORECASE)
+    JS_DELIVER = r"""
+const [field, how] = arguments;
+const box = document.getElementById('hana-file-source');
+if (!box || !box.files.length) return 'nofile';
+const data = new DataTransfer();
+for (const file of box.files) data.items.add(file);
+field.focus();
+if (how === 'drop') {
+  const rect = field.getBoundingClientRect();
+  const at = {bubbles: true, cancelable: true, composed: true, dataTransfer: data,
+              clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2};
+  for (const type of ['dragenter', 'dragover', 'drop']) field.dispatchEvent(new DragEvent(type, at));
+} else {
+  field.dispatchEvent(new ClipboardEvent('paste', {bubbles: true, cancelable: true, composed: true, clipboardData: data}));
+}
+return 'sent';
+"""
+    # Dấu hiệu trang đã nhận tệp: tên tệp hiện ra, hoặc có thêm ảnh xem trước / khung tệp / thanh tải.
+    JS_ATTACHED = r"""
+const name = arguments[0];
+const named = (document.body.innerText || '').includes(name) ||
+  [...document.querySelectorAll('[aria-label],[title],img')].some(e =>
+    [e.getAttribute('aria-label'), e.getAttribute('title'), e.getAttribute('alt')].some(v => v && v.includes(name)));
+const previews = document.querySelectorAll('img[src^="blob:"],img[src^="data:"],video,[role=progressbar],[aria-busy=true],' +
+  '[class*="file-preview"],[class*="attachment"],[class*="uploader-file"],[data-test-id*="file"]').length;
+const busy = !!document.querySelector('[role=progressbar],[aria-busy=true]');
+return {named, previews, busy};
+"""
 
-    def file_inputs(self):
-        """Ô chọn tệp của trang. Giao diện mới: bấm "+" → menu → "Tải tệp lên" (đã chặn hộp chọn tệp của Windows)."""
-        try:
-            self.driver.execute_script(self.JS_CAPTURE_FILE_INPUT)
-        except Exception:
-            pass
-        found = lambda: self.driver.find_elements("css selector", 'input[type="file"]')
-        inputs = found()
-        if inputs:
-            return inputs
-        for button in self.driver.find_elements("css selector", "button,[role='button']"):
-            try:
-                label = " ".join(filter(None, (button.get_attribute("aria-label"), button.get_attribute("mattooltip"),
-                                               button.get_attribute("data-test-id"), button.get_attribute("title"))))
-                if not label or not self.UPLOAD_BUTTON.search(label) or not button.is_displayed():
-                    continue
-                button.click()
-            except Exception:
-                continue
-            for _ in range(10):  # menu mở ra: bấm mục "Tải tệp lên"
-                time.sleep(.3)
-                inputs = found()
-                if inputs:
-                    return inputs
-                for item in self.driver.find_elements("css selector", "[role='menuitem'],[role='option'],button,li"):
-                    try:
-                        if item.is_displayed() and self.UPLOAD_ITEM.search(item.text or ""):
-                            item.click()
-                            time.sleep(.5)
-                            if found():
-                                return found()
-                    except Exception:
-                        continue
-            inputs = found()
-            if inputs:
-                return inputs
-        return found()
+    def deliver(self, file, how):
+        """Nạp tệp vào ô ẩn của tool rồi thả/dán vào ô nhập. Trả về True nếu trang có phản hồi nhận tệp."""
+        field = self.driver.execute_script(self.JS_FIND_INPUT)
+        if not field:
+            return False
+        before = self.driver.execute_script(self.JS_ATTACHED, file.name) or {}
+        source = self.driver.execute_script(self.JS_DROP_INPUT)
+        source.send_keys(str(file))
+        if self.driver.execute_script(self.JS_DELIVER, field, how) != "sent":
+            return False
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            time.sleep(.5)
+            now = self.driver.execute_script(self.JS_ATTACHED, file.name) or {}
+            if now.get("named") or now.get("busy") or (now.get("previews") or 0) > (before.get("previews") or 0):
+                return True
+        return False
 
     def attach_upload(self, files, status, stop, email="", video=False):
         noun = "video gốc" if video else "ảnh bằng chứng"
         self.wait_ready(status, stop, email)
         for file in files:
-            inputs = self.file_inputs()
-            if not inputs:
-                raise GeminiWebError(f"Không tìm thấy nút đính kèm tệp của {self.NAME}. Giao diện có thể đã thay đổi; "
-                                     "chưa gửi yêu cầu.")
+            if stop.is_set():
+                raise GeminiWebError(f"Đã dừng tải {noun}.")
             is_video = file.suffix.lower() in VIDEO_TYPES
-            kinds = ("video", "mp4", "*") if is_video else ("image", "jpg", "jpeg", "png", "*")
-            compatible = [field for field in inputs if not field.get_attribute("accept") or
-                          any(kind in field.get_attribute("accept").lower() for kind in kinds)]
-            if not compatible:
-                raise GeminiWebError(f"Trang {self.NAME} không có ô tải {noun} phù hợp; chưa gửi yêu cầu.")
             if is_video:
                 status(f"Đang tải video gốc lên {self.NAME} ({file.stat().st_size / 1048576:.0f} MB)…")
             elif video:
                 status(f"Đang tải ảnh khung hình {file.name} lên {self.NAME}…")
-            compatible[-1].send_keys(str(file))
+            if not (self.deliver(file, "drop") or self.deliver(file, "paste")):
+                where = self.dump(f"{self.NAME} không nhận tệp {file.name} khi thả/dán vào ô nhập")
+                raise GeminiWebError(f"{self.NAME} không nhận {noun} khi thả vào ô nhập; chưa gửi yêu cầu."
+                                     + (f" Gửi file chẩn đoán {where} cho người hỗ trợ." if where else ""))
             deadline = time.monotonic() + (900 if is_video else 120)
             while time.monotonic() < deadline:
                 if stop.is_set():
                     raise GeminiWebError(f"Đã dừng tải {noun}.")
-                uploaded = self.driver.execute_script("""const name=arguments[0];
-                    const body=document.body.innerText||'';
-                    const found=body.includes(name)||[...document.querySelectorAll('[aria-label],[title],img')].some(e=>
-                      [e.getAttribute('aria-label'),e.getAttribute('title'),e.getAttribute('alt')].some(v=>v&&v.includes(name)));
-                    return found&&!document.querySelector('[role=progressbar],[aria-busy=true]');""", file.name)
-                if uploaded:
+                page = self.driver.execute_script(self.JS_ATTACHED, file.name) or {}
+                if not page.get("busy"):
                     break
                 time.sleep(.5)
             else:
                 where = self.dump(f"Không xác nhận được {noun} đã tải lên xong")
                 raise GeminiWebError(f"Không xác nhận được {noun} đã tải lên {self.NAME} xong. Dừng trước khi gửi yêu cầu."
                                      + (f" Gửi file chẩn đoán {where} cho người hỗ trợ." if where else ""))
-
-        confirmed = self.driver.execute_script("""return arguments[0].every(name=>
-          (document.body.innerText||'').includes(name)||[...document.querySelectorAll('[aria-label],[title],img')].some(e=>
-          [e.getAttribute('aria-label'),e.getAttribute('title'),e.getAttribute('alt')].some(v=>v&&v.includes(name))));""",
-          [file.name for file in files])
-        if not confirmed:
-            raise GeminiWebError(f"Trang {self.NAME} chưa giữ đủ {noun}; chưa gửi yêu cầu.")
+            time.sleep(1)
+        try:
+            self.driver.execute_script("const b=document.getElementById('hana-file-source'); if (b) b.remove();")
+        except Exception:
+            pass
         if video:
             status(f"Đã tải video gốc lên {self.NAME}")
 
@@ -1064,7 +1048,7 @@ class GeminiWebRunner:
             if self.job["busy"]:
                 raise ValueError(f"{self.name} đang chạy một yêu cầu khác. Đợi xong hoặc bấm Dừng.")
             job_id = uuid.uuid4().hex
-            self.job = {"id": job_id, "kind": kind, "busy": True, "status": f"Đang mở {self.name}…", "result": None, "error": ""}
+            self.job = {"id": job_id, "kind": kind, "busy": True, "status": f"Đang mở {self.name}…", "result": None, "error": "", "phase": ""}
         self.stop.clear()
         self.requests.put((job_id, kind, prompt, email.strip(), model.strip(), lines, style))
         return job_id
@@ -1108,6 +1092,40 @@ class GeminiWebRunner:
         self.set(status=f"Đã mở Chrome để đăng nhập {self.name}. Đăng nhập xong, {self.login_done} thì đóng hẳn cửa sổ đó, rồi bấm Chạy.",
                  error="")
 
+    def prepare(self, prompt, lines, status):
+        """FFmpeg + Shot Detection trên video gốc (chưa mở Chrome): điểm cắt → cảnh 10 giây → ảnh khung hình.
+        Trả về (prompt có bảng cảnh, (tệp gửi Gemini, các cảnh, điểm cắt))."""
+        files, shots, windows, duration = [], None, None, 0
+        self.set(phase="ffmpeg")
+        if isinstance(lines, dict) and lines.get("video"):
+            from . import reverse_engineer
+            source = Path(lines["video"])
+            if lines.get("measure", True):
+                status("FFmpeg + Shot Detection: đang tìm điểm cắt cảnh trong video gốc…")
+                try:
+                    shots, duration = reverse_engineer.quick_shots(source, self.stop)
+                    windows = content.scene_windows(shots, duration)
+                    status(f"Đã tìm {len(shots or [])} điểm cắt · chia {len(windows or [])} cảnh 10 giây")
+                except Exception as error:  # không đo được: vẫn cho Gemini xem file, chỉ bỏ bảng cảnh
+                    if self.stop.is_set():
+                        raise GeminiWebError("Đã dừng.") from None
+                    shots = None
+                    status(f"Không đo được điểm cắt ({str(error)[:80]}); Gemini vẫn xem file video")
+            files = [upload_copy(source, self.profile.parent / "gemini-uploads")]
+            sheets = []
+            if windows and lines.get("frames", True):
+                try:
+                    sheets = reverse_engineer.contact_sheets(source, windows, self.profile.parent / "gemini-uploads" / "frames",
+                                                             self.stop, status)
+                except Exception:
+                    if self.stop.is_set():
+                        raise GeminiWebError("Đã dừng.") from None
+                    sheets = []  # không trích được khung hình: Gemini vẫn xem video + bảng cảnh
+            if windows:
+                prompt += "\n\n" + content.scene_section(windows, duration, len(sheets))
+            files += sheets
+        return prompt, (files, windows, None if windows else shots)
+
     def worker(self):
         while True:
             item = self.requests.get()
@@ -1116,6 +1134,11 @@ class GeminiWebRunner:
             job_id, kind, prompt, email, model, lines, style = item
             status = lambda text: self.set(status=text)
             try:
+                prepared = None
+                if kind in ("generate", "review"):
+                    # Bước FFmpeg chạy TRƯỚC khi mở Gemini: tìm điểm cắt (Shot Detection), chia cảnh, trích khung hình.
+                    prompt, prepared = self.prepare(prompt, lines, status)
+                self.set(phase="gemini")
                 if self.login_window_open():
                     raise GeminiWebError("Cửa sổ Chrome đăng nhập vẫn đang mở. Đóng hẳn cửa sổ đó rồi bấm Chạy lại.")
                 if not self.session or not self.session.alive():
@@ -1169,36 +1192,9 @@ class GeminiWebRunner:
                              status=f"Xong: {done}/{result['total']} prompt tiếng Anh sau {result['rounds']} lượt"
                                     + (f" · còn thiếu {len(result['missing'])}" if result["missing"] else ""))
                     continue
-                files, shots, windows, duration = [], None, None, 0
-                if isinstance(lines, dict) and lines.get("video"):
-                    source = Path(lines["video"])
-                    if lines.get("measure", True):
-                        status("Đang đo điểm cắt cảnh trong video gốc (để Gemini viết đủ cảnh)…")
-                        from . import reverse_engineer
-                        try:
-                            shots, duration = reverse_engineer.quick_shots(source, self.stop)
-                            windows = content.scene_windows(shots, duration)
-                        except Exception as error:  # không đo được: vẫn cho Gemini xem file, chỉ bỏ bảng cảnh
-                            if self.stop.is_set():
-                                raise GeminiWebError("Đã dừng.") from None
-                            shots = None
-                            status(f"Không đo được điểm cắt ({str(error)[:80]}); Gemini vẫn xem file video")
-                    files = [upload_copy(source, self.profile.parent / "gemini-uploads")]
-                    sheets = []
-                    if windows and lines.get("frames", True):
-                        try:
-                            sheets = reverse_engineer.contact_sheets(source, windows, self.profile.parent / "gemini-uploads" / "frames",
-                                                                     self.stop, status)
-                        except Exception:
-                            if self.stop.is_set():
-                                raise GeminiWebError("Đã dừng.") from None
-                            sheets = []  # không trích được khung hình: Gemini vẫn xem video + bảng cảnh
-                    if windows:
-                        prompt += "\n\n" + content.scene_section(windows, duration, len(sheets))
-                    files += sheets
+                files, windows, shots = prepared
                 result = run_conversation(self.session, prompt, status, self.stop, email, model, kind == "review",
-                                          files=files, windows=windows,
-                                          shots=None if windows else shots)
+                                          files=files, windows=windows, shots=shots)
                 result["prompts"] = content.format_prompts(result["scenes"])
                 self.set(busy=False, result=result,
                          status=f"Xong: {len(result['scenes'])} cảnh sau {result['rounds']} lượt trả lời của {self.name}")

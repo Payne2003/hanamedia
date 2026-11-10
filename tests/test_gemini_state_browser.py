@@ -73,18 +73,39 @@ if __name__ == "__main__":
     unittest.main()
 
 
+PAGE = """<div id="chips"></div><div id="box" contenteditable="true" role="textbox">x</div><script>
+const add = files => { for (const f of files) { const c = document.createElement('span'); c.textContent = f.name; chips.appendChild(c); } };
+document.addEventListener('%s', e => { e.preventDefault(); add((e.dataTransfer || e.clipboardData).files); });
+</script>"""
+
+
 @unittest.skipUnless(sync_playwright and CHROME, "Cần Playwright + Chromium")
-class FileCaptureTests(unittest.TestCase):
-    def test_upload_menu_click_does_not_open_the_os_dialog(self):
+class FileDropTests(unittest.TestCase):
+    """Tệp được thả/dán thẳng vào ô nhập (không cần tìm nút "+" / "Tải tệp lên")."""
+    def deliver(self, listens, how):
+        import tempfile
         from runner.gemini_web import GeminiWebSession
-        with sync_playwright() as p:
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as clip, sync_playwright() as p:
             browser = p.chromium.launch(executable_path=CHROME, args=["--headless", "--no-sandbox"])
             try:
                 page = browser.new_page()
-                page.set_content('<button id="up">Tải tệp lên</button><script>up.onclick=()=>{const i=document.createElement("input");'
-                                 'i.type="file";i.click();};</script>')
-                page.evaluate("() => {" + GeminiWebSession.JS_CAPTURE_FILE_INPUT + "}")
-                page.click("#up")
-                self.assertEqual(page.evaluate("document.querySelectorAll('input[type=file][data-hana-file]').length"), 1)
+                page.set_content(PAGE % listens)
+                page.evaluate("() => {" + GeminiWebSession.JS_DROP_INPUT + "}")
+                page.set_input_files("#hana-file-source", clip.name)
+                field = page.query_selector("#box")
+                sent = page.evaluate("([f, h]) => (function(){" + GeminiWebSession.JS_DELIVER + "}).apply(null, [f, h])",
+                                     [field, how])
+                seen = page.evaluate("(n) => (function(){" + GeminiWebSession.JS_ATTACHED + "}).apply(null, [n])",
+                                     clip.name.split("/")[-1])
+                return sent, seen["named"]
             finally:
                 browser.close()
+
+    def test_drop_reaches_page_that_accepts_dropped_files(self):
+        self.assertEqual(self.deliver("drop", "drop"), ("sent", True))
+
+    def test_paste_reaches_page_that_accepts_pasted_files(self):
+        self.assertEqual(self.deliver("paste", "paste"), ("sent", True))
+
+    def test_page_that_ignores_drop_is_detected(self):
+        self.assertEqual(self.deliver("paste", "drop"), ("sent", False))

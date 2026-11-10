@@ -531,7 +531,7 @@ async function runPipelineFlow(){
   const link=$('contentVideo').value.trim();
   if(!link&&!content.videoFile)return toast('Dán link video YouTube (hoặc chọn file video) trước.',true);
   if(!content.brief.trim()){content.brief=defaultBrief;$('contentBrief').value=defaultBrief;saveContent();}
-  pipeline={step:''};$('pipelineSteps').hidden=false;['download','script','prompt','review'].forEach(s=>pipeStep(s));renderAuto();
+  pipeline={step:''};$('pipelineSteps').hidden=false;['download','cut','script','prompt','review'].forEach(s=>pipeStep(s));renderAuto();
   let current='download';
   try{
     pipeStep('download','active');
@@ -549,9 +549,12 @@ async function runPipelineFlow(){
         toast(`Không tải được video (${error.message}). Gemini sẽ xem qua link YouTube; bước FFmpeg (điểm cắt, khung hình) bị bỏ qua.`,true);
       }
     }
-    pipeStep('download','done');current='script';pipeStep('script','active');
+    pipeStep('download','done');current='cut';pipeStep('cut','active');
+    // Bước FFmpeg chạy trước khi mở Gemini (trong cùng tác vụ): xong khi tác vụ chuyển sang giai đoạn "gemini".
     if(!await runAuto('generate',true))throw Error('Không chạy được Gemini.');
+    while(autoJob&&current==='cut'){await sleep(700);if([state?.content?.web,state?.content?.chatgpt].some(w=>w?.busy&&w.phase==='gemini')){pipeStep('cut','done');current='script';pipeStep('script','active');}}
     await waitJobs();
+    if(current==='cut'){pipeStep('cut','done');current='script';pipeStep('script','active');}
     if(!content.scenes.length)throw Error('Gemini không trả về cảnh nào.');
     pipeStep('script','done');current='prompt';pipeStep('prompt','active');
     $('englishInput').value=contentPrompts().join('\n');content.englishInput=$('englishInput').value;saveContent();
