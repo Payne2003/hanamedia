@@ -195,12 +195,12 @@ def scene_section(windows, duration=0, sheets=0):
     return text
 
 
-SEGMENT = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:s|giây)?\s*[–—-]\s*(\d+(?:[.,]\d+)?)\s*(?:s\b|giây)", re.IGNORECASE)
+SCENE_SEGMENT = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:s|giây)?\s*[–—-]\s*(\d+(?:[.,]\d+)?)\s*(?:s\b|giây)", re.IGNORECASE)
 
 
 def camera_problem(camera, window):
     """Reference Analyst: góc quay của cảnh có đủ mốc giây, khớp các điểm cắt đo được và phủ hết cảnh không."""
-    marks = [(float(a.replace(",", ".")), float(b.replace(",", "."))) for a, b in SEGMENT.findall(str(camera or ""))]
+    marks = [(float(a.replace(",", ".")), float(b.replace(",", "."))) for a, b in SCENE_SEGMENT.findall(str(camera or ""))]
     length = window["end"] - window["start"]
     need = needed_marks(window)
     if len(marks) < need:
@@ -718,3 +718,77 @@ def missing_english(found, total, structured=False, seconds=0, angles=0):
             if number not in found or not is_english(found[number])
             or (structured and not structured_complete(found[number]))
             or (angles and seconds and angle_problem(found[number], seconds, angles))]
+
+
+# ---- Kiểm duyệt prompt: bộ quy tắc người dùng cập nhật dần + "khóa" gắn vào cuối MỌI prompt ----
+DEFAULT_REVIEW_RULES = """- Chân thực như phim tài liệu BBC / kênh động vật chính thống; ảnh thật, không hoạt hình, không CGI lộ.
+- Không nhạc nền, không slow motion; tốc độ thật.
+- Hành động dứt khoát, mạnh mẽ, không hời hợt; đánh nhau phải kịch tính, liên tục, không có điểm nghỉ.
+- Giữ nhất quán ngoại hình từng con vật/nhân vật, địa hình và ánh sáng bình minh giữa các prompt.
+- Mỗi prompt dùng 2–3 góc quay chuyên nghiệp phù hợp (cận cảnh, trung cảnh, toàn cảnh, góc thấp, bám theo…).
+- Hướng chạy nhất quán: nếu A đuổi B thì lúc nào A cũng ở phía sau B, cùng một hướng trên màn hình.
+- Không logo, không watermark, không phụ đề, không chữ trên màn hình."""
+
+DEFAULT_LOCK = ("Photorealistic BBC-style wildlife documentary footage, natural real-time speed; no music, no slow motion, "
+                "no logo, no watermark, no subtitles or on-screen text; identical animal appearance, terrain and dawn "
+                "lighting as the other shots; consistent screen direction, the chaser always stays behind the animal it "
+                "chases; decisive, powerful action with no pauses")
+
+FORBIDDEN = (("slow motion", r"slow[\s-]?mo(?:tion)?|slowmo|in slow"),
+             ("nhạc nền", r"\bmusic\b|soundtrack|musical score"),
+             ("logo / watermark", r"\blogo\b|watermark"),
+             ("phụ đề / chữ trên màn hình", r"subtitle|caption|on-?screen text|text overlay"),
+             ("hành động hời hợt", r"\bslowly\b|\bgently\b|\blazily\b|\bleisurely\b|\bcalmly\b"))
+NEGATION = re.compile(r"\b(?:no|not|without|never|avoid|zero)\b[^.;:]{0,25}$", re.IGNORECASE)
+SHOT_TYPES = (r"extreme close[\s-]?up", r"close[\s-]?up|tight shot", r"medium(?: close)?[\s-]?shot|mid[\s-]?shot|medium",
+              r"wide[\s-]?shot|wide angle|establishing|long shot|\bwide\b", r"aerial|drone|bird'?s[\s-]?eye|overhead",
+              r"low[\s-]?angle", r"high[\s-]?angle", r"tracking|follow(?:ing)? shot|dolly", r"over[\s-]the[\s-]shoulder|pov")
+
+
+def strip_lock(prompt):
+    return re.split(r";?\s*LOCK\s*:", str(prompt or ""), maxsplit=1)[0]
+
+
+def prompt_violations(prompt):
+    """Kiểm tra máy (không cần AI) trên phần prompt trước dòng LOCK: từ cấm (trừ khi đi sau "no/without…"), thiếu góc quay."""
+    text = strip_lock(prompt)
+    found = []
+    for name, pattern in FORBIDDEN:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            if not NEGATION.search(text[max(0, match.start() - 40):match.start()]):
+                found.append(name)
+                break
+    camera = parse_structured(text).get("camera") or text
+    shots = sum(1 for pattern in SHOT_TYPES if re.search(pattern, camera, re.IGNORECASE))
+    if shots < 2:
+        found.append("chưa đủ 2–3 góc quay (cận / trung / toàn cảnh…)")
+    return found
+
+
+def apply_lock(prompt, lock=DEFAULT_LOCK):
+    """Gắn khóa chung vào cuối prompt (thay khóa cũ nếu có)."""
+    body = strip_lock(prompt).strip().rstrip(" .;")
+    lock = clean_text(lock, 2000).strip().rstrip(" .;")
+    return f"{body}; LOCK: {lock}." if body and lock else body
+
+
+def review_request(prompts, rules, numbers=None):
+    numbers = list(numbers or range(1, len(prompts) + 1))
+    rows = "\n".join(f"{n}. {strip_lock(prompts[n - 1]).strip()}" for n in numbers)
+    return ("You are the senior wildlife documentary director reviewing video prompts before they are sent to an AI video "
+            "generator. Check EVERY prompt below against these rules (written in Vietnamese):\n"
+            f"{str(rules or DEFAULT_REVIEW_RULES).strip()[:6000]}\n\n"
+            "Rewrite each prompt so it fully follows every rule: keep its scene facts (animals, place, action, order), keep "
+            "its labels and order if it has fields (SETTING; CHARACTERS; CAMERA; …), keep the same animal names and "
+            "appearance across prompts, use 2–3 professional camera angles named explicitly (close-up, medium shot, wide "
+            "shot, low angle, tracking…), make the action decisive and continuous, and keep screen direction consistent "
+            "(a chaser always behind what it chases). Do not mention music, slow motion, logos or text except to forbid them.\n"
+            "First write one line per problem you fixed: \"ISSUE: Prompt N — …\". Then write every prompt again, one "
+            f"line each, starting with its number (\"N. …\"), in English, no markdown. After the last one write {END_EN}.\n\n"
+            + rows)
+
+
+def continue_review(after, numbers):
+    rest = [n for n in numbers if n > after]
+    return (f"Continue with prompt {rest[0] if rest else after + 1} to prompt {numbers[-1]}, same format (\"N. …\", one line "
+            f"each), do not repeat earlier prompts. Then write {END_EN}.")

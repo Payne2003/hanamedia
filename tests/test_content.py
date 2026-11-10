@@ -1125,3 +1125,44 @@ class ScriptExportTests(unittest.TestCase):
             sheet = load_workbook(target)["Kịch bản"]
             self.assertEqual([c.value for c in sheet[2]], [1, "00:00.0", "00:10.0", 2, scene["camera"], "sư tử ×2 (trái)",
                                                          "Rừng", "Đứng", "Bước tới"])
+
+
+class PromptReviewTests(unittest.TestCase):
+    good = ("SETTING: Snowy tundra at dawn; CHARACTERS: two muskoxen; CAMERA: 0–3s close-up of horns, 3–7s wide shot, "
+            "7–10s low angle tracking; ACTION: they charge and collide hard")
+
+    def test_tool_checks_respect_negation_and_count_angles(self):
+        self.assertEqual(content.prompt_violations(self.good + ". No music, no slow motion, no logo."), [])
+        problems = content.prompt_violations("A wolf slowly walks, soft music, in slow motion, medium shot, logo corner")
+        self.assertEqual(problems[:3], ["slow motion", "nhạc nền", "logo / watermark"])
+        self.assertIn("chưa đủ 2–3 góc quay (cận / trung / toàn cảnh…)", problems)
+
+    def test_lock_is_added_once_to_every_prompt(self):
+        locked = content.apply_lock(content.apply_lock(self.good, "no music"), "no music, no logo")
+        self.assertTrue(locked.endswith("; LOCK: no music, no logo."))
+        self.assertEqual(locked.count("LOCK:"), 1)
+
+    def test_review_rewrites_bad_prompts_then_locks_all(self):
+        from runner import gemini_web
+        bad = "A wolf slowly walks with music, medium shot"
+        fixed = "A wolf sprints hard; CAMERA: close-up then wide shot then low angle tracking"
+
+        class Session:
+            sent = []
+            answers = [f"ISSUE: Prompt 2 — removed music\n1. {PromptReviewTests.good}\n2. {bad}\n{content.END_EN}",
+                       f"2. {fixed}"]
+            def new_chat(self): pass
+            def wait_ready(self, status, stop, email=""): pass
+            def choose_model(self, name): return name
+            def ask(self, text, status, stop, email="", label=""):
+                self.sent.append(text)
+                return self.answers.pop(0)
+
+        result = gemini_web.run_review(Session(), [self.good, bad], "Không nhạc nền", "no music, no logo",
+                                       lambda _: None, threading.Event())
+        self.assertIn("Không nhạc nền", Session.sent[0])
+        self.assertIn("2: ", Session.sent[1])
+        self.assertTrue(result["english"][1].startswith(fixed))
+        self.assertTrue(all(p.endswith("LOCK: no music, no logo.") for p in result["english"]))
+        self.assertEqual(result["violations"], {})
+        self.assertIn("Prompt 2 — removed music", " ".join(result["issues"]))

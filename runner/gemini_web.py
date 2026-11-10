@@ -733,6 +733,52 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
 VERIFY_ROUNDS = 2
 
 
+def run_review(session, prompts, rules, lock, status, stop, email="", model=""):
+    """Kiểm duyệt prompt: AI đối chiếu từng prompt với bộ quy tắc của người dùng và viết lại cho đạt; tool kiểm tra máy
+    (từ cấm, đủ 2–3 góc quay), hỏi lại riêng prompt còn vi phạm (1 lượt), rồi gắn KHÓA chung vào cuối mọi prompt.
+    Prompt AI không trả về thì giữ bản cũ. Không bao giờ làm mất prompt."""
+    prompts = [str(p or "").strip() for p in prompts]
+    total = len(prompts)
+    name = getattr(session, "NAME", "Gemini")
+    if not total:
+        raise GeminiWebError("Chưa có prompt để kiểm duyệt.")
+    start_fresh(session, status, stop, email)
+    if model:
+        session.choose_model(model)
+    numbers = list(range(1, total + 1))
+    answer = session.ask(content.review_request(prompts, rules), status, stop, email,
+                         label=f"{name} đang kiểm duyệt {total} prompt")
+    found = content.parse_english(answer, total)
+    issues = content.parse_issues(answer)
+    rounds = 1
+    for _ in range(MAX_CONTINUE):
+        if content.END_EN.lower() in answer.lower() or not found or max(found) >= total:
+            break
+        after = max(found)
+        answer = session.ask(content.continue_review(after, numbers), status, stop, email,
+                             label=f"Đã kiểm duyệt {len(found)}/{total} · {name} viết tiếp")
+        rounds += 1
+        more = content.parse_english(answer, total, range(after + 1, total + 1))
+        if not any(n > after for n in more):
+            break
+        found.update(more)
+    reviewed = [found.get(n) if found.get(n) and content.is_english(found[n]) else prompts[n - 1] for n in numbers]
+    bad = [n for n in numbers if content.prompt_violations(reviewed[n - 1])]
+    if bad:
+        answer = session.ask(content.review_request(reviewed, rules, bad) + "\n\nCHỈ viết lại các prompt trên; prompt còn lỗi: "
+                             + "; ".join(f"{n}: {', '.join(content.prompt_violations(reviewed[n - 1]))}" for n in bad),
+                             status, stop, email, label=f"{len(bad)} prompt còn vi phạm · {name} sửa lại")
+        rounds += 1
+        for n, text in content.parse_english(answer, total, bad).items():
+            if content.is_english(text) and len(content.prompt_violations(text)) < len(content.prompt_violations(reviewed[n - 1])):
+                reviewed[n - 1] = text
+        issues += [i for i in content.parse_issues(answer) if i not in issues]
+    final = [content.apply_lock(p, lock or content.DEFAULT_LOCK) for p in reviewed]
+    violations = {n: content.prompt_violations(final[n - 1]) for n in numbers}
+    return {"english": final, "issues": issues, "violations": {n: v for n, v in violations.items() if v},
+            "missing": [n for n in numbers if not found.get(n)], "total": total, "rounds": rounds, "reviewed": True}
+
+
 def verify_subjects(session, result, windows, status, stop, email=""):
     """AI Scene Analyzer: mỗi cảnh phải có danh sách nhân vật (tên, số lượng, vị trí); số lượng đổi giữa hai cảnh liền
     nhau mà không ai bước vào/rời khung thì nhờ Gemini đếm lại (1 lượt). Còn lại ghi vào mục vấn đề."""
@@ -1018,6 +1064,13 @@ class GeminiWebRunner:
                     self.set(busy=False, result=result,
                              status=f"Xong: {len(result['characters'])} nhân vật, {result['total'] - len(result['missing'])}/{result['total']} cảnh"
                                     + (f" · còn thiếu {len(result['missing'])} cảnh" if result["missing"] else ""))
+                    continue
+                if kind == "promptreview":
+                    result = run_review(self.session, lines["prompts"], lines.get("rules", ""), lines.get("lock", ""), status,
+                                        self.stop, email, model)
+                    left = sum(1 for v in result["violations"].values() if v)
+                    self.set(busy=False, result=result,
+                             status=f"Đã kiểm duyệt {result['total']} prompt" + (f" · còn {left} prompt cần xem lại" if left else ""))
                     continue
                 if kind == "english":
                     defaults = ("", "16:9", True, content.DEFAULT_SECONDS, 0)

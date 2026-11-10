@@ -445,7 +445,9 @@ class Handler(BaseHTTPRequestHandler):
                                            email=self.server.store.setting("gemini_web_email") or "",
                                            model=self.server.store.setting("gemini_web_model") or ""),
                                "chatgpt": dict(self.server.chatgpt_web.snapshot(),
-                                               model=self.server.store.setting("chatgpt_web_model") or "")}
+                                               model=self.server.store.setting("chatgpt_web_model") or ""),
+                               "review": {"rules": self.server.store.setting("review_rules") or content.DEFAULT_REVIEW_RULES,
+                                          "lock": self.server.store.setting("review_lock") or content.DEFAULT_LOCK}}
             return self.reply(data)
         job_match = re.fullmatch(r"/api/job/([a-f0-9]{32})", path)
         if job_match:
@@ -950,6 +952,25 @@ class Handler(BaseHTTPRequestHandler):
                                                    {"video": str(Path(video_file).resolve()), "measure": body.get("measure") is not False}
                                                    if video_file else None)
                 return self.reply({"ok": True, "id": job})
+            elif path == "/api/content/review-prompts":
+                prompts = [line.strip() for line in str(body.get("text") or "").replace("\r", "").split("\n") if line.strip()]
+                if not prompts:
+                    raise ValueError("Chưa có prompt để kiểm duyệt.")
+                if len(prompts) > content.MAX_EN_LINES:
+                    raise ValueError(f"Tối đa {content.MAX_EN_LINES} prompt mỗi lần kiểm duyệt.")
+                rules = str(body.get("rules") or "").strip()[:6000] or content.DEFAULT_REVIEW_RULES
+                lock = str(body.get("lock") or "").strip()[:2000] or content.DEFAULT_LOCK
+                store.save_setting("review_rules", rules)
+                store.save_setting("review_lock", lock)
+                chatgpt = body.get("engine") == "chatgpt"
+                runner = self.server.chatgpt_web if chatgpt else self.server.gemini_web
+                job = runner.start("promptreview", "", "" if chatgpt else (store.setting("gemini_web_email") or ""),
+                                   store.setting("chatgpt_web_model" if chatgpt else "gemini_web_model") or "",
+                                   {"prompts": prompts, "rules": rules, "lock": lock})
+                return self.reply({"ok": True, "id": job, "total": len(prompts), "engine": "chatgpt" if chatgpt else "gemini"})
+            elif path == "/api/content/review-rules":
+                store.save_setting("review_rules", str(body.get("rules") or "").strip()[:6000])
+                store.save_setting("review_lock", str(body.get("lock") or "").strip()[:2000])
             elif path == "/api/content/chatgpt-settings":
                 store.save_setting("chatgpt_web_model", str(body.get("model") or "").strip()[:40])
             elif path == "/api/content/english-run":
