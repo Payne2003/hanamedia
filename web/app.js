@@ -357,11 +357,14 @@ $('sceneList').addEventListener('click',e=>{
   if(del){content.scenes.splice(Number(del.dataset.sceneDelete),1);renderScenes();}
   if(move){const i=Number(move.dataset.sceneMove),j=i+Number(move.dataset.dir);[content.scenes[i],content.scenes[j]]=[content.scenes[j],content.scenes[i]];renderScenes();}
 });
+// Kịch bản → đầu vào bước Tạo prompt (prompt tiếng Anh cho Muse), không đưa thẳng vào Studio nữa.
 $('useContent').onclick=()=>{
-  const prompts=contentPrompts();if(!prompts.length)return;
-  if($('prompts').value.trim()&&!confirm('Thay nội dung đang có trong khung prompt bằng các prompt này?'))return;
-  mode='text';$('separator').value='line';$('prompts').value=prompts.join('\n');renderMode();showView('studio');$('prompts').focus();
-  toast(`Đã đưa ${prompts.length} prompt vào Studio. Bấm “Tạo & chạy” hoặc “Chỉ thêm vào hàng đợi”.`);
+  const prompts=contentPrompts();if(!prompts.length)return toast('Chưa có cảnh nào để đưa sang.',true);
+  if($('englishInput').value.trim()&&$('englishInput').value.trim()!==prompts.join('\n')&&!confirm('Thay nội dung đang có ở đầu vào phần Tạo prompt bằng kịch bản này?'))return;
+  $('englishInput').value=prompts.join('\n');content.englishInput=$('englishInput').value;saveContent();
+  $('englishInput').dispatchEvent(new Event('input',{bubbles:true}));
+  setStep(4);$('englishInput').focus();
+  toast(`Đã đưa ${prompts.length} cảnh sang phần Tạo prompt.`);
 };
 $('copyContent').onclick=()=>navigator.clipboard.writeText($('contentPrompts').value).then(()=>toast('Đã chép hàng loạt prompt.')).catch(()=>toast('Không chép được. Chọn và sao chép trong ô bên dưới.',true));
 $('downloadContent').onclick=()=>{const blob=new Blob([[content.script?'KỊCH BẢN VIDEO GỐC\n'+content.script+'\n\nPROMPT\n':'',$('contentPrompts').value].join('')],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='content-prompt.txt';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};
@@ -1036,14 +1039,17 @@ function videoSpecCell(job){
   const post=job.status==='done'&&job.resolution?postLabel(job.post_status):'';
   return `<span class="spec-chip">${esc(parts.join(' · '))}</span>${post?`<span class="detail${job.post_status.startsWith('error:')?' error':''}" title="${esc(job.post_status.startsWith('error:')?job.post_status.slice(6):'')}">${esc(post)}</span>`:''}`;
 }
+let stitchHidden=false;try{stitchHidden=localStorage.getItem('hana-hide-stitch')==='1';}catch{}
 function renderStitchPanel(){
-  const batches=state.batches||[],panel=$('stitchPanel');panel.hidden=!batches.length;
-  panel.innerHTML=batches.length?`<b>🔗 Video ghép</b>`+batches.map(b=>`<div class="stitch-row"><span>Lượt ${esc(new Date(b.created*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'}))} · ${b.done}/${b.scenes} cảnh xong${b.failed?` · ${b.failed} lỗi`:''}</span><span class="stitch-state ${b.stitch_status}">${esc(stitchNames[b.stitch_status]||b.stitch_status)}</span>${b.stitch_error?`<span class="detail error">${esc(b.stitch_error)}</span>`:''}${b.stitch_status==='done'?`<a class="button-link" href="/api/batch/${esc(b.batch)}/video" target="_blank" rel="noopener">▶ Xem</a><a class="button-link" href="/api/batch/${esc(b.batch)}/video?download=1">⇩ Tải</a>`:''}${b.stitch_status!=='running'&&b.done>=2?`<button type="button" data-stitch-now="${esc(b.batch)}" title="Ghép các cảnh đã xong (bỏ qua cảnh lỗi/chưa xong)">${b.stitch_status==='done'?'↻ Ghép lại':'Ghép ngay'}</button>`:''}</div>`).join(''):'';
+  const batches=(state.batches||[]).filter(b=>Number(b.scenes)>0),panel=$('stitchPanel');panel.hidden=!batches.length||stitchHidden;
+  panel.innerHTML=batches.length?`<div class="stitch-head"><b>🔗 Video ghép</b><button type="button" id="hideStitch" title="Ẩn khung này. Bật lại bằng cách tick “Ghép” khi tạo video.">✕ Ẩn</button></div>`+batches.map(b=>`<div class="stitch-row"><span>Lượt ${esc(new Date(b.created*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'}))} · ${b.done}/${b.scenes} cảnh xong${b.failed?` · ${b.failed} lỗi`:''}</span><span class="stitch-state ${b.stitch_status}">${esc(stitchNames[b.stitch_status]||b.stitch_status)}</span>${b.stitch_error?`<span class="detail error">${esc(b.stitch_error)}</span>`:''}${b.stitch_status==='done'?`<a class="button-link" href="/api/batch/${esc(b.batch)}/video" target="_blank" rel="noopener">▶ Xem</a><a class="button-link" href="/api/batch/${esc(b.batch)}/video?download=1">⇩ Tải</a>`:''}${b.stitch_status!=='running'&&b.done>=2?`<button type="button" data-stitch-now="${esc(b.batch)}" title="Ghép các cảnh đã xong (bỏ qua cảnh lỗi/chưa xong)">${b.stitch_status==='done'?'↻ Ghép lại':'Ghép ngay'}</button>`:''}</div>`).join(''):'';
 }
-document.addEventListener('click',e=>{const b=e.target.closest('[data-stitch-now]');if(!b)return;
+document.addEventListener('click',e=>{if(e.target.closest('#hideStitch')){stitchHidden=true;try{localStorage.setItem('hana-hide-stitch','1');}catch{}renderStitchPanel();toast('Đã ẩn khung Video ghép. Tick “Ghép” khi tạo video để hiện lại.');return;}
+  const b=e.target.closest('[data-stitch-now]');if(!b)return;
   if(!confirm('Ghép ngay các cảnh đã xong của lượt này? Cảnh lỗi hoặc chưa xong sẽ bị bỏ qua.'))return;
   action(async()=>{await api('/api/batch/stitch',{batch:b.dataset.stitchNow});toast('Đang ghép video. Xem tiến độ ở khung Video ghép.');});});
 for(const id of ['vAspect','vDuration','vResolution','vStitch','vAccount'])$(id).addEventListener('change',saveVideoSettings);
+$('vStitch').addEventListener('change',()=>{if($('vStitch').checked&&stitchHidden){stitchHidden=false;try{localStorage.removeItem('hana-hide-stitch');}catch{}if(state)renderStitchPanel();}});
 $('vCharacters').onclick=()=>openPicker('characters');
 $('vClearCharacters').onclick=()=>{fixedCharacters=[];saveVideoSettings();renderFixedCharacters();};
 $('vCharacterChips').onclick=e=>{const b=e.target.closest('[data-remove-fixed]');if(!b)return;fixedCharacters.splice(Number(b.dataset.removeFixed),1);saveVideoSettings();renderFixedCharacters();};
