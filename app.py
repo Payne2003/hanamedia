@@ -26,7 +26,7 @@ from runner.claude_web import claude_runner
 from runner.characters import NeedsConfirm
 from runner.media import MediaError, MediaInUse
 from runner import license as licensing
-from runner.store import Store
+from runner.store import DEFAULT_BUDGET, Store
 from runner.instance import InstanceLock
 from runner.paths import data_root, frozen, resource_root
 from runner.version import APP_VERSION
@@ -767,8 +767,8 @@ class Handler(BaseHTTPRequestHandler):
                                                              body.get("output", ""), body.get("job_id")))
             elif path == "/api/accounts":
                 if "emails" in body:
-                    return self.reply({"ok": True, **store.add_accounts(body["emails"], body["budget"])})
-                store.add_account(body["email"], body.get("mailbox", ""), body["budget"])
+                    return self.reply({"ok": True, **store.add_accounts(body["emails"], body.get("budget", DEFAULT_BUDGET))})
+                store.add_account(body["email"], body.get("mailbox", ""), body.get("budget", DEFAULT_BUDGET))
             elif path == "/api/accounts/login-all":
                 return self.reply({"ok": True, "count": engine.login_all(body.get("parallel", 2))})
             elif path == "/api/accounts/delete":
@@ -787,7 +787,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"ok": True, **engine.health.check_all()})
             elif path == "/api/accounts/update":
                 with engine.lock:
-                    store.configure_account(body["id"], body["enabled"], body["budget"])
+                    store.configure_account(body["id"], body["enabled"], body["budget"], body.get("threads"))
             elif path == "/api/login":
                 engine.login(body["id"])
             elif path == "/api/review":
@@ -923,6 +923,14 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Email Google không hợp lệ.")
                 store.save_setting("gemini_web_email", email[:254])
                 store.save_setting("gemini_web_model", str(body.get("model") or "").strip()[:40])
+            elif path == "/api/content/export-xlsx":
+                folder = self.server.data_dir / "exports"
+                folder.mkdir(parents=True, exist_ok=True)
+                target = folder / "kich-ban.xlsx"
+                content.script_workbook(body.get("scenes"), body.get("windows") if isinstance(body.get("windows"), list) else None,
+                                        str(body.get("script") or "")[:40000], target)
+                return self.send_file(target, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                      "attachment", "kich-ban.xlsx", cache_control="no-store")
             elif path == "/api/content/web-run":
                 kind = "review" if body.get("kind") == "review" else "generate"
                 from runner.gemini_web import VIDEO_LIMIT, VIDEO_TYPES

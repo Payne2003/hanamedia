@@ -12,7 +12,7 @@ from pathlib import Path
 from app import AppServer
 from runner import video_tools
 from runner.engine import Engine
-from runner.muse import compose_request
+from runner.muse import INDEPENDENT, compose_request
 from runner.store import Store, video_options
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"fixture"
@@ -46,7 +46,8 @@ class OptionsTests(unittest.TestCase):
         self.assertEqual(spec, "Thông số video: tỉ lệ khung 16:9, thời lượng 8 giây, độ phân giải 4K (Ultra HD, 3840×2160).")
         message = compose_request("Dê leo vách đá", "job1", True, spec)
         self.assertEqual(message.split("\n\n"), ["Tạo video dựa trên các ảnh tham chiếu đã đính kèm theo yêu cầu sau và trả "
-                                                 "về file video để tải xuống:", "Dê leo vách đá", spec, "Mã tác vụ: job1"])
+                                                 "về file video để tải xuống:", "Dê leo vách đá", spec, INDEPENDENT,
+                                                 "Mã tác vụ: job1"])
         self.assertNotIn("Thông số", compose_request("x", "j"))  # không chọn thông số: gửi như trước
         self.assertEqual(video_tools.request_spec("", 0, ""), "")
 

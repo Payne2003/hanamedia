@@ -21,7 +21,20 @@ from .video_tools import VideoError, needs_upscale, probe, size_for, stitch, tar
 from .video_tools import request_spec
 
 
+NETWORK_ERRORS = ("ERR_INTERNET_DISCONNECTED", "ERR_NETWORK_CHANGED", "ERR_NAME_NOT_RESOLVED", "ERR_PROXY_CONNECTION_FAILED",
+                  "ERR_CONNECTION_RESET", "ERR_CONNECTION_CLOSED", "ERR_CONNECTION_TIMED_OUT", "ERR_CONNECTION_REFUSED",
+                  "ERR_ADDRESS_UNREACHABLE", "ERR_TIMED_OUT", "ERR_NETWORK_ACCESS_DENIED", "ERR_TUNNEL_CONNECTION_FAILED")
+
+
+def network_error(error):
+    """Lỗi do mất mạng / đổi mạng (không phải do Muse hay Chrome)."""
+    text = f"{type(error).__name__} {error}"
+    return any(code in text for code in NETWORK_ERRORS)
+
+
 class Engine:
+    NETWORK_WAIT = 30  # giây chờ sau khi mất mạng rồi mới giao tác vụ tiếp
+
     def __init__(self, store, data):
         self.store, self.data = store, Path(data)
         self.flow_profile = default_chrome_profile(self.data)
@@ -41,6 +54,10 @@ class Engine:
         self.threads = set()
         self.review_stops = {}
         self.browsers = {}
+        self.account_locks = {}
+        from .power import KeepAwake
+        self.awake = KeepAwake()  # máy không tự ngủ khi đang tạo video (chỉ gọi từ luồng supervise)
+        self.network_pause = 0.0  # mất mạng (đổi VPN, rớt Wi-Fi): tạm không giao tác vụ mới tới thời điểm này  # mở Chrome / đăng nhập / mở tab của một tài khoản: mỗi lúc một luồng
         self.login_all_status = ""
         self.login_all_running = False
         self.flow_downloads = self.data / "flow-downloads"
@@ -273,7 +290,16 @@ class Engine:
         planned = 0.0
         while not self.closing:
             with self.lock:
-                pair = self.store.claim(self.limit) if self.enabled and self.license_ok() else None
+                working = bool(self.threads) or self.enabled
+            if working and not self.threads:
+                try:
+                    working = self.store.has_waiting()  # bộ chạy bật và còn prompt chờ (vd đang chờ mạng): vẫn giữ máy thức
+                except Exception:
+                    pass
+            self.awake.set(working)
+            with self.lock:
+                pair = (self.store.claim(self.limit) if self.enabled and self.license_ok()
+                        and time.monotonic() >= self.network_pause else None)
                 if pair:
                     self.launch(self.work, *pair, self.headless, self.store.setting("output_folder"), self.automatic)
             if not pair and not self.enabled and self.auto_plan and time.monotonic() - planned > 3:
@@ -309,25 +335,116 @@ class Engine:
             except Exception:
                 return False
 
+    def account_lock(self, account_id):
+        with self.lock:
+            return self.account_locks.setdefault(account_id, threading.Lock())
+
     def session(self, job, account, headless, target):
-        """Phiên Muse cho tác vụ: dùng lại Chrome đang mở của tài khoản nếu còn sống, kiểm tra phiên trước khi gửi,
-        chỉ đăng nhập lại khi phiên đã mất. Một tài khoản chỉ có một Chrome; tài khoản đang 'busy' nên chỉ thread này dùng nó."""
+        """Phiên Muse cho tác vụ. Một tài khoản chỉ có một Chrome; tài khoản chạy nhiều luồng thì mỗi tác vụ một TAB riêng
+        trong Chrome đó (TabRouter). Mở Chrome / đăng nhập / mở tab của cùng tài khoản lần lượt từng luồng."""
+        lock = self.account_lock(account["id"])
+        with lock:
+            root = self.root_session(job, account, headless, target)
+            router = getattr(root, "router", None)
+            if router is None:
+                return root
+            try:
+                handle, fresh = router.acquire()
+            except Exception:
+                return root
+            import copy
+            tab = copy.copy(root)  # tab riêng: phase/url/thư mục tải của tác vụ này, dùng chung Chrome và router
+            tab.phase = lambda value, job_id=job["id"]: self.store.phase(job_id, value)
+            tab.url_seen = MuseBrowser.url_seen
+            tab.root = root
+            tab.owns_tab = True
+            if fresh or not tab.session_ready():
+                self.store.phase(job["id"], "Mở tab Muse mới cho luồng này")
+                try:
+                    tab.new_chat()
+                except Exception:
+                    pass
+                if not tab.session_ready():
+                    tab.login(account)
+            elif hasattr(tab, "new_chat") and not getattr(root, "just_logged_in", False):
+                self.store.phase(job["id"], "Mở cuộc trò chuyện Muse mới")
+                tab.new_chat()
+                if not tab.session_ready():
+                    tab.login(account)
+            root.just_logged_in = False
+            return tab
+
+    def release_tab(self, browser):
+        """Tác vụ xong: trả tab cho tác vụ sau (Chrome vẫn mở)."""
+        if browser is not None and getattr(browser, "owns_tab", False):
+            browser.owns_tab = False
+            try:
+                browser.router.release()
+            except Exception:
+                pass
+
+    def drop_browser(self, account_id, browser):
+        """Phiên hỏng: đóng Chrome của tài khoản — trừ khi tab khác của tài khoản vẫn đang chạy (chỉ trả tab)."""
+        root = getattr(browser, "root", browser)
+        router = getattr(root, "router", None)
+        if router is not None and getattr(browser, "owns_tab", False) and router.active() > 1:
+            self.release_tab(browser)
+            return
+        self.release_tab(browser)
+        with self.lock:
+            if self.browsers.get(account_id) is root:
+                self.browsers.pop(account_id)
+        root.close()
+
+    @staticmethod
+    def attach_router(browser):
+        """Gắn TabRouter (nhiều tab trong một Chrome). Driver giả lập trong kiểm thử: bỏ qua, chạy một tab như cũ."""
+        try:
+            from .tabs import TabRouter
+            from selenium.webdriver.remote.webdriver import WebDriver
+            if isinstance(browser.driver, WebDriver):
+                browser.router = TabRouter(browser.driver)
+                return True
+        except Exception:
+            pass
+        browser.router = None
+        return False
+
+    def root_session(self, job, account, headless, target):
+        """Chrome của tài khoản (dùng lại nếu còn sống, không thì mở mới và đăng nhập)."""
         phase = lambda value, job_id=job["id"]: self.store.phase(job_id, value)
         with self.lock:
             browser = self.browsers.get(account["id"])
+        if browser is not None and getattr(browser, "router", None) is not None and browser.router.active():
+            try:
+                if browser.driver.window_handles:
+                    return browser  # tab khác đang chạy và Chrome còn sống: không chen vào kiểm tra phiên
+            except Exception:
+                pass  # người dùng đã đóng cả Chrome: mở Chrome mới bên dưới
         if browser is not None and not self.alive(browser):
             with self.lock:
                 if self.browsers.get(account["id"]) is browser:
                     self.browsers.pop(account["id"])
             browser.close()
             browser = None
+        if browser is not None and getattr(browser, "router", None) is None:
+            self.attach_router(browser)  # Chrome mở từ nút Đăng nhập / Kiểm tra: gắn bộ chia tab trước khi chạy
         if browser is None:
             browser = MuseBrowser(self.data / "profiles" / account["id"], target, headless, phase)
+            if self.attach_router(browser):
+                browser.router.acquire()  # tab đầu tiên: đăng nhập trên tab này
             with self.lock:
                 self.browsers[account["id"]] = browser
             browser.phase = phase
-            browser.login(account)
+            try:
+                browser.login(account)
+                browser.just_logged_in = True
+            finally:
+                if getattr(browser, "router", None) is not None:
+                    browser.router.release()  # session() gắn lại tab này cho tác vụ
             return browser
+        if getattr(browser, "router", None) is not None:
+            return browser  # nhiều tab: session() tự kiểm tra phiên trên tab của tác vụ
         browser.phase = phase
         self.store.phase(job["id"], "Kiểm tra phiên Muse")
         try:
@@ -368,7 +485,11 @@ class Engine:
             message = str(error) if known else (
                 f"Bộ chạy gặp lỗi Chrome/trang Muse ({technical}). Chi tiết trong data/logs/runner.log; không tự gửi lại.")
             if known and getattr(error, "region", False):
-                self.store.set_video_blocked(account["id"])  # không giao prompt cho tài khoản này nữa
+                # Muse không tạo video cho tài khoản này ở khu vực của nó: chuyển prompt (và mọi prompt đang chờ) sang
+                # tài khoản khác; không giao prompt cho tài khoản này nữa.
+                if self.store.reassign_blocked(job["id"], account["id"]):
+                    return
+                self.store.set_video_blocked(account["id"])
             dead = not known and any(t in f"{type(error).__name__} {error}" for t in (
                 "NoSuchWindow", "InvalidSessionId", "invalid session id", "not connected to DevTools",
                 "target window already closed", "web view not found", "chrome not reachable"))
@@ -379,19 +500,23 @@ class Engine:
                     session_ready = browser.session_ready()
                 except Exception:
                     session_ready = False
-            if browser and not session_ready:
-                with self.lock:
-                    if self.browsers.get(account["id"]) is browser:
-                        self.browsers.pop(account["id"])
-                browser.close()
             if alive:
                 try:
                     self.store.set_source(job["id"], browser.driver.current_url)  # để "Lấy video" sau này
                 except Exception:
                     pass
+            if browser and not session_ready:
+                self.drop_browser(account["id"], browser)
+                browser = None
             account_state = error.state if known else "ready"
             if alive and not session_ready:
                 account_state = "attention"  # Chrome còn mở nhưng Muse đã đăng xuất: cần người dùng đăng nhập lại
+            # Mất mạng TRƯỚC khi gửi: không tính là một lần thử (không đốt hết lượt tự chạy lại), chờ mạng rồi chạy tiếp.
+            if not known and network_error(error):
+                self.network_pause = time.monotonic() + self.NETWORK_WAIT
+                if self.store.requeue_unsent(job["id"], "Mất kết nối mạng; tự chạy lại khi có mạng (prompt chưa gửi)",
+                                             account_state, count=False):
+                    return
             # Chrome bị đóng / treo: lần sau mở Chrome mới, KHÔNG dừng tài khoản.
             if not known and self.store.requeue_unsent(job["id"], f"lỗi Chrome trước khi gửi ({technical})", account_state):
                 return
@@ -399,6 +524,8 @@ class Engine:
             if not known and automatic and not alive and self.recover_after_crash(job, account, headless, target, folder):
                 return
             self.store.finish(job["id"], error=message, account_state=account_state)
+        finally:
+            self.release_tab(browser)
 
     def download_dir(self, job):
         """Thư mục tạm Chrome tải về, nằm trong dữ liệu app (không hiện trong thư mục lưu của người dùng)."""
@@ -451,6 +578,7 @@ class Engine:
         if state.get("status") != "running" or not state.get("submitted") or not url.startswith("https://") \
                 or url.rstrip("/").endswith(("muse.ai", "muse.ai/")) or self.closing:
             return False
+        browser = None
         try:
             self.store.phase(job["id"], "Chrome bị đóng sau khi gửi; mở lại cuộc trò chuyện để lấy video (không gửi lại)")
             browser = self.session(job, account, headless, target)
@@ -464,6 +592,8 @@ class Engine:
         except Exception as again:
             self.log_failure(job, account, MuseFailure(f"Không lấy lại được video sau khi Chrome bị đóng: {again}"))
             return False
+        finally:
+            self.release_tab(browser)
 
     CHASE_ATTEMPTS = 10  # ~25 phút tự kiểm tra thêm sau khi hết thời gian chờ
     chase_wait = 60
@@ -513,11 +643,11 @@ class Engine:
             message = str(error) if isinstance(error, MuseFailure) else (
                 f"Không lấy được video ({self.log_error(job, account, error)}). Bấm ⇩ Lấy video lần nữa.")
             if browser and not self.alive(browser):
-                with self.lock:
-                    if self.browsers.get(account["id"]) is browser:
-                        self.browsers.pop(account["id"])
-                browser.close()
+                self.drop_browser(account["id"], browser)
+                browser = None
             self.store.finish(job["id"], error=message, account_state="ready")
+        finally:
+            self.release_tab(browser)
 
     def log_failure(self, job, account, error):
         """Lỗi đã có thông báo (MuseFailure): ghi một dòng vào runner.log (giai đoạn + lời nhắn; không prompt/OTP)."""
@@ -704,6 +834,7 @@ class Engine:
     def snapshot(self):
         with self.lock:
             return {"enabled": self.enabled, "parallel": self.limit, "max_parallel": self.max_parallel,
+                    "keep_awake": self.awake.on,
                     "hardware": {**self.hardware, "gpu": hardware.ENCODERS[self.gpu_name][0] if self.gpu_name else None,
                                  "gpu_enabled": self.store.setting("gpu_encode", True) is not False}, "headless": self.headless, "automatic": self.automatic,
                     "output_folder": self.store.setting("output_folder", ""), "flow_status": self.flow_status,

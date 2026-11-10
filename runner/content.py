@@ -12,7 +12,7 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-20"
+VERSION = "content-21"
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")
@@ -20,15 +20,16 @@ FIELD_NAMES = {"setting": "bối cảnh", "camera": "góc quay", "behavior": "h�
                "action": "nội dung hành động nhân vật"}
 LANGUAGES = {"vi": "tiếng Việt", "en": "tiếng Anh (English)"}
 
-DEFAULT_SECONDS = 15  # Thời lượng mặc định của mỗi cảnh / mỗi video.
+DEFAULT_SECONDS = 10  # Thời lượng mặc định của mỗi cảnh / mỗi video (một clip Muse).
 SECONDS_CHOICES = (5, 8, 10, 15)
 
 SCENE_RULES = f"""Quy tắc cho từng cảnh:
-- Mỗi cảnh là một shot liền mạch, đủ để AI video tạo trong khoảng {DEFAULT_SECONDS} giây.
+- Mỗi cảnh dài {DEFAULT_SECONDS} giây (một clip AI video); trong {DEFAULT_SECONDS} giây đó có thể có nhiều góc máy.
 - Chia đủ cảnh theo đúng thứ tự thời gian, không bỏ sót đoạn nào của video.
 - Mỗi cảnh phải tự đứng được: lặp lại ngoại hình nhân vật, trang phục, địa điểm để các cảnh nhất quán.
 - Trường "setting": bối cảnh (địa điểm, thời gian, ánh sáng, đạo cụ, nhân vật trông như thế nào).
-- Trường "camera": góc quay và chuyển động máy (cận cảnh, toàn cảnh, lia, đẩy, theo chân…).
+- Trường "camera": liệt kê TỪNG góc máy theo mốc giây tính từ đầu cảnh, ít nhất 3 mốc, dạng "0–3s: …; 3–6s: …; 6–10s: …";
+  mỗi góc ghi cỡ cảnh (toàn/trung/cận/đặc tả), góc máy (ngang tầm/thấp/cao/trên cao), chuyển động máy (tĩnh/lia/bám theo/đẩy/zoom) và chủ thể trong khung.
 - Trường "behavior": hành vi, biểu cảm, tư thế của nhân vật.
 - Trường "action": nội dung hành động diễn ra trong cảnh; ghi lời thoại trong ngoặc kép nếu có.
 - Không đưa tên người thật/người nổi tiếng, logo, thương hiệu, chữ trên màn hình; mô tả bằng đặc điểm chung.
@@ -132,6 +133,136 @@ def shot_section(shots, duration=0):
             f"Viết ĐÚNG {len(shots)} cảnh: Bối cảnh 1 = Shot 1, Bối cảnh 2 = Shot 2 … Bối cảnh {len(shots)} = Shot {len(shots)}. "
             "Mỗi shot đúng một dòng cảnh, đúng thứ tự thời gian; không gộp shot, không bỏ shot nào kể cả shot rất ngắn. "
             "Mô tả đúng những gì thấy trong khoảng thời gian của shot đó.")
+
+
+def clock(seconds):
+    seconds = max(0.0, float(seconds))
+    return f"{int(seconds // 60):02d}:{seconds % 60:04.1f}"
+
+
+def scene_windows(shots, duration, seconds=DEFAULT_SECONDS):
+    """Chia video thành các cảnh `seconds` giây (cảnh cuối ngắn dưới 2 giây gộp vào cảnh trước). Mỗi cảnh kèm các góc
+    máy FFmpeg đo được bên trong, tính bằng giây từ đầu cảnh: [{"start","end","angles":[(a, b), …]}]."""
+    import math
+    shots = list(shots or [])
+    duration = float(duration or (shots[-1]["end"] if shots else 0))
+    if duration <= 0:
+        return []
+    count = max(1, math.ceil(duration / seconds - 0.2))
+    windows = []
+    for index in range(min(count, MAX_SCENES)):
+        start = index * seconds
+        end = duration if index == count - 1 else (index + 1) * seconds
+        inside = [s for s in shots if s["end"] > start + 0.15 and s["start"] < end - 0.15]
+        angles = [(round(max(s["start"], start) - start, 1), round(min(s["end"], end) - start, 1)) for s in inside]
+        windows.append({"start": round(start, 2), "end": round(end, 2), "angles": angles or [(0.0, round(end - start, 1))]})
+    return windows
+
+
+def needed_marks(window):
+    length = window["end"] - window["start"]
+    return max(len(window["angles"]), 3 if length >= 6 else 2 if length >= 3 else 1)
+
+
+def scene_section(windows, duration=0, sheets=0):
+    """Bảng cảnh 10 giây cho Gemini: mốc thời gian và các góc máy FFmpeg đo được trong từng cảnh."""
+    if not windows:
+        return ""
+    fmt = lambda value: f"{value:g}"
+    rows = []
+    for number, window in enumerate(windows, 1):
+        angles = " | ".join(f"{fmt(a)}–{fmt(b)}s" for a, b in window["angles"])
+        rows.append(f"Cảnh {number} ({clock(window['start'])}–{clock(window['end'])}) · {len(window['angles'])} góc máy "
+                    f"đo được: {angles}")
+    text = (f"BẢNG CẢNH {DEFAULT_SECONDS} GIÂY (FFmpeg đo điểm cắt trên từng khung hình của file video"
+            f"{f', dài {clock(duration)}' if duration else ''}): {len(windows)} cảnh.\n" + "\n".join(rows) + "\n"
+            f"Viết ĐÚNG {len(windows)} cảnh: Bối cảnh 1 = Cảnh 1 … Bối cảnh {len(windows)} = Cảnh {len(windows)}, mỗi cảnh "
+            "mô tả đúng khoảng thời gian của nó.\n"
+            "Trường góc quay: liệt kê từng góc máy theo ĐÚNG các mốc giây ở bảng (tính từ đầu cảnh), dạng "
+            "\"0–2.4s: …; 2.4–6.1s: …\"; mỗi góc ghi cỡ cảnh, góc máy, chuyển động máy và chủ thể trong khung. Cảnh có "
+            "ít hơn 3 góc máy đo được thì chia tiếp theo chuyển động máy hoặc hành động thành nhịp 2–4 giây (ghi "
+            "\"cùng góc\") để mỗi cảnh có ít nhất 3 mốc. Bối cảnh, hành vi và hành động nhân vật: đúng những gì xảy ra "
+            "trong cảnh, hành động theo thứ tự các mốc giây.")
+    if sheets:
+        text += (f"\nẢNH KHUNG HÌNH ĐÍNH KÈM ({sheets} ảnh, tool trích bằng FFmpeg): mỗi hàng là một cảnh theo thứ tự từ "
+                 "trên xuống (tiếp nối giữa các ảnh), mỗi ô từ trái sang phải là một góc máy theo thứ tự mốc giây, ô đen "
+                 "là không có góc. Dùng ảnh để xác định đúng cỡ cảnh, góc máy, bối cảnh và nhân vật.")
+    return text
+
+
+SEGMENT = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:s|giây)?\s*[–—-]\s*(\d+(?:[.,]\d+)?)\s*(?:s\b|giây)", re.IGNORECASE)
+
+
+def camera_problem(camera, window):
+    """Reference Analyst: góc quay của cảnh có đủ mốc giây, khớp các điểm cắt đo được và phủ hết cảnh không."""
+    marks = [(float(a.replace(",", ".")), float(b.replace(",", "."))) for a, b in SEGMENT.findall(str(camera or ""))]
+    length = window["end"] - window["start"]
+    need = needed_marks(window)
+    if len(marks) < need:
+        return f"góc quay mới có {len(marks)} mốc giây, cần ít nhất {need}"
+    cuts = [a for a, _ in window["angles"][1:]]
+    missing = [c for c in cuts if not any(abs(start - c) <= 0.7 for start, _ in marks)]
+    if missing:
+        return "thiếu góc máy bắt đầu tại " + ", ".join(f"{c:g}s" for c in missing)
+    if abs(max(end for _, end in marks) - length) > 1.0:
+        return f"mốc cuối phải tới {length:g}s"
+    return ""
+
+
+def script_workbook(scenes, windows=None, script="", target=None):
+    """Xuất kịch bản ra Excel: mỗi cảnh một dòng (thời gian, số góc máy đo được, góc quay, bối cảnh, hành vi, hành động)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    scenes = clean_scenes(scenes)
+    windows = list(windows or [])
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Kịch bản"
+    sheet.append(["Cảnh", "Bắt đầu", "Kết thúc", "Số góc máy đo được", "Góc quay", "Bối cảnh", "Hành vi nhân vật",
+                  "Nội dung hành động nhân vật"])
+    for number, scene in enumerate(scenes, 1):
+        window = windows[number - 1] if number <= len(windows) else None
+        sheet.append([number, clock(window["start"]) if window else "", clock(window["end"]) if window else "",
+                      len(window["angles"]) if window else "", scene["camera"], scene["setting"], scene["behavior"],
+                      scene["action"]])
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="5B4BDB")
+    for column, width in zip("ABCDEFGH", (7, 10, 10, 12, 60, 50, 40, 60)):
+        sheet.column_dimensions[column].width = width
+    for row in sheet.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+    sheet.freeze_panes = "A2"
+    if script:
+        extra = book.create_sheet("Kịch bản gốc")
+        extra.column_dimensions["A"].width = 120
+        for line in str(script).splitlines():
+            extra.append([line])
+    book.save(target)
+    return target
+
+
+def numbered_scenes(text):
+    """{số cảnh: cảnh} từ câu trả lời (dùng khi Gemini viết lại vài cảnh)."""
+    text = re.sub(r"(?<=\S)[ \t]*(?=b[ốo]i\s*c[ảa]nh\s*\d+\s*[:：])", "\n", str(text or ""), flags=re.IGNORECASE)
+    found = {}
+    for raw in text.split("\n"):
+        line = re.sub(r"[*_#`>|]+", "", raw).strip()
+        match = SCENE_LINE.search(line)
+        if match:
+            found[int(match.group(1))] = {field: clean_text(match.group(field)) for field in FIELDS}
+    return found
+
+
+def fix_cameras_request(problems, windows):
+    """Nhờ Gemini viết lại đúng những cảnh có góc quay chưa khớp điểm cắt."""
+    fmt = lambda value: f"{value:g}"
+    rows = [f"Bối cảnh {n} ({clock(windows[n - 1]['start'])}–{clock(windows[n - 1]['end'])}): {problem}. Góc máy đo được: "
+            + " | ".join(f"{fmt(a)}–{fmt(b)}s" for a, b in windows[n - 1]["angles"]) for n, problem in sorted(problems.items())]
+    return ("Kiểm tra liên tục: các cảnh dưới đây có góc quay chưa khớp điểm cắt FFmpeg đo được. Xem lại video đúng khoảng "
+            "thời gian đó và viết lại ĐÚNG các cảnh này (giữ nguyên số cảnh), cùng định dạng một dòng mỗi cảnh, góc quay "
+            "liệt kê từng mốc giây tính từ đầu cảnh:\n" + "\n".join(rows))
 
 
 def web_prompt(kind, brief, video_url="", language="vi", scenes=None, attached=False):
