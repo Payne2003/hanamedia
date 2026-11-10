@@ -268,6 +268,7 @@ $('downloadContentJson').onclick=()=>saveBlob(new Blob([JSON.stringify({original
 $('downloadContentXlsx').onclick=async()=>{try{const r=await fetch('/api/content/export-xlsx',{method:'POST',headers:{'Content-Type':'application/json','X-Runner-Key':key},body:JSON.stringify({scenes:content.scenes,windows:content.windows,script:content.script,subjects:content.scenes.map(s=>s.subjects||'')})});if(!r.ok)throw Error((await r.json()).error||'Không xuất được Excel.');saveBlob(await r.blob(),'kich-ban.xlsx');}catch(error){toast(error.message,true);}};
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
+  if(view==='community')view='studio';  // mục Cộng đồng đã bỏ
   const isProduction=view==='production',isContent=view==='content',isSettings=view==='settings',isMedia=view==='media',isCommunity=view==='community',isLicense=view==='license';
   $('productionView').hidden=!isProduction;if(isProduction)loadProduction();
   $('jobView').hidden=true;$('studioView').hidden=isProduction||isContent||isSettings||isMedia||isCommunity||isLicense;$('communityView').hidden=!isCommunity;$('licenseView').hidden=!isLicense;$('contentView').hidden=!isContent;$('settingsView').hidden=!isSettings;$('mediaView').hidden=!isMedia;

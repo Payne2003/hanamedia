@@ -18,13 +18,13 @@
       <button type="button" data-nav="media" id="openLibrary"><i>▧</i>Thư viện Video &amp; Ảnh</button>
       <button type="button" id="accountsButton"><i>♙</i>Tài khoản Muse <b id="accountCount" class="nav-badge">0</b></button>
       <button type="button" data-nav="license" id="navLicense"><i>🔑</i>Bản quyền</button>
-      <button type="button" data-nav="community" id="navCommunity"><i>👥</i>Cộng đồng</button>
+      <button type="button" data-nav="community" id="navCommunity" hidden><i>👥</i>Cộng đồng</button>
       <button type="button" data-nav="settings" id="navSettings"><i>⚙</i>Cài đặt</button>
     </nav>
     <div class="sidebar-foot"><span id="connection" class="connection">Đang kết nối…</span><span class="running-pill"><i></i><b id="headerRuns">0</b> luồng đang chạy</span><span id="sideRole" class="side-role" hidden></span><small id="appVersion">v1.0.0</small></div>
   </aside>
   <div class="app-main">
-  <div class="support-bar" role="region" aria-label="Hỗ trợ">
+  <div class="support-bar" role="region" aria-label="Hỗ trợ" hidden>
     <span id="supportQrSlot" class="support-qr" title="Mã QR"><img id="supportQr" alt="Mã QR" hidden><span id="supportQrEmpty">QR</span></span>
     <span class="support-text">☕ <b id="supportMessage">Mời cafe HANA MEDIA</b> <span class="support-sep">·</span> Hỗ trợ: <b id="supportPhone">0983105651</b></span>
     <button type="button" id="copySupportPhone" class="support-copy">📋 Sao chép SĐT</button>
@@ -217,7 +217,7 @@
       </div>
     </section>
     <section id="settingsView" class="settings-page" hidden>
-      <div class="content-topbar"><h1>Cài đặt</h1><span class="crumb">/</span><span class="detail">Đăng nhập các tài khoản tool cần dùng. Tool không đọc hay lưu mật khẩu.</span></div>
+      <div class="settings-hero"><div><span class="eyebrow">HANA MEDIA</span><h1>Cài đặt</h1><p>Kết nối AI, tài khoản Muse và thư mục lưu video. Tool không đọc hay lưu mật khẩu.</p></div><span class="settings-hero-art" aria-hidden="true">⚙</span></div>
       <div class="settings-grid-v2">
         <div class="card settings-card shared-card"><div class="settings-head"><span class="settings-icon">★</span><div><h3>Tài khoản chung</h3><small>Một tài khoản Google có đủ Gemini và ChatGPT (đăng nhập bằng Google)</small></div><span id="sharedBadge" class="status-chip">Đang tắt</span></div>
           <label class="check shared-toggle"><input id="sharedAccount" type="checkbox"><span>Dùng một tài khoản cho Gemini và ChatGPT<small>Hai phần dùng chung một hồ sơ Chrome của tool, nên chỉ đăng nhập một lần. Mỗi lúc chỉ một phần mở Chrome: phần đang rảnh sẽ được đóng để phần khác dùng. Muse vẫn đăng nhập riêng bằng email + OTP.</small></span></label>
