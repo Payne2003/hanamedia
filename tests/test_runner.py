@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from unittest.mock import patch
 import uuid
 
@@ -44,31 +45,31 @@ class StoreTests(unittest.TestCase):
         engine = Engine(self.store, self.root / "data")
         try:
             out = self.root / "out"
-            for name in ("1.mp4", "1 (2).mp4"):
-                (out).mkdir(exist_ok=True)
+            out.mkdir()
+            for name in ("1.mp4", "1 (2).mp4", "khac.mp4"):
                 (out / name).write_bytes(b"old")
-            target = out / "huy-abc"
-            target.mkdir()
-            download = target / "muse-download.mp4"
+            # Chrome tải THẲNG vào thư mục lưu đã chọn: không tạo thư mục con nào.
+            self.assertEqual(engine.download_dir({"id": "abc"}, str(out)), out)
+            download = out / "muse-download.mp4"
             download.write_bytes(b"new")
-            final = engine.place({"ordinal": 0}, target, download)
+            final = engine.place({"ordinal": 0, "folder": "Bị bỏ qua"}, out, download, str(out))
             self.assertEqual(final, out / "1 (3).mp4")
             self.assertEqual(final.read_bytes(), b"new")
             self.assertEqual((out / "1.mp4").read_bytes(), b"old")  # không ghi đè video của lượt trước
-            self.assertFalse(target.exists())  # thư mục tạm trống đã được xóa
-            target.mkdir(); (target / "2.mp4.crdownload").write_bytes(b"x")
-            other = target / "b.mp4"; other.write_bytes(b"two")
-            self.assertEqual(engine.place({"ordinal": 1}, target, other), out / "2.mp4")
-            self.assertTrue(target.exists())  # còn file khác: giữ thư mục tạm
-            # Tải vào thư mục tạm trong dữ liệu app → chỉ giữ 1 video trong thư mục dự án, xóa sạch thư mục tạm.
+            self.assertEqual((out / "khac.mp4").read_bytes(), b"old")  # không đụng tới file khác trong thư mục
+            self.assertEqual(sorted(p.name for p in out.iterdir() if p.is_dir()), [])
+            # Video còn nằm ở thư mục tạm (ổ khác): chuyển được sang thư mục lưu; chỉ xóa thư mục tạm khi video đã ra ngoài.
             temp = engine.download_dir({"id": "xyz"})
             self.assertTrue(str(temp).startswith(str(self.root / "data")))
-            (temp / "extra.mp4").write_bytes(b"dup"); video = temp / "muse.mp4"; video.write_bytes(b"one")
-            final = engine.place({"ordinal": 4, "folder": "Dê núi"}, temp, video, out)
-            self.assertEqual(final, out / "Dê núi" / "5.mp4")
-            self.assertEqual(sorted(p.name for p in (out / "Dê núi").iterdir()), ["5.mp4"])
+            video = temp / "muse.mp4"
+            video.write_bytes(b"one")
+            self.assertEqual(engine.place({"ordinal": 4}, temp, video, str(out)), out / "5.mp4")
             self.assertFalse(temp.exists())
-            self.assertFalse(any(p.name.startswith("huy-") for p in (out / "Dê núi").iterdir()))
+            video = engine.download_dir({"id": "keep"}) / "muse.mp4"
+            video.write_bytes(b"two")
+            with mock.patch("runner.engine.shutil.move", side_effect=OSError("khác ổ")):
+                kept = engine.place({"ordinal": 5}, video.parent, video, str(out))
+            self.assertEqual((kept, kept.read_bytes()), (video, b"two"))  # chuyển lỗi: KHÔNG xóa video
         finally:
             engine.shutdown()
 

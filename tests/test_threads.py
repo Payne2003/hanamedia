@@ -23,10 +23,11 @@ class AccountThreadTests(unittest.TestCase):
     def state(self):
         return self.store.snapshot()["accounts"][0]
 
-    def test_new_account_defaults_to_two_threads_and_100_credit(self):
-        self.assertEqual((self.account["threads"], self.account["budget"]), (2, 100))
+    def test_new_account_defaults_to_one_thread_and_100_credit(self):
+        self.assertEqual((self.account["threads"], self.account["budget"]), (1, 100))
 
     def test_second_tab_only_after_first_prompt_is_sent_and_up_to_thread_count(self):
+        self.store.configure_account(self.account["id"], True, 100, 2)
         first, _ = self.store.claim(1)
         self.assertIsNone(self.store.claim(1))  # prompt 1 chưa gửi: chưa mở tab 2
         self.store.submitting(first["id"])
@@ -43,6 +44,19 @@ class AccountThreadTests(unittest.TestCase):
         self.assertEqual(self.state()["state"], "ready")
         self.assertEqual(self.state()["budget"], 97)
 
+    def test_upgrade_resets_threads_and_requeues_prompts_failed_while_muse_was_busy(self):
+        import sqlite3
+        job, _ = self.store.claim(1)
+        self.store.finish(job["id"], error="Muse đang xử lý yêu cầu trước đó. Đợi hoàn tất rồi đăng nhập lại để tiếp tục.")
+        db = sqlite3.connect(self.store.path)
+        db.execute("UPDATE accounts SET threads=2")
+        db.execute("DELETE FROM settings WHERE key='threads_reset_v1'")
+        db.commit()
+        db.close()
+        store = Store(self.store.path)  # mở lại app sau khi cập nhật
+        self.assertEqual(store.snapshot()["accounts"][0]["threads"], 1)
+        self.assertEqual([j["status"] for j in store.snapshot()["jobs"] if j["id"] == job["id"]], ["waiting"])
+
     def test_one_thread_keeps_old_behaviour(self):
         self.store.configure_account(self.account["id"], True, 50, 1)
         first, _ = self.store.claim(2)
@@ -52,6 +66,7 @@ class AccountThreadTests(unittest.TestCase):
             self.store.configure_account(self.account["id"], True, 50, 5)
 
     def test_problem_reported_by_one_tab_is_kept_when_the_other_finishes(self):
+        self.store.configure_account(self.account["id"], True, 100, 2)
         first, _ = self.store.claim(1)
         self.store.submitting(first["id"])
         second, _ = self.store.claim(1)
@@ -186,3 +201,47 @@ class KeepAwakeTests(unittest.TestCase):
             awake.set(True)  # không gọi lại khi không đổi
             awake.set(False)
         self.assertEqual(calls, [power.ES_CONTINUOUS | power.ES_SYSTEM_REQUIRED, power.ES_CONTINUOUS])
+
+
+class MuseBusyTests(unittest.TestCase):
+    def test_waits_for_previous_video_instead_of_failing(self):
+        from unittest import mock
+        from runner import muse
+        browser = muse.MuseBrowser.__new__(muse.MuseBrowser)
+        busy = [True, True, False]
+        browser.named = lambda selector, names: busy.pop(0) if busy else False
+        phases = []
+        browser.phase = phases.append
+        browser.BUSY_POLL = 0
+        with mock.patch.object(muse.time, "sleep"):
+            browser.wait_previous()
+        self.assertIn("chờ xong", phases[0])
+        browser.named = lambda selector, names: True
+        browser.BUSY_WAIT = 0
+        with self.assertRaises(muse.MuseFailure) as caught:
+            browser.wait_previous()
+        self.assertTrue(caught.exception.unsent)
+
+
+class LostVideoTests(unittest.TestCase):
+    def test_done_jobs_whose_video_was_deleted_from_temp_can_be_fetched_again(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(Path(folder) / "t.db")
+            store.add_account("a@tuan89.site", "", 100)
+            store.enqueue(["Một", "Hai"], 1, uuid.uuid4().hex)
+            lost, _ = store.claim(1)
+            store.submitting(lost["id"])
+            store.set_source(lost["id"], "https://muse.ai/chat/1")
+            store.finish(lost["id"], output=str(Path(folder) / "downloads" / lost["id"] / "video.mp4"))  # file đã bị xóa
+            kept, _ = store.claim(1)
+            store.submitting(kept["id"])
+            real = Path(folder) / "1.mp4"
+            real.write_bytes(b"x")
+            store.finish(kept["id"], output=str(real))
+            store = Store(Path(folder) / "t.db")  # mở lại app
+            store.recover()
+            jobs = {j["id"]: j for j in store.snapshot()["jobs"]}
+            self.assertEqual(jobs[lost["id"]]["status"], "error")
+            self.assertIn("Lấy video", jobs[lost["id"]]["error"])
+            self.assertEqual(jobs[kept["id"]]["status"], "done")

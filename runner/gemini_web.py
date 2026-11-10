@@ -712,7 +712,11 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
     result["scenes"] = result["scenes"][:content.MAX_SCENES]
     if windows:
         result["scenes"] = result["scenes"][:len(windows)]
+        result["subjects"] = {}
+        for answer in answers:  # dòng "Nhân vật cảnh N" của mọi lượt trả lời (lượt sau ghi đè lượt trước)
+            result["subjects"].update(content.parse_subjects(answer))
         rounds = verify_cameras(session, result, windows, status, stop, email)
+        rounds += verify_subjects(session, result, windows, status, stop, email)
         answers += [""] * rounds
     if shots and len(result["scenes"]) != min(len(shots), content.MAX_SCENES):
         unit = "cảnh 10 giây" if windows else "shot"
@@ -727,6 +731,29 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
 
 
 VERIFY_ROUNDS = 2
+
+
+def verify_subjects(session, result, windows, status, stop, email=""):
+    """AI Scene Analyzer: mỗi cảnh phải có danh sách nhân vật (tên, số lượng, vị trí); số lượng đổi giữa hai cảnh liền
+    nhau mà không ai bước vào/rời khung thì nhờ Gemini đếm lại (1 lượt). Còn lại ghi vào mục vấn đề."""
+    scenes, subjects, rounds = result["scenes"], result["subjects"], 0
+    total = len(scenes)
+    bad = content.continuity_problems(subjects, scenes, total)
+    if bad:
+        answer = session.ask(content.fix_subjects_request(bad, windows, subjects), status, stop, email,
+                             label=f"Kiểm tra liên tục nhân vật: {len(bad)} cảnh · Gemini đang đếm lại")
+        rounds += 1
+        for number, items in content.parse_subjects(answer).items():
+            if number in bad and items:
+                subjects[number] = items
+        for number, scene in content.numbered_scenes(answer).items():
+            if number in bad and 1 <= number <= total and not (windows and content.camera_problem(scene["camera"],
+                                                                                                  windows[number - 1])):
+                scenes[number - 1] = scene
+        bad = content.continuity_problems(subjects, scenes, total)
+    result["issues"] = list(result.get("issues") or []) + [f"Cảnh {n}: {p}." for n, p in sorted(bad.items())][:50]
+    result["subjects"] = [subjects.get(n, []) for n in range(1, total + 1)]  # danh sách theo thứ tự cảnh (cho giao diện)
+    return rounds
 
 
 def verify_cameras(session, result, windows, status, stop, email=""):

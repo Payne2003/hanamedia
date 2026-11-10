@@ -463,7 +463,7 @@ class Engine:
     def work(self, job, account, headless, folder, automatic):
         browser = file = None
         try:
-            target = self.download_dir(job)
+            target = self.download_dir(job, folder)
             browser = self.session(job, account, headless, target)
             browser.set_download_directory(target)
             browser.url_seen = lambda url, job_id=job["id"]: self.store.set_source(job_id, url)
@@ -484,6 +484,9 @@ class Engine:
             technical = self.log_failure(job, account, error) if known else self.log_error(job, account, error)
             message = str(error) if known else (
                 f"Bộ chạy gặp lỗi Chrome/trang Muse ({technical}). Chi tiết trong data/logs/runner.log; không tự gửi lại.")
+            if known and getattr(error, "unsent", False) and self.store.requeue_unsent(job["id"], str(error), "ready",
+                                                                                      count=False):
+                return
             if known and getattr(error, "region", False):
                 # Muse không tạo video cho tài khoản này ở khu vực của nó: chuyển prompt (và mọi prompt đang chờ) sang
                 # tài khoản khác; không giao prompt cho tài khoản này nữa.
@@ -527,42 +530,38 @@ class Engine:
         finally:
             self.release_tab(browser)
 
-    def download_dir(self, job):
-        """Thư mục tạm Chrome tải về, nằm trong dữ liệu app (không hiện trong thư mục lưu của người dùng)."""
+    def download_dir(self, job, folder=None):
+        """Chrome tải video THẲNG vào thư mục lưu người dùng đã chọn (không tạo thư mục con). Chưa chọn thư mục lưu thì
+        dùng thư mục tạm trong dữ liệu app."""
+        if folder:
+            try:
+                Path(folder).mkdir(parents=True, exist_ok=True)
+                return Path(folder)
+            except OSError:
+                pass  # thư mục lưu không ghi được (ổ rút ra…): tải tạm vào dữ liệu app
         target = self.data / "downloads" / job["id"]
-        shutil.rmtree(target, ignore_errors=True)  # bỏ file thừa của lần chạy trước: chỉ nhận video của lần này
         target.mkdir(parents=True, exist_ok=True)
         return target
 
-    @staticmethod
-    def output_dir(job, folder):
-        """Thư mục lưu / <thư mục dự án người dùng đặt>."""
-        root = Path(folder) if folder else None
-        name = str(job.get("folder") or "").strip()
-        return (root / name) if root and name else root
-
     def place(self, job, target, file, folder=None):
-        """Video tải xong: chỉ giữ đúng 1 video của prompt, đặt vào thư mục lưu (hoặc thư mục dự án), tên theo số
-        thứ tự prompt (1.mp4, 2.mp4…), rồi xóa sạch thư mục tạm. Không ghi đè: tên đã có thì thêm " (2)", " (3)"…"""
-        root = self.output_dir(job, folder) or Path(target).parent
+        """Video tải xong nằm trong thư mục lưu: đổi tên theo số thứ tự prompt (1.mp4, 2.mp4…) ngay tại chỗ. Không ghi đè
+        (tên đã có thì thêm " (2)", " (3)"…) và KHÔNG BAO GIỜ xóa video: đổi tên/chuyển không được thì giữ nguyên file."""
+        file = Path(file)
+        root = Path(folder) if folder and Path(folder).is_dir() else file.parent  # thư mục lưu đã được tạo khi tải
         number = job["ordinal"] + 1
-        root.mkdir(parents=True, exist_ok=True)
         with self.place_lock:
             final, copy = root / f"{number}.mp4", 2
             while final.exists() and final != file:
                 final, copy = root / f"{number} ({copy}).mp4", copy + 1
             if file != final:
                 try:
-                    os.replace(file, final)
+                    shutil.move(str(file), str(final))  # khác ổ đĩa (C: → D:) vẫn chuyển được
                 except OSError:
-                    final = file  # video đã tải về: giữ tên/chỗ cũ chứ không báo lỗi tác vụ
-        if Path(target).resolve().is_relative_to((self.data / "downloads").resolve()):
-            shutil.rmtree(target, ignore_errors=True)  # thư mục tạm của app: xóa cả file thừa (chỉ giữ 1 video)
-        else:
-            try:
-                Path(target).rmdir()
-            except OSError:
-                pass
+                    final = file  # giữ video ở chỗ cũ, không báo lỗi tác vụ
+        temp = Path(target)
+        if temp != root and temp.resolve().is_relative_to((self.data / "downloads").resolve()) \
+                and not Path(final).resolve().is_relative_to(temp.resolve()):
+            shutil.rmtree(temp, ignore_errors=True)  # chỉ xóa thư mục tạm khi video đã nằm ngoài nó
         return final
 
     def complete(self, job, target, file, folder=None):
@@ -631,7 +630,7 @@ class Engine:
     def fetch_work(self, job, account, headless, folder):
         browser = None
         try:
-            target = self.download_dir(job)
+            target = self.download_dir(job, folder)
             browser = self.session(job, account, headless, target)
             browser.set_download_directory(target)
             file = browser.fetch_existing(job["id"], job["source_url"])

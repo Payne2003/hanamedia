@@ -83,8 +83,9 @@ ACCOUNT_COLUMNS = {
     # 1 = Muse báo tài khoản không dùng được tính năng tạo video ở khu vực của nó: không giao prompt nữa (kể cả sau
     # khi đăng nhập lại) cho tới khi người dùng tự bỏ đánh dấu.
     "video_blocked": "INTEGER NOT NULL DEFAULT 0",
-    # Số luồng (tab) chạy cùng lúc trên một tài khoản: mỗi luồng một tác vụ, chung một Chrome. Mặc định 2.
-    "threads": "INTEGER NOT NULL DEFAULT 2",
+    # Số luồng (tab) chạy cùng lúc trên một tài khoản. Mặc định 1: Muse chỉ nhận một yêu cầu mỗi lúc trên một tài khoản
+    # (mọi prompt chung một cuộc trò chuyện) — luồng 2 chỉ gửi ngay khi luồng 1 vừa xong.
+    "threads": "INTEGER NOT NULL DEFAULT 1",
 }
 THREAD_CHOICES = (1, 2, 3)
 DEFAULT_BUDGET = 100  # credit dự kiến mặc định của tài khoản mới
@@ -165,6 +166,14 @@ class Store:
                 if name not in account_columns:
                     db.execute(f"ALTER TABLE accounts ADD COLUMN {name} {declaration}")
             db.execute("UPDATE accounts SET health='LIVE' WHERE health='READY'")  # tên cũ của bản thử đầu
+            # Bản 1.1.89 đặt mặc định 2 luồng: Muse không nhận prompt thứ hai khi đang tạo video → đưa về 1 (một lần).
+            if not db.execute("SELECT 1 FROM settings WHERE key='threads_reset_v1'").fetchone():
+                db.execute("UPDATE accounts SET threads=1")
+                # Prompt bị báo lỗi vì lý do đó (CHƯA gửi lên Muse): đưa lại hàng đợi để chạy tiếp, không cần bấm Chạy lại.
+                db.execute("""UPDATE jobs SET status='waiting',phase='Đợi tài khoản',progress=0,error='',account_id=NULL,
+                              updated=? WHERE status='error' AND submitted=0
+                              AND error LIKE 'Muse đang xử lý yêu cầu trước đó%'""", (time.time(),))
+                db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('threads_reset_v1','true')")
         with self.connect() as db:
             # Tùy chọn của mỗi lượt thêm prompt: ghép tất cả cảnh thành một video khi xong.
             db.execute("""CREATE TABLE IF NOT EXISTS batch_options (
@@ -202,6 +211,27 @@ class Store:
             db.execute("UPDATE accounts SET health=CASE WHEN health_before!='' THEN health_before ELSE 'UNKNOWN' END,"
                        "health_before='' WHERE health='CHECKING'")
         self.characters.recover_image_tasks()
+        self.recover_lost_videos()
+
+    def recover_lost_videos(self):
+        """Bản 1.1.84–1.1.89: thư mục lưu ở ổ khác (D:) thì video không chuyển được và bị xóa cùng thư mục tạm. Tác vụ
+        'Xong' mà video (nằm trong thư mục tạm của app) không còn: chuyển sang lỗi để bấm ⇩ Lấy video tải lại từ Muse
+        (không gửi lại prompt)."""
+        temp = str((Path(self.path).parent / "downloads").resolve())
+        with self.connect() as db:
+            for job in db.execute("SELECT id,output,source_url FROM jobs WHERE status='done' AND output IS NOT NULL").fetchall():
+                output = str(job["output"] or "")
+                try:
+                    inside = str(Path(output).resolve()).startswith(temp)
+                except (OSError, ValueError):
+                    continue
+                if inside and not Path(output).is_file():
+                    lost = str(job["source_url"] or "").startswith("https://")
+                    db.execute("""UPDATE jobs SET status='error',phase='Video bị mất khi chuyển sang thư mục lưu',output=NULL,
+                                  error=?,updated=? WHERE id=?""",
+                               ("Video đã tạo nhưng bị mất khi chuyển sang thư mục lưu ở ổ đĩa khác (lỗi bản cũ). "
+                                + ("Bấm ⇩ Lấy video để tải lại từ Muse (không gửi lại prompt)." if lost
+                                   else "Không còn liên kết cuộc trò chuyện Muse để tải lại."), time.time(), job["id"]))
 
     def add_account(self, email, mailbox, budget):
         email, mailbox = mailbox_for(email, mailbox)
