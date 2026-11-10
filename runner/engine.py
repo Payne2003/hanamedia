@@ -484,9 +484,21 @@ class Engine:
             technical = self.log_failure(job, account, error) if known else self.log_error(job, account, error)
             message = str(error) if known else (
                 f"Bộ chạy gặp lỗi Chrome/trang Muse ({technical}). Chi tiết trong data/logs/runner.log; không tự gửi lại.")
+            kind = getattr(error, "kind", "") if known else ""
+            if kind == "quota":
+                # Hết hạn mức: tạm dừng tài khoản tới ngày đặt lại, chia prompt của nó cho tài khoản khác; Muse không tạo
+                # video nên chạy lại prompt này ở tài khoản khác (không tính lượt).
+                self.store.mark_limited(account["id"], getattr(error, "until", 0), str(error))
+                if self.store.requeue_failed(job["id"], "tài khoản trước hết hạn mức", refund=True, limit=10**6):
+                    return
             if known and getattr(error, "unsent", False) and self.store.requeue_unsent(job["id"], str(error), "ready",
                                                                                       count=False):
                 return
+            if kind == "server" and self.store.requeue_failed(job["id"], "Muse báo lỗi, không tạo video"):
+                return
+            if known and getattr(error, "pending", False) and automatic and self.store.requeue_failed(
+                    job["id"], "Muse quá lâu không trả video; gửi lại (có thể bằng tài khoản khác)", refund=False, limit=1):
+                return  # vẫn giữ địa chỉ cuộc trò chuyện cũ trong nhật ký; lần chạy mới mở cuộc trò chuyện mới
             if known and getattr(error, "region", False):
                 # Muse không tạo video cho tài khoản này ở khu vực của nó: chuyển prompt (và mọi prompt đang chờ) sang
                 # tài khoản khác; không giao prompt cho tài khoản này nữa.
@@ -527,6 +539,12 @@ class Engine:
             if not known and automatic and not alive and self.recover_after_crash(job, account, headless, target, folder):
                 return
             self.store.finish(job["id"], error=message, account_state=account_state)
+            if account_state == "ready" and self.store.failing_streak(account["id"]):
+                # 3 tác vụ liền lỗi trên cùng tài khoản: tạm dừng tài khoản, chia prompt đang chờ của nó cho tài khoản khác.
+                self.store.set_account(account["id"], "attention",
+                                       "3 tác vụ liền bị lỗi trên tài khoản này. Đã tạm dừng và chia prompt cho tài khoản khác; "
+                                       "bấm Kiểm tra / Đăng nhập để dùng lại.")
+                self.store.plan_waiting()
         finally:
             self.release_tab(browser)
 
