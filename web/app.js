@@ -68,16 +68,24 @@ function renderJobs(){
     const progress=jobProgress(job),estimated=job.status==='running'&&job.phase==='Muse đang tạo video';
     const progressLabel=job.status==='done'?'Hoàn thành':job.status==='error'?(job.error||'Dừng khi gặp lỗi'):job.phase;
     const account=esc(accounts.get(assigned)||(assigned&&job.status!=='waiting'?'TK đã xóa':(state.assign_hint?'⚠ Chưa có TK':'Chờ tài khoản')));
-    const images=job.image_count?`<div class="jc-images">${Array.from({length:Math.min(job.image_count,8)},(_,i)=>`<img src="/api/image/${job.id}/${i}" alt="Ảnh tham chiếu ${i+1}" loading="lazy">`).join('')}<span>${job.image_count} ảnh tham chiếu</span></div>`:'';
+    const images=job.image_count?`<div class="jc-refs" title="${job.image_count} ảnh tham chiếu">${Array.from({length:Math.min(job.image_count,4)},(_,i)=>`<img src="/api/image/${job.id}/${i}" alt="" loading="lazy">`).join('')}${job.image_count>4?`<span>+${job.image_count-4}</span>`:''}</div>`:'';
+    const spec=[job.aspect,job.duration?`${job.duration}s`:'',job.resolution].filter(Boolean).join(' · ');
+    const post=job.status==='done'&&job.resolution?postLabel(job.post_status):'';
     const media=job.status==='done'&&job.output
-      ?`<div class="jc-media"><video data-thumb-job="${job.id}" data-video-src="/api/media/${job.id}" controls playsinline preload="none"></video></div>`
-      :`<div class="jc-media jc-pending ${esc(job.status)}"><div class="jc-progress"><span class="badge ${esc(job.status)}">${esc(statusNames[job.status])}</span><div class="job-progress ${esc(job.status)}" role="progressbar" aria-label="Tiến độ ${esc(job.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span data-progress="${progress}"></span></div><div class="progress-caption"><b>${estimated?'~':''}${progress}%</b><span class="detail ${job.error?'error':''}" title="${esc(job.error||job.phase)}">${esc(progressLabel)}</span></div></div></div>`;
+      ?`<video data-thumb-job="${job.id}" data-video-src="/api/media/${job.id}" controls playsinline preload="none"></video>`
+      :`<div class="jc-pending ${esc(job.status)}"><div class="jc-progress"><div class="job-progress ${esc(job.status)}" role="progressbar" aria-label="Tiến độ ${esc(job.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span data-progress="${progress}"></span></div><div class="progress-caption"><b>${estimated?'~':''}${progress}%</b><span class="detail ${job.error?'error':''}" title="${esc(job.error||job.phase)}">${esc(progressLabel)}</span></div></div></div>`;
     return `<article class="job-card ${esc(job.status)}" data-job="${job.id}">
-      <div class="jc-head"><input class="job-select" data-select-job="${job.id}" type="checkbox" aria-label="Chọn ${esc(job.name)}" ${selectedJobs.has(job.id)?'checked':''} ${job.status==='running'?'disabled':''}><div class="jc-title prompt-cell" title="Mở chi tiết"><b>${esc(job.name)}</b>${job.status==='done'&&job.output?`<small>${esc(job.output.split(/[\\\\/]/).pop())}</small>`:''}</div><span class="badge ${esc(job.status)}">${esc(statusNames[job.status])}</span></div>
-      <div class="jc-meta"><span class="account-chip${!assigned&&job.status==='waiting'&&state.assign_hint?' warn':''}" title="${esc(!assigned&&job.status==='waiting'?(state.assign_hint||'Tool sẽ tự chia tài khoản'):'')}">${account}</span>${videoSpecCell(job)}</div>
-      <div class="jc-prompt prompt-cell" title="Bấm để mở chi tiết">${esc(job.prompt)}</div>
-      ${images}${media}
-      <div class="jc-actions row-actions"><button data-copy="${job.id}" title="Chép prompt">⧉ Chép</button>${job.status==='error'&&!job.submitted?`<button data-retry="${job.id}" title="Thử lại">↻ Thử lại</button>`:''}${job.status==='done'?`<button data-play="${job.id}" title="Xem lớn">⛶ Xem</button><a href="/api/video/${job.id}" title="Tải video">⇩ Tải</a>`:''}${job.status==='error'&&job.submitted&&job.source_url?`<button data-fetch="${job.id}" title="Lấy video Muse đã làm xong (không gửi lại prompt)">⇩ Lấy video</button>`:''}${job.account_id&&job.status==='error'?`<button data-review="${job.account_id}" title="Mở phiên Muse">↗ Muse</button>`:''}</div>
+      <div class="jc-media">${media}
+        <label class="jc-select"><input class="job-select" data-select-job="${job.id}" type="checkbox" aria-label="Chọn ${esc(job.name)}" ${selectedJobs.has(job.id)?'checked':''} ${job.status==='running'?'disabled':''}><span>#${esc(job.name.replace('Prompt ','')||'—')}</span></label>
+        <span class="jc-status badge ${esc(job.status)}">${esc(statusNames[job.status])}</span>
+        ${spec?`<span class="jc-spec">${esc(spec)}</span>`:''}
+      </div>
+      <div class="jc-body">
+        <div class="jc-title prompt-cell" title="Mở chi tiết"><b>${esc(job.name)}</b>${job.status==='done'&&job.output?`<small>${esc(job.output.split(/[\\\\/]/).pop())}</small>`:''}</div>
+        <div class="jc-meta"><span class="account-chip${!assigned&&job.status==='waiting'&&state.assign_hint?' warn':''}" title="${esc(!assigned&&job.status==='waiting'?(state.assign_hint||'Tool sẽ tự chia tài khoản'):'')}">👤 ${account}</span>${post?`<span class="jc-post${job.post_status.startsWith('error:')?' error':''}" title="${esc(job.post_status.startsWith('error:')?job.post_status.slice(6):'')}">${esc(post)}</span>`:''}</div>
+        <p class="jc-prompt prompt-cell" title="${esc(job.prompt)}">${esc(job.prompt)}</p>
+        <div class="jc-foot">${images}<div class="jc-actions row-actions"><button data-copy="${job.id}" title="Chép prompt" aria-label="Chép prompt">⧉</button>${job.status==='error'&&!job.submitted?`<button data-retry="${job.id}" title="Thử lại" aria-label="Thử lại">↻</button>`:''}${job.status==='done'?`<button data-play="${job.id}" title="Xem lớn" aria-label="Xem lớn">⛶</button><a href="/api/video/${job.id}" title="Tải video" aria-label="Tải video">⇩</a>`:''}${job.status==='error'&&job.submitted&&job.source_url?`<button data-fetch="${job.id}" title="Lấy video Muse đã làm xong (không gửi lại prompt)">⇩ Lấy video</button>`:''}${job.account_id&&job.status==='error'?`<button data-review="${job.account_id}" title="Mở phiên Muse" aria-label="Mở phiên Muse">↗</button>`:''}</div></div>
+      </div>
     </article>`;
   }).join('');
   // Chính sách bảo mật (CSP) chặn style="..." trong HTML: đặt độ rộng thanh tiến độ bằng JS.
