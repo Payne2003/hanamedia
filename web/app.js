@@ -67,10 +67,18 @@ function renderJobs(){
     const assigned=job.account_id||job.assigned_account_id;
     const progress=jobProgress(job),estimated=job.status==='running'&&job.phase==='Muse đang tạo video';
     const progressLabel=job.status==='done'?'Hoàn thành':job.status==='error'?(job.error||'Dừng khi gặp lỗi'):job.phase;
-    const thumbnail=job.status==='done'&&job.output
-      ?`<button class="video-thumb" type="button" data-play="${job.id}" aria-label="Xem video ${esc(job.name)}"><video data-thumb-job="${job.id}" data-video-src="/api/media/${job.id}" muted playsinline preload="none"></video><span class="thumb-play">▶</span><span class="thumb-placeholder">▶</span></button>`
-      :job.image_count?`<img src="/api/image/${job.id}/0" alt="Ảnh tham chiếu" loading="lazy">`:'<span class="thumb-placeholder">▣</span>';
-    return `<tr class="${job.status==='running'?'is-running':''}"><td class="select-col"><input class="job-select" data-select-job="${job.id}" type="checkbox" aria-label="Chọn ${esc(job.name)}" ${selectedJobs.has(job.id)?'checked':''} ${job.status==='running'?'disabled':''}></td><td>${esc(job.name.replace('Prompt ','')||'—')}</td><td class="thumb-col"><div class="job-thumb">${thumbnail}</div></td><td class="prompt-cell"><strong>${esc(job.name)}</strong>${job.status==='done'&&job.output?`<span class="job-filename">${esc(job.output.split(/[\\\\/]/).pop())}</span>`:''}<div class="prompt-text" title="${esc(job.prompt)}">${esc(job.prompt)}</div></td><td><span class="type-label">${job.generation_mode==='image'?`▧ Ảnh → video<small>${job.image_count} ảnh tham chiếu</small>`:'▣ Prompt → video'}</span></td><td>${videoSpecCell(job)}</td><td><span class="account-chip${!assigned&&job.status==='waiting'&&state.assign_hint?' warn':''}" title="${esc(!assigned&&job.status==='waiting'?(state.assign_hint||'Tool sẽ tự chia tài khoản'):'')}">${esc(accounts.get(assigned)||(assigned&&job.status!=='waiting'?'TK đã xóa':(state.assign_hint?'⚠ Chưa có TK':'Chờ tài khoản')))}</span></td><td><span class="badge ${esc(job.status)}">${esc(statusNames[job.status])}</span><div class="job-progress ${esc(job.status)}" role="progressbar" aria-label="Tiến độ ${esc(job.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span data-progress="${progress}"></span></div><div class="progress-caption"><b>${estimated?'~':''}${progress}%</b><span class="detail ${job.error?'error':''}" title="${esc(job.error||job.phase)}">${esc(progressLabel)}</span></div></td><td><div class="row-actions"><button data-copy="${job.id}" title="Chép prompt" aria-label="Chép prompt">⧉</button>${job.status==='error'&&!job.submitted?`<button data-retry="${job.id}" title="Thử lại" aria-label="Thử lại">↻</button>`:''}${job.status==='done'?`<button data-play="${job.id}" title="Xem video" aria-label="Xem video">◉</button><a href="/api/video/${job.id}" title="Tải video" aria-label="Tải video">⇩</a>`:''}${job.status==='error'&&job.submitted&&job.source_url?`<button data-fetch="${job.id}" title="Lấy video Muse đã làm xong (không gửi lại prompt)" aria-label="Lấy video">⇩</button>`:''}${job.account_id&&job.status==='error'?`<button data-review="${job.account_id}" title="Mở phiên Muse" aria-label="Mở phiên Muse">↗</button>`:''}</div></td></tr>`;
+    const account=esc(accounts.get(assigned)||(assigned&&job.status!=='waiting'?'TK đã xóa':(state.assign_hint?'⚠ Chưa có TK':'Chờ tài khoản')));
+    const images=job.image_count?`<div class="jc-images">${Array.from({length:Math.min(job.image_count,8)},(_,i)=>`<img src="/api/image/${job.id}/${i}" alt="Ảnh tham chiếu ${i+1}" loading="lazy">`).join('')}<span>${job.image_count} ảnh tham chiếu</span></div>`:'';
+    const media=job.status==='done'&&job.output
+      ?`<div class="jc-media"><video data-thumb-job="${job.id}" data-video-src="/api/media/${job.id}" controls playsinline preload="none"></video></div>`
+      :`<div class="jc-media jc-pending ${esc(job.status)}"><div class="jc-progress"><span class="badge ${esc(job.status)}">${esc(statusNames[job.status])}</span><div class="job-progress ${esc(job.status)}" role="progressbar" aria-label="Tiến độ ${esc(job.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span data-progress="${progress}"></span></div><div class="progress-caption"><b>${estimated?'~':''}${progress}%</b><span class="detail ${job.error?'error':''}" title="${esc(job.error||job.phase)}">${esc(progressLabel)}</span></div></div></div>`;
+    return `<article class="job-card ${esc(job.status)}" data-job="${job.id}">
+      <div class="jc-head"><input class="job-select" data-select-job="${job.id}" type="checkbox" aria-label="Chọn ${esc(job.name)}" ${selectedJobs.has(job.id)?'checked':''} ${job.status==='running'?'disabled':''}><div class="jc-title prompt-cell" title="Mở chi tiết"><b>${esc(job.name)}</b>${job.status==='done'&&job.output?`<small>${esc(job.output.split(/[\\\\/]/).pop())}</small>`:''}</div><span class="badge ${esc(job.status)}">${esc(statusNames[job.status])}</span></div>
+      <div class="jc-meta"><span class="account-chip${!assigned&&job.status==='waiting'&&state.assign_hint?' warn':''}" title="${esc(!assigned&&job.status==='waiting'?(state.assign_hint||'Tool sẽ tự chia tài khoản'):'')}">${account}</span>${videoSpecCell(job)}</div>
+      <div class="jc-prompt prompt-cell" title="Bấm để mở chi tiết">${esc(job.prompt)}</div>
+      ${images}${media}
+      <div class="jc-actions row-actions"><button data-copy="${job.id}" title="Chép prompt">⧉ Chép</button>${job.status==='error'&&!job.submitted?`<button data-retry="${job.id}" title="Thử lại">↻ Thử lại</button>`:''}${job.status==='done'?`<button data-play="${job.id}" title="Xem lớn">⛶ Xem</button><a href="/api/video/${job.id}" title="Tải video">⇩ Tải</a>`:''}${job.status==='error'&&job.submitted&&job.source_url?`<button data-fetch="${job.id}" title="Lấy video Muse đã làm xong (không gửi lại prompt)">⇩ Lấy video</button>`:''}${job.account_id&&job.status==='error'?`<button data-review="${job.account_id}" title="Mở phiên Muse">↗ Muse</button>`:''}</div>
+    </article>`;
   }).join('');
   // Chính sách bảo mật (CSP) chặn style="..." trong HTML: đặt độ rộng thanh tiến độ bằng JS.
   $('rows').querySelectorAll('[data-progress]').forEach(bar=>bar.style.width=`${bar.dataset.progress}%`);
@@ -230,7 +238,7 @@ const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior'
 const defaultBrief='Phân tích video gốc và chia thành từng cảnh 10 giây theo đúng thứ tự thời gian. Mỗi cảnh liệt kê từng góc máy theo mốc giây (cỡ cảnh, góc máy, chuyển động máy), mô tả bối cảnh, hành vi và hành động nhân vật đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
 const oldBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 15 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
 let content={brief:defaultBrief,video:'',videoFile:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',englishAspect:'16:9',englishStructured:true,englishSeconds:10,windows:[],englishAngles:0,englishIssues:[],english:'',englishMissing:[],englishEngine:'chatgpt',englishChatgpt:'',englishChatgptMissing:[]};
-try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,brief:saved.brief&&saved.brief!==oldBrief?saved.brief:content.brief,windows:Array.isArray(saved.windows)?saved.windows:[],video:saved.video||'',videoFile:typeof saved.videoFile==='string'?saved.videoFile:'',videoFrom:typeof saved.videoFrom==='string'?saved.videoFrom:'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,englishSeconds:[5,8,10].includes(Number(saved.englishSeconds))?Number(saved.englishSeconds):10,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:'chatgpt',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
+try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,reviewed:saved.reviewed===true,reviewViolations:saved.reviewViolations&&typeof saved.reviewViolations==='object'?saved.reviewViolations:{},reviewIssues:Array.isArray(saved.reviewIssues)?saved.reviewIssues:[],brief:saved.brief&&saved.brief!==oldBrief?saved.brief:content.brief,windows:Array.isArray(saved.windows)?saved.windows:[],video:saved.video||'',videoFile:typeof saved.videoFile==='string'?saved.videoFile:'',videoFrom:typeof saved.videoFrom==='string'?saved.videoFrom:'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,englishSeconds:[5,8,10].includes(Number(saved.englishSeconds))?Number(saved.englishSeconds):10,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:'chatgpt',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
 // Bản nháp còn đúng câu mẫu cũ (8 giây) thì đổi sang câu mẫu mới (15 giây).
 if(content.brief==='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.')content.brief=defaultBrief;
 const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
@@ -268,7 +276,7 @@ function showView(view){
   if(isLicense)loadLicense();
   if(isSettings){applyAutoSettings(true);renderSettings(true);}
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
-  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;renderVideoFile();$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles||0);renderEnglishEngine();openCharacters();}
+  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;renderVideoFile();$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles??'lib');renderEnglishEngine();openCharacters();}
   const hash=isProduction?'#production':isContent?'#content':isSettings?'#settings':isMedia?'#media':isCommunity?'#community':isLicense?'#license':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);markSidebar();
 }
@@ -302,41 +310,44 @@ $('contentClearVideo').onclick=()=>{content.videoFile='';content.videoFrom='';sa
 $('contentLanguage').onchange=()=>{content.language=$('contentLanguage').value;saveContent();};
 $('contentScript').oninput=()=>{content.script=$('contentScript').value;saveContent();};
 // Gemini Pro tự động: tool điều khiển Chrome đã đăng nhập tài khoản Google.
-let autoJob=null;
+let autoJob=null,pipeline=null;
 function applyAutoSettings(force){const web=state?.content?.web;if(!web)return;if(force||document.activeElement!==$('autoEmail'))$('autoEmail').value=web.email||'';if(force||document.activeElement!==$('autoModel'))$('autoModel').value=web.model||'';}
 async function saveAutoSettings(){await api('/api/content/web-settings',{email:$('autoEmail').value.trim(),model:$('autoModel').value.trim()});}
 $('autoEmail').onchange=()=>saveAutoSettings().then(refresh).then(()=>renderSettings(false)).catch(error=>toast(error.message,true));
 $('autoModel').onchange=()=>saveAutoSettings().then(refresh).then(()=>renderSettings(false)).catch(error=>toast(error.message,true));
-async function runAuto(kind){
-  if(autoJob)return;
-  if(kind==='review'&&!content.scenes.length)return;
-  if(kind!=='review'&&!content.brief.trim())return toast('Nhập yêu cầu (prompt) cho Gemini.',true);
-  if(kind!=='review'&&content.scenes.length&&!confirm('Chạy lại sẽ thay thế danh sách cảnh hiện tại. Tiếp tục?'))return;
+let lastJobError='';
+async function runAuto(kind,silent=false){
+  if(autoJob)return false;
+  if(kind==='review'&&!content.scenes.length)return false;
+  if(kind!=='review'&&!content.brief.trim()){toast('Nhập yêu cầu (prompt) cho Gemini.',true);return false;}
+  if(!silent&&kind!=='review'&&content.scenes.length&&!confirm('Chạy lại sẽ thay thế danh sách cảnh hiện tại. Tiếp tục?'))return false;
   try{
     await saveAutoSettings();
     const {id}=await api('/api/content/web-run',{kind,brief:content.brief,video_url:content.video,video_file:content.videoFile||undefined,language:content.language,scenes:kind==='review'?content.scenes:undefined});
-    autoJob={id,kind};renderAuto();refresh();
-  }catch(error){toast(error.message,true);}
+    autoJob={id,kind};lastJobError='';renderAuto();refresh();return true;
+  }catch(error){toast(error.message,true);return false;}
 }
 function renderAuto(){
   const web=state?.content?.web,running=Boolean(autoJob),english=running&&!['generate','review'].includes(autoJob.kind);
   const text=running?(web&&web.id===autoJob.id?(web.status||''):'Đang mở Gemini…'):'';
   $('autoProgress').hidden=!running||english;
   for(const id of ['runAuto','loginAuto','reviewContent'])$(id).disabled=running;
-  $('runAuto').textContent=running&&autoJob.kind==='generate'?'Gemini đang chạy…':'✦ Chạy tự động trên Gemini';
+  $('runAuto').textContent=running&&autoJob.kind==='generate'?'Gemini đang chạy…':'✦ Chỉ chạy bước phân tích trên Gemini';
+  $('runPipeline').disabled=Boolean(pipeline)||running||Boolean(chatJob);$('runReview').disabled=running||Boolean(chatJob);
   $('reviewContent').textContent=running&&autoJob.kind==='review'?'Gemini đang kiểm tra…':'↻ Kiểm tra thiếu cảnh / lỗi';
   if(running&&!english)$('autoStatus').textContent=text;
   renderEnglishRun();
 }
 function pollAuto(){
-  const web=state?.content?.web;applyAutoSettings();renderRunnerVersion();
+  const web=state?.content?.web;applyAutoSettings();renderRunnerVersion();loadReviewRules();
   if(!autoJob||!web){renderAuto();return;}
   if(web.id!==autoJob.id||web.busy){renderAuto();return;}
   const job=autoJob;autoJob=null;renderAuto();
   if(job.kind==='characters')return finishCharacters('gemini',job.id,web);
-  if(web.error)return toast(web.error,true);
-  const result=web.result;if(!result)return;
+  if(web.error){lastJobError=web.error;if(typeof reviewOne!=='undefined')reviewOne=null;return toast(web.error,true);}
+  const result=web.result;if(!result){lastJobError='Không có kết quả.';return;}
   if(job.kind==='english')return finishEnglish('gemini',result);
+  if(job.kind==='promptreview')return finishReview('gemini',result);
   if(job.kind==='review'){content.scenes=result.scenes;content.issues=result.issues;}
   else{content.scenes=result.scenes;content.script=result.original_script;content.issues=result.issues||[];content.windows=Array.isArray(result.windows)?result.windows:[];
     if(Array.isArray(result.subjects))content.scenes.forEach((scene,i)=>{scene.subjects=(result.subjects[i]||[]).map(s=>s.name+(s.count?` ×${s.count}`:'')+(s.detail?` (${s.detail})`:'')).join('; ');});}
@@ -357,11 +368,14 @@ $('sceneList').addEventListener('click',e=>{
   if(del){content.scenes.splice(Number(del.dataset.sceneDelete),1);renderScenes();}
   if(move){const i=Number(move.dataset.sceneMove),j=i+Number(move.dataset.dir);[content.scenes[i],content.scenes[j]]=[content.scenes[j],content.scenes[i]];renderScenes();}
 });
+// Kịch bản → đầu vào bước Tạo prompt (prompt tiếng Anh cho Muse), không đưa thẳng vào Studio nữa.
 $('useContent').onclick=()=>{
-  const prompts=contentPrompts();if(!prompts.length)return;
-  if($('prompts').value.trim()&&!confirm('Thay nội dung đang có trong khung prompt bằng các prompt này?'))return;
-  mode='text';$('separator').value='line';$('prompts').value=prompts.join('\n');renderMode();showView('studio');$('prompts').focus();
-  toast(`Đã đưa ${prompts.length} prompt vào Studio. Bấm “Tạo & chạy” hoặc “Chỉ thêm vào hàng đợi”.`);
+  const prompts=contentPrompts();if(!prompts.length)return toast('Chưa có cảnh nào để đưa sang.',true);
+  if($('englishInput').value.trim()&&$('englishInput').value.trim()!==prompts.join('\n')&&!confirm('Thay nội dung đang có ở đầu vào phần Tạo prompt bằng kịch bản này?'))return;
+  $('englishInput').value=prompts.join('\n');content.englishInput=$('englishInput').value;saveContent();
+  $('englishInput').dispatchEvent(new Event('input',{bubbles:true}));
+  setStep(4);$('englishInput').focus();
+  toast(`Đã đưa ${prompts.length} cảnh sang phần Tạo prompt.`);
 };
 $('copyContent').onclick=()=>navigator.clipboard.writeText($('contentPrompts').value).then(()=>toast('Đã chép hàng loạt prompt.')).catch(()=>toast('Không chép được. Chọn và sao chép trong ô bên dưới.',true));
 $('downloadContent').onclick=()=>{const blob=new Blob([[content.script?'KỊCH BẢN VIDEO GỐC\n'+content.script+'\n\nPROMPT\n':'',$('contentPrompts').value].join('')],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='content-prompt.txt';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};
@@ -373,7 +387,7 @@ const engineNames={gemini:'Gemini',chatgpt:'ChatGPT'};
 let chatJob=null;
 const englishKey=engine=>engine==='chatgpt'?['englishChatgpt','englishChatgptMissing']:['english','englishMissing'];
 const englishLines=()=>$('englishOutput').value.split('\n');
-function englishJob(engine){return engine==='chatgpt'?(chatJob&&chatJob.kind!=='characters'?chatJob:null):(autoJob&&autoJob.kind==='english'?autoJob:null);}
+function englishJob(engine){return engine==='chatgpt'?(chatJob&&chatJob.kind!=='characters'?chatJob:null):(autoJob&&['english','promptreview'].includes(autoJob.kind)?autoJob:null);}
 function renderEnglish(){
   const [textKey,missingKey]=englishKey(content.englishEngine);
   const lines=englishLines(),filled=lines.filter(line=>line.trim()).length,missing=content[missingKey]||[];
@@ -410,8 +424,10 @@ function pollChat(){
   if(!chatJob||!web||web.id!==chatJob.id||web.busy){renderEnglishRun();return;}
   const job=chatJob;chatJob=null;renderEnglishRun();
   if(job.kind==='characters')return finishCharacters('chatgpt',job.id,web);
-  if(web.error)return toast(web.error,true);
-  if(web.result)finishEnglish('chatgpt',web.result);
+  if(web.error){lastJobError=web.error;if(typeof reviewOne!=='undefined')reviewOne=null;return toast(web.error,true);}
+  if(!web.result){lastJobError='Không có kết quả.';return;}
+  if(job.kind==='promptreview')return finishReview('chatgpt',web.result);
+  finishEnglish('chatgpt',web.result);
 }
 setInterval(pollChat,1000);
 document.querySelectorAll('[data-english-engine]').forEach(b=>b.onclick=()=>{content.englishEngine=b.dataset.englishEngine;saveContent();renderEnglishEngine();});
@@ -420,26 +436,137 @@ $('englishInput').oninput=()=>{content.englishInput=$('englishInput').value;save
 $('englishStyle').oninput=()=>{content.englishStyle=$('englishStyle').value;saveContent();};
 $('englishAspect').onchange=()=>{content.englishAspect=$('englishAspect').value;saveContent();};
 $('englishSeconds').onchange=()=>{content.englishSeconds=Number($('englishSeconds').value);saveContent();};
-$('englishAngles').onchange=()=>{content.englishAngles=Number($('englishAngles').value);try{localStorage.setItem('hana-english-angles',String(content.englishAngles));}catch{}};
-try{content.englishAngles=Number(localStorage.getItem('hana-english-angles')||0)||0;}catch{}
+$('englishAngles').onchange=()=>{content.englishAngles=$('englishAngles').value;try{localStorage.setItem('hana-english-angles',String(content.englishAngles));}catch{}};
+try{const saved=localStorage.getItem('hana-english-angles');content.englishAngles=['lib','0','3'].includes(saved)?saved:'lib';}catch{content.englishAngles='lib';}
 $('englishStructured').onchange=()=>{content.englishStructured=$('englishStructured').checked;saveContent();};
-$('englishOutput').oninput=()=>{content[englishKey(content.englishEngine)[0]]=$('englishOutput').value;saveContent();renderEnglish();};
+$('englishOutput').oninput=()=>{content[englishKey(content.englishEngine)[0]]=$('englishOutput').value;saveContent();renderEnglish();renderReviewList();};
 $('chatgptModel').onchange=()=>api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()}).then(refresh).catch(error=>toast(error.message,true));
 $('loginChatgpt').onclick=async()=>{try{await api('/api/content/web-login',{engine:'chatgpt'});await refresh();toast('Đã mở Chrome. Đăng nhập ChatGPT, thấy ô nhắn tin thì đóng hẳn cửa sổ đó rồi bấm Viết prompt.');}catch(error){toast(error.message,true);}};
-$('runEnglish').onclick=async()=>{
+$('runEnglish').onclick=()=>startEnglish(false);
+async function startEnglish(silent){
   const engine=content.englishEngine,[textKey]=englishKey(engine);
-  if(engine==='gemini'?autoJob:chatJob)return;
+  if(engine==='gemini'?autoJob:chatJob)return false;
   if(!$('englishInput').value.trim()&&contentPrompts().length)$('englishFromScenes').click();
-  if(!$('englishInput').value.trim())return toast('Dán danh sách “Bối cảnh 1: …” hoặc bấm Lấy từ danh sách cảnh.',true);
-  if((content[textKey]||'').trim()&&!confirm(`Viết lại sẽ thay kết quả ${engineNames[engine]} hiện tại. Tiếp tục?`))return;
+  if(!$('englishInput').value.trim()){toast('Dán danh sách “Bối cảnh 1: …” hoặc bấm Lấy từ danh sách cảnh.',true);return false;}
+  if(!silent&&(content[textKey]||'').trim()&&!confirm(`Viết lại sẽ thay kết quả ${engineNames[engine]} hiện tại. Tiếp tục?`))return false;
   try{
     if(engine==='gemini')await saveAutoSettings();
     else await api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()});
-    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked,angles:Number($('englishAngles').value),seconds:Number($('englishSeconds').value)});
+    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked,angles:$('englishAngles').value==='lib'?0:Number($('englishAngles').value),library:$('englishAngles').value==='lib',seconds:Number($('englishSeconds').value)});
+    lastJobError='';
     if(engine==='gemini'){autoJob={id,kind:'english'};renderAuto();}else{chatJob={id};renderEnglishRun();}
-    refresh();toast(`Đã gửi ${total} cảnh cho ${engineNames[engine]}.`);
-  }catch(error){toast(error.message,true);}
-};
+    refresh();toast(`Đã gửi ${total} cảnh cho ${engineNames[engine]}.`);return true;
+  }catch(error){toast(error.message,true);return false;}
+}
+// ---- Kiểm duyệt prompt: quy tắc + khóa (lưu trên máy, người dùng cập nhật dần) ----
+let reviewLoaded=false,reviewTimer=null;
+function loadReviewRules(){const r=state?.content?.review;if(!r)return;$('cameraCount').textContent=Number(r.camera_count||0).toLocaleString('vi-VN');if(reviewLoaded)return;reviewLoaded=true;$('reviewRules').value=r.rules||'';$('reviewLock').value=r.lock||'';$('cameraCustom').value=r.camera_custom||'';renderReviewIssues();}
+let cameraTimer=null;$('cameraCustom').oninput=()=>{clearTimeout(cameraTimer);cameraTimer=setTimeout(()=>api('/api/content/camera-custom',{text:$('cameraCustom').value}).then(r=>{$('cameraCount').textContent=Number(r.count).toLocaleString('vi-VN');}).catch(error=>toast(error.message,true)),700);};
+function saveReviewRules(){clearTimeout(reviewTimer);reviewTimer=setTimeout(()=>api('/api/content/review-rules',{rules:$('reviewRules').value,lock:$('reviewLock').value}).catch(error=>toast(error.message,true)),600);}
+$('reviewRules').oninput=saveReviewRules;$('reviewLock').oninput=saveReviewRules;
+$('resetReview').onclick=()=>{if(!confirm('Khôi phục bộ quy tắc và khóa mặc định?'))return;$('reviewRules').value='';$('reviewLock').value='';api('/api/content/review-rules',{rules:'',lock:''}).then(async()=>{reviewLoaded=false;await refresh();loadReviewRules();toast('Đã khôi phục mặc định.');}).catch(error=>toast(error.message,true));};
+let reviewOne=null;  // số dòng đang tạo lại riêng (null = kiểm duyệt cả danh sách)
+async function startReview(line=null){
+  const engine=content.englishEngine;
+  if(engine==='gemini'?autoJob:chatJob)return false;
+  const lines=$('englishOutput').value.split('\n'),text=line===null?$('englishOutput').value.trim():(lines[line-1]||'').trim();
+  if(!text){toast('Chưa có prompt tiếng Anh để kiểm duyệt.',true);return false;}
+  reviewOne=line;
+  try{
+    const {id,total}=await api('/api/content/review-prompts',{engine,text,rules:$('reviewRules').value,lock:$('reviewLock').value});
+    lastJobError='';
+    if(engine==='gemini'){autoJob={id,kind:'promptreview'};renderAuto();}else{chatJob={id,kind:'promptreview'};renderEnglishRun();}
+    $('reviewStatus').textContent=`${engineNames[engine]} đang kiểm duyệt ${total} prompt…`;renderReviewList();refresh();return true;
+  }catch(error){toast(error.message,true);return false;}
+}
+$('runReview').onclick=()=>startReview();
+function finishReview(engine,result){
+  const [textKey]=englishKey(engine);
+  if(reviewOne!==null){  // tạo lại riêng một prompt: chỉ thay đúng dòng đó
+    const line=reviewOne,lines=(content[textKey]||'').split('\n');reviewOne=null;
+    lines[line-1]=result.english[0]||lines[line-1];content[textKey]=lines.join('\n');
+    content.reviewViolations={...(content.reviewViolations||{})};
+    if(result.violations&&result.violations[1])content.reviewViolations[line]=result.violations[1];else delete content.reviewViolations[line];
+    saveContent();if(content.englishEngine===engine)renderEnglishEngine();renderReviewIssues();
+    const left=content.reviewViolations[line];
+    $('reviewStatus').textContent=left?`Prompt ${line} vẫn còn lỗi: ${left.join(', ')}`:`Đã tạo lại prompt ${line} · đạt quy tắc`;
+    return toast(left?`Prompt ${line} vẫn còn lỗi, thử tạo lại lần nữa hoặc sửa tay.`:`Đã tạo lại prompt ${line}.`,Boolean(left));
+  }
+  content[textKey]=result.english.join('\n');content.reviewIssues=result.issues||[];content.reviewViolations=result.violations||{};content.reviewed=true;saveContent();
+  if(content.englishEngine===engine)renderEnglishEngine();
+  renderReviewIssues();
+  const left=Object.keys(result.violations||{}).length;
+  $('reviewStatus').textContent=`Đã kiểm duyệt ${result.total} prompt${left?` · ${left} prompt cần xem lại`:' · đạt hết quy tắc'} · đã gắn khóa`;
+  toast(left?`Kiểm duyệt xong: ${left} prompt còn vi phạm, xem danh sách bên dưới.`:`Kiểm duyệt xong ${result.total} prompt, đã gắn khóa.`,Boolean(left));
+}
+function renderReviewList(){
+  const lines=$('englishOutput').value.split('\n').filter(l=>l.trim()),violations=content.reviewViolations||{},busy=Boolean(autoJob||chatJob);
+  $('reviewList').hidden=!content.reviewed||!lines.length;
+  if($('reviewList').hidden)return;
+  $('reviewList').innerHTML=lines.map((line,i)=>{const n=i+1,bad=violations[n];return `<div class="review-item ${bad?'bad':'ok'}"><div class="review-item-head"><b>Prompt ${n}</b><span>${bad?`⚠ ${esc(bad.join(', '))}`:'✓ Đạt quy tắc'}</span><button type="button" data-regen="${n}" ${busy?'disabled':''} title="Tạo lại riêng prompt này theo quy tắc kiểm duyệt">↻ Tạo lại</button></div><p>${esc(line.length>260?line.slice(0,260)+'…':line)}</p></div>`;}).join('');
+}
+$('reviewList').addEventListener('click',e=>{const b=e.target.closest('[data-regen]');if(!b)return;const n=Number(b.dataset.regen);startReview(n).then(ok=>{if(ok)$('reviewStatus').textContent=`Đang tạo lại prompt ${n}…`;});});
+function renderReviewIssues(){
+  renderReviewList();
+  const issues=content.reviewIssues||[],violations=Object.entries(content.reviewViolations||{});
+  $('reviewIssues').hidden=!issues.length&&!violations.length;
+  $('reviewIssues').innerHTML=(violations.length?`<b>Còn vi phạm (tool kiểm tra)</b><ul>${violations.map(([n,v])=>`<li>Prompt ${esc(n)}: ${esc(v.join(', '))}</li>`).join('')}</ul>`:'')+
+    (issues.length?`<b>AI đã sửa</b><ul>${issues.slice(0,40).map(i=>`<li>${esc(i)}</li>`).join('')}</ul>`:'');
+}
+// ---- Tự động: link → tải video → Gemini phân tích → prompt tiếng Anh → kiểm duyệt ----
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function pipeStep(name,stateName){const li=document.querySelector(`#pipelineSteps [data-pipe="${name}"]`);if(li){li.classList.remove('active','done','failed');if(stateName)li.classList.add(stateName);}}
+async function waitJobs(){while(autoJob||chatJob){await sleep(1000);}if(lastJobError)throw Error(lastJobError);}
+async function runPipelineFlow(){
+  if(pipeline)return;
+  const link=$('contentVideo').value.trim();
+  if(!link&&!content.videoFile)return toast('Dán link video YouTube (hoặc chọn file video) trước.',true);
+  if(!content.brief.trim()){content.brief=defaultBrief;$('contentBrief').value=defaultBrief;saveContent();}
+  pipeline={step:''};$('pipelineSteps').hidden=false;['download','script','prompt','review'].forEach(s=>pipeStep(s));renderAuto();
+  let current='download';
+  try{
+    pipeStep('download','active');
+    if(link&&(!content.videoFile||content.videoFrom!==link)){
+      content.video=link;saveContent();
+      try{
+        await api('/api/production/download',{url:link});
+        let st;do{await sleep(1500);st=await (await fetch('/api/production/download')).json();$('contentVideoFile').textContent=st.status||'Đang tải…';}while(st.busy);
+        if(st.error||!st.path)throw Error(st.error||'Không tải được video.');
+        content.videoFile=st.path;content.videoFrom=link;saveContent();renderVideoFile();
+      }catch(error){
+        // Không tải được (YouTube chặn, video riêng tư…): link YouTube thì Gemini vẫn xem qua link, chỉ thiếu phần FFmpeg.
+        if(!/youtu\.?be/i.test(link))throw error;
+        content.videoFile='';content.videoFrom='';saveContent();renderVideoFile();
+        toast(`Không tải được video (${error.message}). Gemini sẽ xem qua link YouTube; bước FFmpeg (điểm cắt, khung hình) bị bỏ qua.`,true);
+      }
+    }
+    pipeStep('download','done');current='script';pipeStep('script','active');
+    if(!await runAuto('generate',true))throw Error('Không chạy được Gemini.');
+    await waitJobs();
+    if(!content.scenes.length)throw Error('Gemini không trả về cảnh nào.');
+    pipeStep('script','done');current='prompt';pipeStep('prompt','active');
+    $('englishInput').value=contentPrompts().join('\n');content.englishInput=$('englishInput').value;saveContent();
+    if(!await startEnglish(true))throw Error('Không chạy được bước viết prompt.');
+    await waitJobs();
+    pipeStep('prompt','done');current='review';pipeStep('review','active');
+    if(!await startReview())throw Error('Không chạy được bước kiểm duyệt.');
+    await waitJobs();
+    pipeStep('review','done');setStep(4);
+    toast('Xong: đã có prompt hoàn chỉnh đã kiểm duyệt và gắn khóa. Bấm “→ Đưa vào Studio” để tạo video.');
+  }catch(error){pipeStep(current,'failed');toast(`Dừng ở bước “${document.querySelector(`#pipelineSteps [data-pipe="${current}"]`).textContent}”: ${error.message}`,true);}
+  finally{pipeline=null;renderAuto();}
+}
+$('runPipeline').onclick=runPipelineFlow;
+// Dán link là tự chạy (bật/tắt bằng ô "Tự chạy ngay khi dán link", nhớ trên máy).
+try{$('autoStart').checked=localStorage.getItem('hana-auto-start')!=='0';}catch{}
+$('autoStart').onchange=()=>{try{localStorage.setItem('hana-auto-start',$('autoStart').checked?'1':'0');}catch{}};
+function autoStartFromLink(){
+  const link=$('contentVideo').value.trim();
+  if(!$('autoStart').checked||!/^https?:\/\/\S+$/i.test(link)||pipeline||autoJob||chatJob)return;
+  content.video=link;saveContent();toast('Đã nhận link · tool tự chạy: tải video → phân tích → viết prompt → kiểm duyệt.');runPipelineFlow();
+}
+$('contentVideo').addEventListener('paste',()=>setTimeout(autoStartFromLink,300));
+$('contentVideo').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();autoStartFromLink();}});
 $('takeEnglish').onclick=()=>api('/api/content/web-take',{engine:content.englishEngine}).then(()=>$('englishStatus').textContent='Đang đọc câu trả lời trên trang…').catch(error=>toast(error.message,true));
 $('stopEnglish').onclick=()=>api('/api/content/web-stop',{engine:content.englishEngine}).then(()=>$('englishStatus').textContent='Đang dừng…').catch(error=>toast(error.message,true));
 // Tách đầu vào giống máy chủ (content.split_scene_lines): mỗi dòng một cảnh, hoặc "[...; Bối cảnh 2: ...]".
@@ -518,7 +645,7 @@ async function saveJob(){
   try{const {job}=await api('/api/jobs/update',jobPayload());studioJob=job;await refresh();return true;}
   catch(error){$('jobNotice').innerHTML=`<b>${esc(error.message)}</b>`;$('jobNotice').hidden=false;return false;}
 }
-$('rows').addEventListener('click',e=>{if(e.target.closest('button,a,input,video,.video-thumb'))return;const cell=e.target.closest('.prompt-cell');if(!cell)return;const row=cell.closest('tr');const box=row&&row.querySelector('[data-select-job]');if(box)openJob(box.dataset.selectJob);});
+$('rows').addEventListener('click',e=>{if(e.target.closest('button,a,input,video,.video-thumb'))return;const cell=e.target.closest('.prompt-cell');if(!cell)return;const card=cell.closest('[data-job]');if(card)openJob(card.dataset.job);});
 $('jobBack').onclick=()=>{if(jobChanged()&&!confirm('Bỏ các thay đổi chưa lưu?'))return;closeJob();};
 $('jobEdit').onclick=()=>{studioEditing=true;renderJobEditing();$('jobPrompt').focus();};
 $('jobCancel').onclick=()=>{if(jobChanged()&&!confirm('Bỏ các thay đổi chưa lưu?'))return;openJob(studioJob.id);};
@@ -1036,14 +1163,17 @@ function videoSpecCell(job){
   const post=job.status==='done'&&job.resolution?postLabel(job.post_status):'';
   return `<span class="spec-chip">${esc(parts.join(' · '))}</span>${post?`<span class="detail${job.post_status.startsWith('error:')?' error':''}" title="${esc(job.post_status.startsWith('error:')?job.post_status.slice(6):'')}">${esc(post)}</span>`:''}`;
 }
+let stitchHidden=false;try{stitchHidden=localStorage.getItem('hana-hide-stitch')==='1';}catch{}
 function renderStitchPanel(){
-  const batches=state.batches||[],panel=$('stitchPanel');panel.hidden=!batches.length;
-  panel.innerHTML=batches.length?`<b>🔗 Video ghép</b>`+batches.map(b=>`<div class="stitch-row"><span>Lượt ${esc(new Date(b.created*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'}))} · ${b.done}/${b.scenes} cảnh xong${b.failed?` · ${b.failed} lỗi`:''}</span><span class="stitch-state ${b.stitch_status}">${esc(stitchNames[b.stitch_status]||b.stitch_status)}</span>${b.stitch_error?`<span class="detail error">${esc(b.stitch_error)}</span>`:''}${b.stitch_status==='done'?`<a class="button-link" href="/api/batch/${esc(b.batch)}/video" target="_blank" rel="noopener">▶ Xem</a><a class="button-link" href="/api/batch/${esc(b.batch)}/video?download=1">⇩ Tải</a>`:''}${b.stitch_status!=='running'&&b.done>=2?`<button type="button" data-stitch-now="${esc(b.batch)}" title="Ghép các cảnh đã xong (bỏ qua cảnh lỗi/chưa xong)">${b.stitch_status==='done'?'↻ Ghép lại':'Ghép ngay'}</button>`:''}</div>`).join(''):'';
+  const batches=(state.batches||[]).filter(b=>Number(b.scenes)>0),panel=$('stitchPanel');panel.hidden=!batches.length||stitchHidden;
+  panel.innerHTML=batches.length?`<div class="stitch-head"><b>🔗 Video ghép</b><button type="button" id="hideStitch" title="Ẩn khung này. Bật lại bằng cách tick “Ghép” khi tạo video.">✕ Ẩn</button></div>`+batches.map(b=>`<div class="stitch-row"><span>Lượt ${esc(new Date(b.created*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'}))} · ${b.done}/${b.scenes} cảnh xong${b.failed?` · ${b.failed} lỗi`:''}</span><span class="stitch-state ${b.stitch_status}">${esc(stitchNames[b.stitch_status]||b.stitch_status)}</span>${b.stitch_error?`<span class="detail error">${esc(b.stitch_error)}</span>`:''}${b.stitch_status==='done'?`<a class="button-link" href="/api/batch/${esc(b.batch)}/video" target="_blank" rel="noopener">▶ Xem</a><a class="button-link" href="/api/batch/${esc(b.batch)}/video?download=1">⇩ Tải</a>`:''}${b.stitch_status!=='running'&&b.done>=2?`<button type="button" data-stitch-now="${esc(b.batch)}" title="Ghép các cảnh đã xong (bỏ qua cảnh lỗi/chưa xong)">${b.stitch_status==='done'?'↻ Ghép lại':'Ghép ngay'}</button>`:''}</div>`).join(''):'';
 }
-document.addEventListener('click',e=>{const b=e.target.closest('[data-stitch-now]');if(!b)return;
+document.addEventListener('click',e=>{if(e.target.closest('#hideStitch')){stitchHidden=true;try{localStorage.setItem('hana-hide-stitch','1');}catch{}renderStitchPanel();toast('Đã ẩn khung Video ghép. Tick “Ghép” khi tạo video để hiện lại.');return;}
+  const b=e.target.closest('[data-stitch-now]');if(!b)return;
   if(!confirm('Ghép ngay các cảnh đã xong của lượt này? Cảnh lỗi hoặc chưa xong sẽ bị bỏ qua.'))return;
   action(async()=>{await api('/api/batch/stitch',{batch:b.dataset.stitchNow});toast('Đang ghép video. Xem tiến độ ở khung Video ghép.');});});
 for(const id of ['vAspect','vDuration','vResolution','vStitch','vAccount'])$(id).addEventListener('change',saveVideoSettings);
+$('vStitch').addEventListener('change',()=>{if($('vStitch').checked&&stitchHidden){stitchHidden=false;try{localStorage.removeItem('hana-hide-stitch');}catch{}if(state)renderStitchPanel();}});
 $('vCharacters').onclick=()=>openPicker('characters');
 $('vClearCharacters').onclick=()=>{fixedCharacters=[];saveVideoSettings();renderFixedCharacters();};
 $('vCharacterChips').onclick=e=>{const b=e.target.closest('[data-remove-fixed]');if(!b)return;fixedCharacters.splice(Number(b.dataset.removeFixed),1);saveVideoSettings();renderFixedCharacters();};

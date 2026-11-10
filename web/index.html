@@ -45,7 +45,7 @@
         <div class="bulk-toolbar"><label class="select-all"><input id="selectVisible" type="checkbox"> Chọn tất cả</label><button type="button" class="quick-menu" data-coming>Chọn nhanh…</button><button id="deleteSelected" class="danger-outline" disabled>▤ Xóa <span id="selectedCount">0</span></button><span class="bulk-spacer"></span><button type="button" class="quick-menu" data-coming>↕ Đánh lại STT</button></div>
         <div id="stitchPanel" class="stitch-panel" hidden></div>
         <div id="assignHint" class="notice assign-hint" hidden><span id="assignHintText"></span> <button type="button" data-open-accounts>Mở Tài khoản Muse</button></div>
-        <div class="table-scroll"><table id="queueTable"><thead><tr><th class="select-col"></th><th>STT</th><th class="thumb-col"></th><th>TÊN & PROMPT</th><th>LOẠI</th><th>THÔNG SỐ</th><th>NICK</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty"><span>✧</span><h3>Một ý tưởng, một video</h3><p>Nhập prompt ở khung tạo bên phải để bắt đầu.</p></div></div>
+        <div class="table-scroll job-scroll"><div id="rows" class="job-cards"></div><div id="empty" class="empty"><span>✧</span><h3>Một ý tưởng, một video</h3><p>Nhập prompt ở khung tạo bên phải để bắt đầu.</p></div></div>
         <footer><span id="shown">0 tác vụ</span><span>Tự lưu hàng đợi trên máy</span></footer>
       </section>
       <aside class="composer card">
@@ -97,20 +97,20 @@
       <div class="job-columns card">
         <div class="job-left">
           <label for="jobPrompt">Prompt <b class="required">*</b></label>
-          <textarea id="jobPrompt" rows="6" maxlength="20000" data-job-field></textarea>
-          <label for="jobSetting">Bối cảnh</label>
-          <textarea id="jobSetting" rows="3" maxlength="5000" data-job-field></textarea>
-          <label for="jobBehavior">Hành vi nhân vật</label>
-          <textarea id="jobBehavior" rows="3" maxlength="5000" data-job-field></textarea>
-          <label for="jobAction">Nội dung hành động nhân vật</label>
-          <textarea id="jobAction" rows="3" maxlength="5000" data-job-field></textarea>
+          <textarea id="jobPrompt" rows="14" maxlength="20000" data-job-field></textarea>
+          <label for="jobSetting" class="job-extra" hidden>Bối cảnh</label>
+          <textarea id="jobSetting" class="job-extra" hidden rows="3" maxlength="5000" data-job-field></textarea>
+          <label for="jobBehavior" class="job-extra" hidden>Hành vi nhân vật</label>
+          <textarea id="jobBehavior" class="job-extra" hidden rows="3" maxlength="5000" data-job-field></textarea>
+          <label for="jobAction" class="job-extra" hidden>Nội dung hành động nhân vật</label>
+          <textarea id="jobAction" class="job-extra" hidden rows="3" maxlength="5000" data-job-field></textarea>
         </div>
         <div class="job-right">
           <label>Ảnh tham chiếu / Tải tệp lên</label>
           <div id="jobDrop" class="job-drop"><span>🖼 Kéo thả tệp vào đây hoặc</span><button id="jobChoose" type="button" data-job-field>Chọn tệp</button><small>Hỗ trợ: JPG, PNG, WEBP (tối đa 10MB) · tối đa 10 ảnh</small><button id="jobLibrary" type="button" data-job-field>▧ Chọn từ thư viện</button><input id="jobFiles" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></div>
           <div id="jobImages" class="job-images"></div>
-          <label for="jobCamera">Góc quay</label>
-          <input id="jobCamera" list="jobCameras" maxlength="5000" data-job-field placeholder="Ví dụ: Góc quay ngang, cận cảnh, theo chân (tracking)"><datalist id="jobCameras"><option value="Góc quay ngang, cận cảnh, theo chân (tracking)"><option value="Toàn cảnh, máy quay cố định"><option value="Trung cảnh, lia máy chậm"><option value="Cận cảnh khuôn mặt, máy quay đứng yên"><option value="Góc thấp nhìn lên, máy quay theo dõi"><option value="Góc cao nhìn xuống (high angle)"><option value="Flycam bao quát từ xa"></datalist>
+          <label for="jobCamera" class="job-extra" hidden>Góc quay</label>
+          <input id="jobCamera" class="job-extra" hidden list="jobCameras" maxlength="5000" data-job-field placeholder="Ví dụ: Góc quay ngang, cận cảnh, theo chân (tracking)"><datalist id="jobCameras"><option value="Góc quay ngang, cận cảnh, theo chân (tracking)"><option value="Toàn cảnh, máy quay cố định"><option value="Trung cảnh, lia máy chậm"><option value="Cận cảnh khuôn mặt, máy quay đứng yên"><option value="Góc thấp nhìn lên, máy quay theo dõi"><option value="Góc cao nhìn xuống (high angle)"><option value="Flycam bao quát từ xa"></datalist>
           <div class="job-grid"><div><label>Loại <b class="required">*</b></label><div class="job-type" role="group"><button type="button" data-job-type="text" data-job-field>▣ Video</button><button type="button" data-job-type="image" data-job-field>▧ Ảnh → video</button></div></div>
           <div><label for="jobAccount">Tài khoản <b class="required">*</b></label><select id="jobAccount" data-job-field></select></div></div>
           <div class="job-video-spec"><div><label for="jobAspect">Tỉ lệ khung</label><select id="jobAspect" data-job-field><option value="">Để Muse tự chọn</option><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select></div><div><label for="jobDuration">Thời lượng</label><select id="jobDuration" data-job-field><option value="">Để Muse tự chọn</option><option value="10">10 giây</option><option value="8">8 giây</option><option value="6">6 giây</option><option value="5">5 giây</option><option value="4">4 giây</option></select></div><div><label for="jobResolution">Độ phân giải</label><select id="jobResolution" data-job-field><option value="">Giữ nguyên của Muse</option><option value="4K">4K</option><option value="1080p">1080p</option><option value="720p">720p</option></select></div></div>
@@ -315,7 +315,7 @@
       </div>
     </section>
     <section id="contentView" class="content-page" hidden>
-      <div class="content-topbar"><h1>Content Studio</h1><span class="crumb">/</span><label class="project-picker">Dự án<select id="projectSelect" aria-label="Chọn dự án"><option value="">— Chưa lưu dự án —</option></select></label><span class="bulk-spacer"></span><span class="tool-chip">▣ Muse Video</span><button id="closeContent" type="button">← Về Studio</button></div>
+      <div class="content-topbar"><h1>Content Studio</h1><label class="project-picker" hidden>Dự án<select id="projectSelect" aria-label="Chọn dự án"><option value="">— Chưa lưu dự án —</option></select></label><span class="bulk-spacer"></span><span class="tool-chip">▣ Muse Video</span><button id="closeContent" type="button">← Về Studio</button></div>
       <nav class="stepper" aria-label="Các bước">
         <button type="button" data-step="1"><span>1</span>Ý tưởng</button><i></i>
         <button type="button" data-step="2"><span>2</span>Kịch bản</button><i></i>
@@ -337,7 +337,10 @@
             <label>Ngôn ngữ kịch bản<select id="contentLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
             <div>
               <p class="detail account-line" id="geminiAccountLine"></p>
-              <button id="runAuto" type="button" class="primary full">✦ Chạy tự động trên Gemini</button>
+              <button id="runPipeline" type="button" class="primary full pipeline-button">⚡ Tự động từ link → prompt hoàn chỉnh</button>
+              <ol id="pipelineSteps" class="pipeline-steps" hidden><li data-pipe="download">Tải video từ link</li><li data-pipe="script">Gemini phân tích cảnh 10 giây</li><li data-pipe="prompt">Viết prompt tiếng Anh</li><li data-pipe="review">Kiểm duyệt &amp; khóa prompt</li></ol>
+              <label class="check auto-start"><input id="autoStart" type="checkbox" checked><span>Tự chạy ngay khi dán link<small>Dán link YouTube vào ô Link video gốc là tool tự chạy hết 4 bước, không cần bấm gì. Giữ app mở tới khi xong.</small></span></label>
+              <button id="runAuto" type="button" class="full">✦ Chỉ chạy bước phân tích trên Gemini</button>
               <div id="autoProgress" class="content-progress" hidden><div class="job-progress running"><span class="indeterminate"></span></div><div class="content-progress-row"><span id="autoStatus"></span><button id="takeAuto" type="button" title="Bấm khi Gemini đã viết xong mà tool vẫn đang chờ">Lấy kết quả ngay</button><button id="stopAuto" type="button">Dừng</button></div></div>
               
             </div>
@@ -353,7 +356,7 @@
           </section>
           <section class="content-step" id="contentOutput" hidden><h3><span>3</span>Hàng loạt prompt</h3>
             <textarea id="contentPrompts" rows="8" readonly></textarea>
-            <div class="content-actions"><button id="useContent" type="button" class="primary">→ Đưa vào Studio</button><button id="copyContent" type="button">⧉ Chép</button><button id="downloadContent" type="button">⇩ Tải .txt</button><button id="downloadContentJson" type="button">⇩ JSON</button><button id="downloadContentXlsx" type="button">⇩ Excel</button></div>
+            <div class="content-actions"><button id="useContent" type="button" class="primary">→ Đưa sang tạo prompt</button><button id="copyContent" type="button">⧉ Chép</button><button id="downloadContent" type="button">⇩ Tải .txt</button><button id="downloadContentJson" type="button">⇩ JSON</button><button id="downloadContentXlsx" type="button">⇩ Excel</button></div>
           </section>
         </div>
       </div>
@@ -363,7 +366,7 @@
           <div>
             <div class="english-label"><label for="englishInput">Đầu vào · danh sách cảnh</label><button id="englishFromScenes" type="button" class="text-button">↓ Lấy từ danh sách cảnh</button></div>
             <textarea id="englishInput" rows="9" maxlength="600000" placeholder="Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;&#10;Bối cảnh 2: ..."></textarea>
-            <div class="content-grid english-options"><label>Phong cách chung <small>(không bắt buộc)</small><input id="englishStyle" maxlength="2000" placeholder="Ví dụ: cinematic, ánh sáng tự nhiên"></label><label>Thời lượng mỗi cảnh<select id="englishSeconds"><option value="10">10 giây · mặc định</option><option value="8">8 giây · Master Prompt 08</option><option value="5">5 giây</option></select></label><label>Góc máy<select id="englishAngles"><option value="0">Theo kịch bản · tối đa 3 góc</option><option value="3">Đổi góc mỗi 2–3 giây</option></select></label><label>Tỷ lệ khung hình<select id="englishAspect"><option value="16:9">16:9 · ngang</option><option value="9:16">9:16 · dọc</option><option value="1:1">1:1 · vuông</option></select></label></div>
+            <div class="content-grid english-options"><label>Phong cách chung <small>(không bắt buộc)</small><input id="englishStyle" maxlength="2000" placeholder="Ví dụ: cinematic, ánh sáng tự nhiên"></label><label>Thời lượng mỗi cảnh<select id="englishSeconds"><option value="10">10 giây · mặc định</option><option value="8">8 giây · Master Prompt 08</option><option value="5">5 giây</option></select></label><label>Góc máy<select id="englishAngles"><option value="lib">Thư viện góc quay · 3 góc mỗi cảnh</option><option value="0">Theo kịch bản · tối đa 3 góc</option><option value="3">Đổi góc mỗi 2–3 giây</option></select></label><label>Tỷ lệ khung hình<select id="englishAspect"><option value="16:9">16:9 · ngang</option><option value="9:16">9:16 · dọc</option><option value="1:1">1:1 · vuông</option></select></label></div>
             <label class="check english-structured"><input id="englishStructured" type="checkbox" checked><span>Prompt chuẩn đủ trường<small>Mỗi prompt viết theo MASTER PROMPT 08: <code>SETTING; CHARACTERS; CAMERA; CHARACTER BEHAVIOR; ACTION; ENDING FRAME</code>, tool tự thêm <code>STYLE</code> chuẩn, <code>DURATION</code>, <code>ASPECT RATIO</code>. Tool tách trường ngay từ prompt và tự hỏi lại cảnh nào thiếu trường.</small></span></label>
             
             <div id="chatgptOptions" hidden><p class="detail account-line">ChatGPT dùng tài khoản và model trong <button type="button" class="text-button" data-open-settings>⚙ Cài đặt</button>.</p></div>
@@ -377,6 +380,20 @@
             <div class="content-actions"><button id="useEnglish" type="button" class="primary">→ Đưa vào Studio</button><button id="copyEnglish" type="button">⧉ Chép</button><button id="downloadEnglish" type="button">⇩ Tải .txt</button></div>
           </div>
         </div>
+        <section class="review-panel">
+          <div class="english-heading"><h3><span>4</span>Kiểm duyệt prompt</h3><p>AI đối chiếu từng prompt với bộ quy tắc của bạn và viết lại cho đạt; tool kiểm tra thêm (không nhạc, không slow, không logo/phụ đề, đủ 2–3 góc quay) rồi gắn <b>KHÓA</b> vào cuối mọi prompt. Cập nhật quy tắc dần cho sát từng thể loại động vật.</p></div>
+          <div class="review-columns">
+            <label>Quy tắc kiểm duyệt <small>(mỗi dòng một quy tắc · tự lưu)</small><textarea id="reviewRules" rows="8" maxlength="6000"></textarea></label>
+            <label>Khóa gắn vào cuối mỗi prompt <small>(tiếng Anh)</small><textarea id="reviewLock" rows="8" maxlength="2000"></textarea></label>
+          </div>
+          <div class="content-actions"><button id="runReview" type="button" class="primary">✔ Kiểm duyệt &amp; khóa prompt</button><button id="resetReview" type="button" class="text-button">Khôi phục quy tắc mặc định</button><span id="reviewStatus" class="detail"></span></div>
+          <div id="reviewIssues" class="content-issues" hidden></div>
+          <div id="reviewList" class="review-list" hidden></div>
+          <details class="camera-library"><summary>🎥 Thư viện góc quay · <b id="cameraCount">…</b> góc · mỗi cảnh 10 giây lấy đúng 3 góc</summary>
+            <p class="detail">Tool ghép cỡ cảnh × góc máy × chuyển động × ống kính thành hàng nghìn góc. Mỗi cảnh chọn 3 góc theo hành động (đuổi → bám ngang/bám sau, đánh nhau → cầm tay/đặc tả, rình → đẩy chậm, nghỉ → máy tĩnh), mở bằng góc rộng → trung → cận, không lặp góc của cảnh trước. Chọn “Thư viện góc quay” ở ô Góc máy phía trên.</p>
+            <label>Thêm góc quay riêng <small>(mỗi dòng một góc, tiếng Anh, ví dụ: low angle tracking shot through tall grass)</small><textarea id="cameraCustom" rows="5" maxlength="20000"></textarea></label>
+          </details>
+        </section>
       </div>
       <div class="character-studio" id="characterPanel" data-step-panel="3" hidden>
         <div class="character-toolbar card">

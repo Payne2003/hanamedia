@@ -733,6 +733,68 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
 VERIFY_ROUNDS = 2
 
 
+REGENERATE_ROUNDS = 2
+
+
+def run_review(session, prompts, rules, lock, status, stop, email="", model=""):
+    """Kiểm duyệt prompt: AI đối chiếu từng prompt với bộ quy tắc của người dùng và viết lại cho đạt; tool kiểm tra máy
+    (từ cấm, đủ 2–3 góc quay), hỏi lại riêng prompt còn vi phạm (1 lượt), rồi gắn KHÓA chung vào cuối mọi prompt.
+    Prompt AI không trả về thì giữ bản cũ. Không bao giờ làm mất prompt."""
+    prompts = [str(p or "").strip() for p in prompts]
+    total = len(prompts)
+    name = getattr(session, "NAME", "Gemini")
+    if not total:
+        raise GeminiWebError("Chưa có prompt để kiểm duyệt.")
+    start_fresh(session, status, stop, email)
+    if model:
+        session.choose_model(model)
+    numbers = list(range(1, total + 1))
+    answer = session.ask(content.review_request(prompts, rules), status, stop, email,
+                         label=f"{name} đang kiểm duyệt {total} prompt")
+    found = content.parse_english(answer, total)
+    issues = content.parse_issues(answer)
+    rounds = 1
+    for _ in range(MAX_CONTINUE):
+        if content.END_EN.lower() in answer.lower() or not found or max(found) >= total:
+            break
+        after = max(found)
+        answer = session.ask(content.continue_review(after, numbers), status, stop, email,
+                             label=f"Đã kiểm duyệt {len(found)}/{total} · {name} viết tiếp")
+        rounds += 1
+        more = content.parse_english(answer, total, range(after + 1, total + 1))
+        if not any(n > after for n in more):
+            break
+        found.update(more)
+    reviewed = [found.get(n) if found.get(n) and content.is_english(found[n]) else prompts[n - 1] for n in numbers]
+    for attempt in range(REGENERATE_ROUNDS):  # prompt còn lỗi sau kiểm duyệt: tự tạo lại riêng prompt đó
+        bad = [n for n in numbers if content.prompt_violations(reviewed[n - 1])]
+        if not bad:
+            break
+        answer = session.ask(content.review_request(reviewed, rules, bad) + "\n\nCHỈ viết lại các prompt trên; prompt còn lỗi: "
+                             + "; ".join(f"{n}: {', '.join(content.prompt_violations(reviewed[n - 1]))}" for n in bad),
+                             status, stop, email, label=f"{len(bad)} prompt còn lỗi · {name} tạo lại (lần {attempt + 1})")
+        rounds += 1
+        improved = 0
+        for n, text in content.parse_english(answer, total, bad).items():
+            if content.is_english(text) and len(content.prompt_violations(text)) < len(content.prompt_violations(reviewed[n - 1])):
+                reviewed[n - 1] = text
+                improved += 1
+        if not improved:
+            break
+        issues += [i for i in content.parse_issues(answer) if i not in issues]
+    from . import camera_library
+    for n in numbers:  # góc quay đã chọn từ thư viện (3 mốc giây) giữ nguyên, AI không được đổi
+        original = camera_library.CAMERA_FIELD.search(content.strip_lock(prompts[n - 1]))
+        if original and len(content.SCENE_SEGMENT.findall(original.group(2))) >= 3 and reviewed[n - 1] != prompts[n - 1]:
+            reviewed[n - 1] = camera_library.CAMERA_FIELD.sub(lambda m: m.group(1) + original.group(2).strip(),
+                                                             reviewed[n - 1], count=1) \
+                if camera_library.CAMERA_FIELD.search(reviewed[n - 1]) else reviewed[n - 1]
+    final = [content.apply_lock(p, lock or content.DEFAULT_LOCK) for p in reviewed]
+    violations = {n: content.prompt_violations(final[n - 1]) for n in numbers}
+    return {"english": final, "issues": issues, "violations": {n: v for n, v in violations.items() if v},
+            "missing": [n for n in numbers if not found.get(n)], "total": total, "rounds": rounds, "reviewed": True}
+
+
 def verify_subjects(session, result, windows, status, stop, email=""):
     """AI Scene Analyzer: mỗi cảnh phải có danh sách nhân vật (tên, số lượng, vị trí); số lượng đổi giữa hai cảnh liền
     nhau mà không ai bước vào/rời khung thì nhờ Gemini đếm lại (1 lượt). Còn lại ghi vào mục vấn đề."""
@@ -818,7 +880,7 @@ def run_characters(session, script, scenes, status, stop, email="", model=""):
 
 
 def run_english(session, lines, status, stop, email="", model="", style="", aspect="16:9", structured=True,
-                seconds=content.DEFAULT_SECONDS, angles=0):
+                seconds=content.DEFAULT_SECONDS, angles=0, library=False, custom_angles=""):
     """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
     total = len(lines)
     name = getattr(session, "NAME", "Gemini")
@@ -873,6 +935,11 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
     missing = content.missing_english(found, total, structured, seconds, angles)
     if structured:  # dựng lại đúng cấu trúc MASTER PROMPT 08, STYLE/DURATION/ASPECT RATIO chuẩn
         found = {number: content.muse_prompt(prompt, seconds, aspect, style) for number, prompt in found.items()}
+    if library:  # thư viện góc quay: mỗi cảnh đúng 3 góc, chọn theo hành động, không lặp góc cảnh trước
+        from . import camera_library
+        plans = camera_library.plans([f"{lines[n - 1]} {found.get(n, '')}" for n in range(1, total + 1)], seconds,
+                                     custom_angles)
+        found = {number: camera_library.apply(prompt, plans[number - 1], seconds) for number, prompt in found.items() if prompt}
     return {"english": [found.get(number, "") for number in range(1, total + 1)], "missing": missing, "lines": lines,
             "issues": issues,
             "structured": structured,
@@ -1019,12 +1086,19 @@ class GeminiWebRunner:
                              status=f"Xong: {len(result['characters'])} nhân vật, {result['total'] - len(result['missing'])}/{result['total']} cảnh"
                                     + (f" · còn thiếu {len(result['missing'])} cảnh" if result["missing"] else ""))
                     continue
+                if kind == "promptreview":
+                    result = run_review(self.session, lines["prompts"], lines.get("rules", ""), lines.get("lock", ""), status,
+                                        self.stop, email, model)
+                    left = sum(1 for v in result["violations"].values() if v)
+                    self.set(busy=False, result=result,
+                             status=f"Đã kiểm duyệt {result['total']} prompt" + (f" · còn {left} prompt cần xem lại" if left else ""))
+                    continue
                 if kind == "english":
-                    defaults = ("", "16:9", True, content.DEFAULT_SECONDS, 0)
+                    defaults = ("", "16:9", True, content.DEFAULT_SECONDS, 0, False, "")
                     options = tuple(style) if isinstance(style, tuple) else (style,)
-                    style, aspect, structured, seconds, angles = options + defaults[len(options):]
+                    style, aspect, structured, seconds, angles, library, custom = options + defaults[len(options):]
                     result = run_english(self.session, lines, status, self.stop, email, model, style, aspect, structured, seconds,
-                                         angles)
+                                         angles, library, custom)
                     done = result["total"] - len(result["missing"])
                     self.set(busy=False, result=result,
                              status=f"Xong: {done}/{result['total']} prompt tiếng Anh sau {result['rounds']} lượt"
