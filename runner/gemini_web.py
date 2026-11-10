@@ -11,6 +11,7 @@ import os
 import queue
 import subprocess
 import threading
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -202,6 +203,8 @@ if (item) { item.click(); return (item.innerText || '').split('\n')[0]; }
 document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
 return '';
 """
+# Phím tắt dán / chọn tất cả: Cmd trên macOS, Ctrl trên Windows (giá trị phím của Selenium).
+MOD_KEY = "\ue03d" if sys.platform == "darwin" else "\ue009"
 
 
 class GeminiWebError(RuntimeError):
@@ -366,7 +369,7 @@ class GeminiWebSession:
             self.driver.execute_script(JS_CLEAR, field)
             field.click()
             if self.driver.execute_async_script(JS_CLIPBOARD, text):
-                ActionChains(self.driver).key_down(Keys.CONTROL).send_keys("v").key_up(Keys.CONTROL).perform()
+                ActionChains(self.driver).key_down(MOD_KEY).send_keys("v").key_up(MOD_KEY).perform()
                 result = self.checked(field, text)
         except Exception:
             result = {}

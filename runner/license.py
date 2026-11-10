@@ -17,6 +17,8 @@ Giới hạn (nói rõ với người dùng): người rành kỹ thuật vẫn 
 import base64
 import calendar
 import hashlib
+import subprocess
+import sys
 import json
 import os
 import re
@@ -111,6 +113,14 @@ def machine_code():
                                 0, winreg.KEY_READ | getattr(winreg, "KEY_WOW64_64KEY", 0)) as handle:
                 raw = winreg.QueryValueEx(handle, "MachineGuid")[0]
         except OSError:
+            raw = ""
+    elif sys.platform == "darwin":
+        try:
+            output = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True, text=True,
+                                    timeout=10).stdout
+            found = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', output)
+            raw = found.group(1) if found else ""
+        except (OSError, subprocess.SubprocessError):
             raw = ""
     else:
         for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):

@@ -31,6 +31,17 @@ from runner.instance import InstanceLock
 from runner.paths import data_root, frozen, resource_root
 from runner.version import APP_VERSION
 
+def open_folder(folder):
+    """Mở thư mục trong Explorer (Windows) hoặc Finder (macOS). False nếu máy không hỗ trợ."""
+    if os.name == "nt":
+        os.startfile(folder)
+        return True
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", str(folder)])
+        return True
+    return False
+
+
 ROOT = resource_root()  # web/ (trong bản cài đặt: bên trong gói app)
 DATA = data_root()      # mã nguồn: data/ cạnh app.py; bản cài đặt: %LOCALAPPDATA%\HanaMedia\data
 
@@ -112,7 +123,7 @@ class AppServer(ThreadingHTTPServer):
             kept = [line for line in text.splitlines() if not line.strip().startswith("(No symbol)")]
             return "\n".join(kept[-count:]).strip() or "(trống)"
         hw = getattr(self.engine, "hardware", {}) or {}
-        head = (f"HANA MEDIA {APP_VERSION} · Windows: {os.name == 'nt'} · RAM {hw.get('ram_gb')} GB · "
+        head = (f"HANA MEDIA {APP_VERSION} · Hệ điều hành: {'Windows' if os.name == 'nt' else 'macOS' if sys.platform == 'darwin' else sys.platform} · RAM {hw.get('ram_gb')} GB · "
                 f"CPU {hw.get('cores')} nhân · tối đa {getattr(self.engine, 'max_parallel', '?')} luồng")
         text = (f"{head}\n\n===== runner.log (lỗi tác vụ) =====\n{tail('runner.log', lines)}"
                 f"\n\n===== update.log (cập nhật) =====\n{tail('update.log', 40)}")
@@ -295,9 +306,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"ok": True, **media.delete(body.get("ids"), body.get("confirmed") is True)})
             if method == "POST" and path == "/api/media/open-folder":
                 media.root.mkdir(parents=True, exist_ok=True)
-                if os.name != "nt":
+                if not open_folder(media.root):
                     raise MediaError(f"Thư mục thư viện: {media.root}")
-                os.startfile(media.root)
                 return self.reply({"ok": True})
             return self.reply({"error": "Không tìm thấy thao tác."}, 404)
         except MediaInUse as error:
@@ -850,9 +860,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/logs/open-folder":
                 folder = self.server.data_dir / "logs"
                 folder.mkdir(parents=True, exist_ok=True)
-                if os.name != "nt":
+                if not open_folder(folder):
                     raise ValueError(f"Thư mục nhật ký: {folder}")
-                os.startfile(folder)
             elif path == "/api/settings/theme":
                 if body.get("theme") not in ("dark", "light", "system"):
                     raise ValueError("Giao diện không hợp lệ.")
@@ -1012,9 +1021,8 @@ class Handler(BaseHTTPRequestHandler):
                 folder = store.setting("output_folder")
                 if not folder or not Path(folder).is_dir():
                     raise ValueError("Chưa có thư mục lưu.")
-                if os.name != "nt":
-                    raise ValueError("Nút mở thư mục này dành cho Windows.")
-                os.startfile(folder)
+                if not open_folder(folder):
+                    raise ValueError(f"Thư mục lưu: {folder}")
             else:
                 return self.reply({"error": "Không tìm thấy thao tác."}, 404)
             self.reply({"ok": True})
