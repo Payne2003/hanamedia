@@ -1054,7 +1054,8 @@ class TenSecondSceneTests(unittest.TestCase):
 
         class Session:
             sent = []
-            answers = ["DANH SÁCH CẢNH:\n" + line(1, good) + "\n" + line(2, "Toàn cảnh") + "\n" + gemini_web.END_MARK,
+            answers = ["DANH SÁCH CẢNH:\n" + line(1, good) + "\nNhân vật cảnh 1: hổ ×1 (giữa, gần)\n" + line(2, "Toàn cảnh")
+                       + "\nNhân vật cảnh 2: hổ ×1 (trái, xa)\n" + gemini_web.END_MARK,
                        line(2, "0–3s: cận; 3–7s: trung, cùng góc; 7–11.5s: toàn")]
             def new_chat(self): pass
             def wait_ready(self, status, stop, email=""): pass
@@ -1070,3 +1071,57 @@ class TenSecondSceneTests(unittest.TestCase):
         self.assertNotIn("Bối cảnh 1 (", session.sent[1])
         self.assertTrue(result["scenes"][1]["camera"].startswith("0–3s"))
         self.assertEqual((result["issues"], result["verified"]), ([], 2))
+
+
+class SceneAnalyzerTests(unittest.TestCase):
+    def test_subject_lines_are_read_per_scene(self):
+        found = content.parse_subjects("Bối cảnh 1: …\nNhân vật cảnh 1: Sư tử cái ×3 (trái, gần, tiến sang phải); "
+                                       "Gorilla ×1 (giữa, xa)\n**Nhân vật cảnh 2:** sư tử cái ×2 (phải)")
+        self.assertEqual(found[1], [{"name": "Sư tử cái", "count": 3, "detail": "trái, gần, tiến sang phải"},
+                                    {"name": "Gorilla", "count": 1, "detail": "giữa, xa"}])
+        self.assertEqual(found[2][0]["count"], 2)
+        self.assertEqual(content.subjects_text(found[1]), "Sư tử cái ×3 (trái, gần, tiến sang phải); Gorilla ×1 (giữa, xa)")
+
+    def test_count_change_needs_someone_entering_or_leaving(self):
+        subjects = {1: [{"name": "Sư tử cái", "count": 3, "detail": ""}], 2: [{"name": "sư tử cái", "count": 2, "detail": ""}]}
+        scenes = [{"action": "Ba con tiến lại"}, {"action": "Hai con gầm lên"}]
+        self.assertIn("3→2", content.continuity_problems(subjects, scenes, 2)[2])
+        scenes[1]["action"] = "Một con rời khung bên trái, hai con còn lại gầm lên"
+        self.assertEqual(content.continuity_problems(subjects, scenes, 2), {})
+        self.assertIn("thiếu dòng", content.continuity_problems({1: subjects[1]}, scenes, 2)[2])
+
+    def test_gemini_recounts_inconsistent_scenes(self):
+        from runner import gemini_web
+        windows = content.scene_windows([dict(start=0, end=20)], 20)
+        camera = "0–4s: toàn; 4–7s: trung, cùng góc; 7–10s: cận, cùng góc"
+        line = lambda n, action: (f"Bối cảnh {n}: Rừng, góc quay: {camera}, hành vi nhân vật: Đứng, "
+                                  f"Nội dung hành động nhân vật: {action};")
+
+        class Session:
+            sent = []
+            answers = [line(1, "Ba con đứng") + "\nNhân vật cảnh 1: sư tử ×3 (giữa)\n" + line(2, "Hai con đứng")
+                       + "\nNhân vật cảnh 2: sư tử ×2 (giữa)\n" + gemini_web.END_MARK,
+                       "Nhân vật cảnh 2: sư tử ×3 (giữa, một con khuất sau bụi)"]
+            def new_chat(self): pass
+            def wait_ready(self, status, stop, email=""): pass
+            def choose_model(self, name): return name
+            def ask(self, text, status, stop, email="", label=""):
+                self.sent.append(text)
+                return self.answers.pop(0)
+
+        result = gemini_web.run_conversation(Session(), "Yêu cầu", lambda _: None, threading.Event(), windows=windows)
+        self.assertIn("sư tử 3→2", Session.sent[1])
+        self.assertEqual(result["subjects"][1][0]["count"], 3)
+        self.assertEqual(result["issues"], [])
+
+
+class ScriptExportTests(unittest.TestCase):
+    def test_excel_has_times_angles_and_subjects(self):
+        from openpyxl import load_workbook
+        windows = content.scene_windows([dict(start=0, end=4), dict(start=4, end=10)], 10)
+        scene = dict(zip(content.FIELDS, ("Rừng", "0–4s: toàn; 4–7s: trung; 7–10s: cận", "Đứng", "Bước tới")))
+        with tempfile.TemporaryDirectory() as folder:
+            target = content.script_workbook([scene], windows, "Kịch bản", Path(folder) / "k.xlsx", ["sư tử ×2 (trái)"])
+            sheet = load_workbook(target)["Kịch bản"]
+            self.assertEqual([c.value for c in sheet[2]], [1, "00:00.0", "00:10.0", 2, scene["camera"], "sư tử ×2 (trái)",
+                                                         "Rừng", "Đứng", "Bước tới"])

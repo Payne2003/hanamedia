@@ -656,3 +656,4 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 .vs-folder{display:grid;gap:4px;margin:10px 0;font-size:var(--fs-xs);color:var(--muted)}.vs-folder input{margin:0}
 .content-video-file{display:grid;gap:6px;margin:4px 0 10px}.content-video-actions{display:flex;flex-wrap:wrap;gap:6px}.content-video-file progress{width:100%}#contentVideoFile{margin:0}
 .scene-time{margin-left:8px;font-size:var(--fs-xs);color:var(--muted)}
+.scene-subjects{grid-column:1/-1}

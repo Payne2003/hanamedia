@@ -249,15 +249,15 @@ function renderContentOutput(){
 }
 function renderScenes(){
   $('contentScript').value=content.script||'';
-  $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b>${sceneTime(index)}<span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}</div></article>`).join('');
+  $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b>${sceneTime(index)}<span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}${scene.subjects!==undefined?`<label class="scene-subjects">Nhân vật · số lượng · vị trí<textarea rows="2" data-scene="${index}" data-field="subjects">${esc(scene.subjects)}</textarea></label>`:''}</div></article>`).join('');
   renderContentOutput();
 }
-const CONTENT_VERSION='content-21';
+const CONTENT_VERSION='content-22';
 const fmtClock=s=>{s=Math.max(0,Number(s)||0);return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(Math.floor(s%60)).padStart(2,'0')}`;};
 function sceneTime(index){const w=content.windows?.[index];if(!w)return '';const angles=(w.angles||[]).map(([a,b])=>`${a}–${b}s`).join(' · ');return `<span class="scene-time" title="Góc máy FFmpeg đo được: ${esc(angles)}">${fmtClock(w.start)}–${fmtClock(w.end)} · ${(w.angles||[]).length} góc máy</span>`;}
 function saveBlob(blob,name){const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);}
 $('downloadContentJson').onclick=()=>saveBlob(new Blob([JSON.stringify({original_script:content.script,scenes:content.scenes.map((s,i)=>({scene:i+1,start:content.windows?.[i]?.start??null,end:content.windows?.[i]?.end??null,measured_angles:content.windows?.[i]?.angles??[],...s})),issues:content.issues},null,2)],{type:'application/json'}),'kich-ban.json');
-$('downloadContentXlsx').onclick=async()=>{try{const r=await fetch('/api/content/export-xlsx',{method:'POST',headers:{'Content-Type':'application/json','X-Runner-Key':key},body:JSON.stringify({scenes:content.scenes,windows:content.windows,script:content.script})});if(!r.ok)throw Error((await r.json()).error||'Không xuất được Excel.');saveBlob(await r.blob(),'kich-ban.xlsx');}catch(error){toast(error.message,true);}};
+$('downloadContentXlsx').onclick=async()=>{try{const r=await fetch('/api/content/export-xlsx',{method:'POST',headers:{'Content-Type':'application/json','X-Runner-Key':key},body:JSON.stringify({scenes:content.scenes,windows:content.windows,script:content.script,subjects:content.scenes.map(s=>s.subjects||'')})});if(!r.ok)throw Error((await r.json()).error||'Không xuất được Excel.');saveBlob(await r.blob(),'kich-ban.xlsx');}catch(error){toast(error.message,true);}};
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
   const isProduction=view==='production',isContent=view==='content',isSettings=view==='settings',isMedia=view==='media',isCommunity=view==='community',isLicense=view==='license';
@@ -338,7 +338,8 @@ function pollAuto(){
   const result=web.result;if(!result)return;
   if(job.kind==='english')return finishEnglish('gemini',result);
   if(job.kind==='review'){content.scenes=result.scenes;content.issues=result.issues;}
-  else{content.scenes=result.scenes;content.script=result.original_script;content.issues=result.issues||[];content.windows=Array.isArray(result.windows)?result.windows:[];}
+  else{content.scenes=result.scenes;content.script=result.original_script;content.issues=result.issues||[];content.windows=Array.isArray(result.windows)?result.windows:[];
+    if(Array.isArray(result.subjects))content.scenes.forEach((scene,i)=>{scene.subjects=(result.subjects[i]||[]).map(s=>s.name+(s.count?` ×${s.count}`:'')+(s.detail?` (${s.detail})`:'')).join('; ');});}
   if(result.shots)toast(result.windows?`Video gốc: ${result.shots} cảnh 10 giây · Gemini viết ${result.scenes.length} cảnh · ${result.verified??0} cảnh khớp điểm cắt FFmpeg.`:`Video gốc có ${result.shots} shot · Gemini viết ${result.scenes.length} cảnh.`);
   saveContent();renderScenes();if(job.kind!=='review')setStep(2);
   toast(job.kind==='review'?`Đã kiểm tra: ${result.scenes.length} cảnh · ${result.issues.length} vấn đề.`:`Gemini đã viết ${result.scenes.length} cảnh (${result.rounds} lượt trả lời). Bấm “Kiểm tra thiếu cảnh / lỗi” để rà lại.`);

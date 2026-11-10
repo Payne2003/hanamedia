@@ -12,7 +12,7 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-21"
+VERSION = "content-22"
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")
@@ -182,7 +182,12 @@ def scene_section(windows, duration=0, sheets=0):
             "\"0–2.4s: …; 2.4–6.1s: …\"; mỗi góc ghi cỡ cảnh, góc máy, chuyển động máy và chủ thể trong khung. Cảnh có "
             "ít hơn 3 góc máy đo được thì chia tiếp theo chuyển động máy hoặc hành động thành nhịp 2–4 giây (ghi "
             "\"cùng góc\") để mỗi cảnh có ít nhất 3 mốc. Bối cảnh, hành vi và hành động nhân vật: đúng những gì xảy ra "
-            "trong cảnh, hành động theo thứ tự các mốc giây.")
+            "trong cảnh, hành động theo thứ tự các mốc giây.\n"
+            "NGAY DƯỚI mỗi dòng Bối cảnh N, viết thêm đúng một dòng liệt kê mọi con vật/nhân vật thấy trong cảnh đó: "
+            "\"Nhân vật cảnh N: <tên> ×<số lượng> (<vị trí trong khung: trái/giữa/phải, gần/xa>, <hướng di chuyển>); "
+            "<tên khác> ×<số lượng> (…)\". Đếm đúng số lượng nhìn thấy; dùng cùng một tên cho cùng một loài/nhân vật ở mọi "
+            "cảnh (ví dụ luôn là \"sư tử cái\", không lúc \"sư tử\" lúc \"sư tử cái\"). Nếu số lượng thay đổi so với cảnh "
+            "trước, ghi rõ trong hành động nhân vật là con nào bước vào hoặc rời khung.")
     if sheets:
         text += (f"\nẢNH KHUNG HÌNH ĐÍNH KÈM ({sheets} ảnh, tool trích bằng FFmpeg): mỗi hàng là một cảnh theo thứ tự từ "
                  "trên xuống (tiếp nối giữa các ảnh), mỗi ô từ trái sang phải là một góc máy theo thứ tự mốc giây, ô đen "
@@ -209,7 +214,7 @@ def camera_problem(camera, window):
     return ""
 
 
-def script_workbook(scenes, windows=None, script="", target=None):
+def script_workbook(scenes, windows=None, script="", target=None, subjects=None):
     """Xuất kịch bản ra Excel: mỗi cảnh một dòng (thời gian, số góc máy đo được, góc quay, bối cảnh, hành vi, hành động)."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -218,17 +223,19 @@ def script_workbook(scenes, windows=None, script="", target=None):
     book = Workbook()
     sheet = book.active
     sheet.title = "Kịch bản"
-    sheet.append(["Cảnh", "Bắt đầu", "Kết thúc", "Số góc máy đo được", "Góc quay", "Bối cảnh", "Hành vi nhân vật",
-                  "Nội dung hành động nhân vật"])
+    subjects = [clean_text(s, FIELD_LIMIT) for s in (subjects or [])] if isinstance(subjects, list) else []
+    sheet.append(["Cảnh", "Bắt đầu", "Kết thúc", "Số góc máy đo được", "Góc quay", "Nhân vật · số lượng · vị trí",
+                  "Bối cảnh", "Hành vi nhân vật", "Nội dung hành động nhân vật"])
     for number, scene in enumerate(scenes, 1):
         window = windows[number - 1] if number <= len(windows) else None
         sheet.append([number, clock(window["start"]) if window else "", clock(window["end"]) if window else "",
-                      len(window["angles"]) if window else "", scene["camera"], scene["setting"], scene["behavior"],
+                      len(window["angles"]) if window else "", scene["camera"],
+                      subjects[number - 1] if number <= len(subjects) else "", scene["setting"], scene["behavior"],
                       scene["action"]])
     for cell in sheet[1]:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="5B4BDB")
-    for column, width in zip("ABCDEFGH", (7, 10, 10, 12, 60, 50, 40, 60)):
+    for column, width in zip("ABCDEFGHI", (7, 10, 10, 12, 60, 45, 50, 40, 60)):
         sheet.column_dimensions[column].width = width
     for row in sheet.iter_rows(min_row=2):
         for cell in row:
@@ -241,6 +248,80 @@ def script_workbook(scenes, windows=None, script="", target=None):
             extra.append([line])
     book.save(target)
     return target
+
+
+SUBJECT_LINE = re.compile(r"nh[âa]n\s*v[ậa]t\s*c[ảa]nh\s*(\d+)\s*[:：]\s*(.*)$", re.IGNORECASE)
+SUBJECT_ITEM = re.compile(r"^(?P<name>.+?)\s*[×xX]\s*(?P<count>\d+)\s*(?:\((?P<detail>.*)\))?\s*$")
+
+
+def subject_key(name):
+    return re.sub(r"\s+", " ", str(name or "").strip().lower())
+
+
+def parse_subjects(text):
+    """{số cảnh: [{"name", "count", "detail"}]} từ các dòng "Nhân vật cảnh N: sư tử ×2 (trái, gần); …"."""
+    found = {}
+    text = re.sub(r"(?<=\S)[ \t]*(?=(?:b[ốo]i\s*c[ảa]nh|nh[âa]n\s*v[ậa]t\s*c[ảa]nh)\s*\d+\s*[:：])", "\n",
+                  str(text or ""), flags=re.IGNORECASE)
+    for raw in text.split("\n"):
+        line = re.sub(r"[*_#`>|]+", "", raw).strip()
+        match = SUBJECT_LINE.search(line)
+        if not match:
+            continue
+        items = []
+        for part in re.split(r"[;；]", match.group(2)):
+            part = part.strip().rstrip(".")
+            if not part:
+                continue
+            item = SUBJECT_ITEM.match(part)
+            if item:
+                items.append({"name": clean_text(item.group("name"), 120), "count": int(item.group("count")),
+                              "detail": clean_text(item.group("detail") or "", 300)})
+            else:
+                items.append({"name": clean_text(part, 120), "count": None, "detail": ""})
+        found[int(match.group(1))] = items[:30]
+    return found
+
+
+def subjects_text(items):
+    return "; ".join(f"{i['name']}" + (f" ×{i['count']}" if i.get("count") else "") + (f" ({i['detail']})" if i.get("detail") else "")
+                     for i in items or [])
+
+
+ENTER_LEAVE = re.compile(r"xuất hiện|bước vào|đi vào|tiến vào|lao vào|nhảy vào|vào khung|ra khỏi|rời|biến mất|khuất|"
+                         r"đi khỏi|chạy khỏi|bỏ đi|lộ diện|thêm một|một con khác|enter|leave|exit", re.IGNORECASE)
+
+
+def continuity_problems(subjects, scenes, total):
+    """AI Scene Analyzer: cảnh thiếu dòng nhân vật, hoặc số lượng một nhân vật đổi giữa hai cảnh liền nhau mà hành động
+    không nói ai bước vào/rời khung. Trả về {số cảnh: vấn đề}."""
+    problems = {}
+    for number in range(1, total + 1):
+        if not subjects.get(number):
+            problems[number] = "thiếu dòng Nhân vật cảnh (tên, số lượng, vị trí)"
+    for number in range(2, total + 1):
+        before = {subject_key(i["name"]): i["count"] for i in subjects.get(number - 1, []) if i.get("count")}
+        now = {subject_key(i["name"]): i["count"] for i in subjects.get(number, []) if i.get("count")}
+        scene = scenes[number - 1] if number - 1 < len(scenes) else {}
+        explained = ENTER_LEAVE.search(f"{scene.get('action', '')} {scene.get('behavior', '')}")
+        changed = [f"{name} {before[name]}→{now[name]}" for name in now if name in before and now[name] != before[name]]
+        if changed and not explained and number not in problems:
+            problems[number] = ("số lượng đổi so với cảnh trước (" + ", ".join(changed) +
+                                ") mà hành động không nói con nào bước vào hoặc rời khung")
+    return problems
+
+
+def fix_subjects_request(problems, windows, subjects):
+    rows = []
+    for number, problem in sorted(problems.items()):
+        window = windows[number - 1] if number - 1 < len(windows) else None
+        span = f" ({clock(window['start'])}–{clock(window['end'])})" if window else ""
+        before = subjects_text(subjects.get(number - 1, [])) or "(không có)"
+        rows.append(f"Cảnh {number}{span}: {problem}. Cảnh trước ghi: {before}")
+    return ("Kiểm tra liên tục nhân vật giữa các cảnh. Xem lại video đúng khoảng thời gian của các cảnh dưới đây, đếm lại "
+            "và viết lại ĐÚNG các dòng \"Nhân vật cảnh N: <tên> ×<số lượng> (<vị trí>, <hướng>); …\" cho các cảnh này. "
+            "Nếu số lượng thật sự thay đổi, viết lại cả dòng Bối cảnh N (cùng định dạng) với hành động nói rõ con nào bước "
+            "vào hoặc rời khung:\n" + "\n".join(rows))
 
 
 def numbered_scenes(text):
