@@ -8,6 +8,7 @@ Google một lần trong cửa sổ đó (tool không đọc/lưu mật khẩu).
 Phần thao tác trang nằm trong các đoạn JavaScript bên dưới để dễ sửa khi Google đổi giao diện.
 """
 import os
+import re
 import queue
 import subprocess
 import threading
@@ -527,20 +528,75 @@ class GeminiWebSession:
             raise GeminiWebError("Tệp đính kèm không hợp lệ (tối đa 1 video và 8 ảnh).")
         return self.attach_upload(videos + images, status, stop, email, video=bool(videos))
 
+    # Bấm "Tải tệp lên" của trang sẽ mở hộp chọn tệp của Windows (tool không điều khiển được). Chặn trước: ô
+    # <input type=file> mà trang định mở được gắn vào trang (ẩn) để tool đưa đường dẫn tệp vào thẳng.
+    JS_CAPTURE_FILE_INPUT = r"""
+if (!window.__hanaFileCapture) {
+  window.__hanaFileCapture = true;
+  const click = HTMLInputElement.prototype.click;
+  HTMLInputElement.prototype.click = function () {
+    if (this.type === 'file') {
+      this.setAttribute('data-hana-file', '1');
+      if (!this.isConnected) { this.style.display = 'none'; document.body.appendChild(this); }
+      return;
+    }
+    return click.apply(this, arguments);
+  };
+  const show = HTMLInputElement.prototype.showPicker;
+  if (show) HTMLInputElement.prototype.showPicker = function () {
+    if (this.type === 'file') { this.setAttribute('data-hana-file', '1'); if (!this.isConnected) { this.style.display = 'none'; document.body.appendChild(this); } return; }
+    return show.apply(this, arguments);
+  };
+}
+"""
+    # Nút "+" / đính kèm cạnh ô nhập (nhãn tiếng Việt/Anh của Gemini, ChatGPT, Claude) và mục "Tải tệp lên" trong menu.
+    UPLOAD_BUTTON = re.compile(r"tải tệp|tệp lên|đính kèm|thêm tệp|thêm ảnh|mở trình đơn|menu tải|upload|attach|add files|add photos|"
+                               r"add file|open upload|thêm nội dung|add content", re.IGNORECASE)
+    UPLOAD_ITEM = re.compile(r"^\s*(tải tệp lên|tải lên tệp|upload files?|upload from computer|tải lên từ máy tính)", re.IGNORECASE)
+
+    def file_inputs(self):
+        """Ô chọn tệp của trang. Giao diện mới: bấm "+" → menu → "Tải tệp lên" (đã chặn hộp chọn tệp của Windows)."""
+        try:
+            self.driver.execute_script(self.JS_CAPTURE_FILE_INPUT)
+        except Exception:
+            pass
+        found = lambda: self.driver.find_elements("css selector", 'input[type="file"]')
+        inputs = found()
+        if inputs:
+            return inputs
+        for button in self.driver.find_elements("css selector", "button,[role='button']"):
+            try:
+                label = " ".join(filter(None, (button.get_attribute("aria-label"), button.get_attribute("mattooltip"),
+                                               button.get_attribute("data-test-id"), button.get_attribute("title"))))
+                if not label or not self.UPLOAD_BUTTON.search(label) or not button.is_displayed():
+                    continue
+                button.click()
+            except Exception:
+                continue
+            for _ in range(10):  # menu mở ra: bấm mục "Tải tệp lên"
+                time.sleep(.3)
+                inputs = found()
+                if inputs:
+                    return inputs
+                for item in self.driver.find_elements("css selector", "[role='menuitem'],[role='option'],button,li"):
+                    try:
+                        if item.is_displayed() and self.UPLOAD_ITEM.search(item.text or ""):
+                            item.click()
+                            time.sleep(.5)
+                            if found():
+                                return found()
+                    except Exception:
+                        continue
+            inputs = found()
+            if inputs:
+                return inputs
+        return found()
+
     def attach_upload(self, files, status, stop, email="", video=False):
         noun = "video gốc" if video else "ảnh bằng chứng"
         self.wait_ready(status, stop, email)
         for file in files:
-            inputs = self.driver.find_elements("css selector", 'input[type="file"]')
-            if not inputs:
-                # Accessible labels used by the two supported web clients; never guess unrelated controls.
-                buttons = self.driver.find_elements("css selector", 'button[aria-label]')
-                for button in buttons:
-                    label = (button.get_attribute("aria-label") or "").lower()
-                    if any(word in label for word in ("add files", "upload files", "attach", "thêm tệp", "tải tệp", "thêm ảnh")):
-                        button.click()
-                        break
-                inputs = self.driver.find_elements("css selector", 'input[type="file"]')
+            inputs = self.file_inputs()
             if not inputs:
                 raise GeminiWebError(f"Không tìm thấy nút đính kèm tệp của {self.NAME}. Giao diện có thể đã thay đổi; "
                                      "chưa gửi yêu cầu.")

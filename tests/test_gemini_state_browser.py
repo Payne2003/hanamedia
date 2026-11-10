@@ -71,3 +71,20 @@ class GeminiStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(sync_playwright and CHROME, "Cần Playwright + Chromium")
+class FileCaptureTests(unittest.TestCase):
+    def test_upload_menu_click_does_not_open_the_os_dialog(self):
+        from runner.gemini_web import GeminiWebSession
+        with sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=CHROME, args=["--headless", "--no-sandbox"])
+            try:
+                page = browser.new_page()
+                page.set_content('<button id="up">Tải tệp lên</button><script>up.onclick=()=>{const i=document.createElement("input");'
+                                 'i.type="file";i.click();};</script>')
+                page.evaluate("() => {" + GeminiWebSession.JS_CAPTURE_FILE_INPUT + "}")
+                page.click("#up")
+                self.assertEqual(page.evaluate("document.querySelectorAll('input[type=file][data-hana-file]').length"), 1)
+            finally:
+                browser.close()
