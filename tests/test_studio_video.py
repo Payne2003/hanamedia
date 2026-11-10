@@ -31,7 +31,10 @@ class OptionsTests(unittest.TestCase):
     def test_validation(self):
         self.assertEqual(video_options({"aspect": "9:16", "duration": 10, "resolution": "4K", "stitch": 1}),
                          {"aspect": "9:16", "duration": 10, "resolution": "4K", "stitch": True, "characters": [],
-                          "account_id": None})
+                          "account_id": None, "folder": ""})
+        self.assertEqual(video_options({"folder": '  Dê núi: tập/1?  '})["folder"], "Dê núi tập 1")
+        self.assertEqual(video_options({"folder": "con"})["folder"], "_con")
+        self.assertEqual(video_options({"folder": "a" * 200})["folder"], "a" * 80)
         self.assertEqual(video_options(None)["duration"], 0)
         for bad in ({"duration": 12}, {"duration": "10"}, {"aspect": "21:9"}, {"resolution": "8K"},
                     {"characters": ["x"]}, {"characters": ["a" * 32] * 11}, {"account_id": "../x"}):

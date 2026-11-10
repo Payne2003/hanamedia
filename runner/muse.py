@@ -962,12 +962,14 @@ return !leaves.some(e => e!==mine && !e.innerText.includes(marker)
             new_files = [p for p in self.downloads.iterdir() if p not in files_before and p.is_file()]
             partial = any(p.suffix.lower() in (".crdownload", ".tmp", ".part") for p in new_files)
             videos = [p for p in new_files if matching_download(p)]
-            if not partial and len(videos) == 1:
-                signature = (str(videos[0]), videos[0].stat().st_size)
+            if not partial and videos:
+                # Chỉ nhận 1 video: Chrome/Muse lỡ tải trùng ("x (1).mp4") thì lấy bản tải đầu; bản thừa bị xóa cùng thư mục tạm.
+                video = min(videos, key=lambda p: (p.stat().st_mtime, len(p.name)))
+                signature = (str(video), video.stat().st_size)
                 stable = stable + 1 if signature == previous else 0
                 previous = signature
-                if stable >= 2 and valid_mp4(videos[0]):
-                    return videos[0]
+                if stable >= 2 and valid_mp4(video):
+                    return video
             time.sleep(2)
         raise MuseFailure("Đã bấm Tải xuống nhưng file MP4 chưa tải hoàn tất. Bấm ⇩ Lấy video để thử lại; không gửi lại prompt.",
                           pending=True)

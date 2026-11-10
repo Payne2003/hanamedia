@@ -14,6 +14,15 @@ from .media import SOURCES as MEDIA_SOURCES, MediaLibrary
 from .characters import JOB_COLUMNS, SCHEMA as CHARACTER_SCHEMA, CharacterRegistry, migrate as migrate_characters
 
 
+def folder_name(value):
+    """Tên thư mục dự án người dùng đặt: bỏ ký tự Windows không cho phép, tối đa 80 ký tự. Trống = lưu thẳng."""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", str(value or ""))
+    name = re.sub(r"\s+", " ", name).strip().rstrip(". ")[:80].rstrip(". ")
+    if name.upper().split(".")[0] in {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}:
+        name = "_" + name
+    return name
+
+
 def video_options(options):
     """Kiểm tra thiết lập video: tỉ lệ khung, thời lượng (tối đa 10 giây), độ phân giải, tự ghép, ảnh nhân vật cố định,
     nick xử lý. Thiếu trường nào thì để trống (Muse tự quyết)."""
@@ -36,7 +45,7 @@ def video_options(options):
     if account is not None and not re.fullmatch(r"[a-f0-9]{32}", str(account)):
         raise ValueError("Nick Muse không hợp lệ.")
     return {"aspect": aspect, "duration": duration, "resolution": resolution, "stitch": bool(options.get("stitch")),
-            "characters": list(dict.fromkeys(characters)), "account_id": account}
+            "characters": list(dict.fromkeys(characters)), "account_id": account, "folder": folder_name(options.get("folder"))}
 
 
 def number(value, minimum=0):
@@ -124,6 +133,8 @@ class Store:
                 "upscaled_output": "TEXT",
                 # Số lần bộ chạy tự đưa lại hàng đợi vì lỗi Chrome TRƯỚC khi gửi (prompt chưa tới Muse).
                 "auto_retries": "INTEGER NOT NULL DEFAULT 0",
+                # Thư mục dự án (tên người dùng đặt) bên trong thư mục lưu; trống = lưu thẳng vào thư mục lưu.
+                "folder": "TEXT NOT NULL DEFAULT ''",
                 **JOB_COLUMNS,  # scene_id, images_origin (Character Master)
             }
             for name, declaration in migrations.items():
@@ -383,11 +394,11 @@ class Store:
             details = [self.prompt_details(p) or self.scene_details(sources[n] if n < len(sources) else "")
                        for n, p in enumerate(prompts)]
             db.executemany("""INSERT INTO jobs(id,prompt,cost,created,updated,batch,ordinal,images,generation_mode,details,
-                              scene_id,aspect,duration,resolution,assigned_account_id,assigned_manual)
-                              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                              scene_id,aspect,duration,resolution,assigned_account_id,assigned_manual,folder)
+                              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                            [(uuid.uuid4().hex, p.strip(), cost, now, now, batch, n, json.dumps(images[n]), mode,
                              json.dumps(details[n], ensure_ascii=False), scene_ids[n], options["aspect"],
-                             options["duration"], options["resolution"], account, int(bool(account)))
+                             options["duration"], options["resolution"], account, int(bool(account)), options["folder"])
                             for n, p in enumerate(prompts)])
             db.execute("INSERT OR IGNORE INTO batch_options(batch,stitch,created) VALUES(?,?,?)",
                        (batch, int(options["stitch"]), now))
