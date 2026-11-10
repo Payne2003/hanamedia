@@ -295,6 +295,14 @@ class GeminiWebSession:
         options.add_argument("--profile-directory=Default")
         options.add_argument("--lang=vi-VN")
         options.add_argument("--window-size=1280,1000")
+        # AI viết lâu (5–20 phút) khi cửa sổ nằm sau: Chrome không được giảm tốc hay tự xóa tab.
+        for flag in ("--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+                     "--disable-backgrounding-occluded-windows",
+                     "--disable-features=IntensiveWakeUpThrottling,CalculateNativeWinOcclusion,HeuristicMemorySaver,"
+                     "BatterySaverModeAvailable"):
+            options.add_argument(flag)
+        options.add_experimental_option("prefs", {"performance_tuning": {"high_efficiency_mode": {"state": 0},
+                                                                         "battery_saver_mode": {"state": 0}}})
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         from .chrome_profile import free_profile, short_error
         for attempt in range(2):

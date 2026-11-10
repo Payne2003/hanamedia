@@ -62,6 +62,37 @@ class AccountThreadTests(unittest.TestCase):
         self.assertIsNone(self.store.claim(1))  # tài khoản cần xem lại: không nhận tác vụ mới
 
 
+class RegionBlockTests(unittest.TestCase):
+    def test_blocked_account_hands_its_prompts_to_another_account(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(Path(folder) / "t.db")
+            store.add_account("a@tuan89.site", "", 100)
+            store.enqueue(["Một", "Hai", "Ba"], 1, uuid.uuid4().hex)
+            job, account = store.claim(1)
+            store.submitting(job["id"])  # Muse nhận prompt rồi báo khu vực không được tạo video
+            store.add_account("b@tuan89.site", "", 100)
+            self.assertTrue(store.reassign_blocked(job["id"], account["id"]))
+            snap = store.snapshot()
+            a, b = snap["accounts"]
+            self.assertEqual((a["video_blocked"], a["budget"], a["state"]), (1, 100, "ready"))
+            moved = [j for j in snap["jobs"] if j["id"] == job["id"]][0]
+            self.assertEqual((moved["status"], moved["account_id"]), ("waiting", None))
+            waiting = [j for j in snap["jobs"] if j["status"] == "waiting"]
+            self.assertEqual(len(waiting), 3)
+            self.assertTrue(all(j["assigned_account_id"] == b["id"] for j in waiting))  # cả 3 prompt sang tài khoản B
+            again, other = store.claim(1)
+            self.assertEqual(other["id"], b["id"])
+
+    def test_without_another_usable_account_the_task_stays_an_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(Path(folder) / "t.db")
+            store.add_account("a@tuan89.site", "", 100)
+            store.enqueue(["Một"], 1, uuid.uuid4().hex)
+            job, account = store.claim(1)
+            self.assertFalse(store.reassign_blocked(job["id"], account["id"]))
+            self.assertEqual(store.snapshot()["accounts"][0]["video_blocked"], 1)
+
+
 class NetworkLossTests(unittest.TestCase):
     def test_network_loss_before_sending_does_not_use_up_retries(self):
         from runner.engine import network_error

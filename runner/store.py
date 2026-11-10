@@ -838,6 +838,34 @@ class Store:
             row = db.execute("SELECT status,submitted,source_url FROM jobs WHERE id=?", (job_id,)).fetchone()
         return dict(row) if row else {}
 
+    def has_waiting(self):
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM jobs WHERE status='waiting' LIMIT 1").fetchone() is not None
+
+    def reassign_blocked(self, job_id, account_id):
+        """Muse báo tài khoản không dùng được tạo video ở khu vực của nó: Muse KHÔNG tạo video nên đưa tác vụ về hàng
+        đợi cho tài khoản khác (kể cả prompt người dùng đã chọn tài khoản này), trả lại credit dự kiến, chia lại mọi prompt
+        đang chờ của tài khoản này. Không còn tài khoản nào dùng được thì trả về False (tác vụ báo lỗi như cũ)."""
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("UPDATE accounts SET video_blocked=1 WHERE id=?", (account_id,))
+            db.execute("UPDATE jobs SET assigned_account_id=NULL,assigned_manual=0 WHERE status='waiting' AND assigned_account_id=?",
+                       (account_id,))
+            job = db.execute("SELECT * FROM jobs WHERE id=? AND status='running'", (job_id,)).fetchone()
+            other = db.execute("SELECT 1 FROM accounts WHERE id!=? AND enabled=1 AND video_blocked=0 LIMIT 1",
+                               (account_id,)).fetchone()
+            if not job or not other:
+                return False
+            state = account_after(db, account_id, "ready", job_id)
+            db.execute("UPDATE accounts SET budget=budget+?,state=?,detail=? WHERE id=?",
+                       (job["cost"], state, "Muse chặn tạo video ở khu vực của tài khoản này; đã chuyển prompt sang tài khoản khác.",
+                        account_id))
+            db.execute("""UPDATE jobs SET status='waiting',phase=?,progress=0,error='',account_id=NULL,assigned_account_id=NULL,
+                          assigned_manual=0,submitted=0,source_url='',updated=? WHERE id=?""",
+                       ("Tài khoản trước bị Muse chặn tạo video ở khu vực; chuyển sang tài khoản khác", time.time(), job_id))
+        self.plan_waiting()
+        return True
+
     def set_video_blocked(self, account_id, blocked=True):
         with self.connect() as db:
             db.execute("UPDATE accounts SET video_blocked=? WHERE id=?", (int(bool(blocked)), account_id))

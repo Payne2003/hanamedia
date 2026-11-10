@@ -231,11 +231,15 @@ class MuseBrowser:
         options.add_argument("--disable-background-timer-throttling")
         options.add_argument("--disable-renderer-backgrounding")
         options.add_argument("--disable-backgrounding-occluded-windows")
+        # Chrome không được "ngủ": không giảm tốc tab nền, không tự xóa tab (Memory Saver), không bật Tiết kiệm pin.
+        options.add_argument("--disable-features=IntensiveWakeUpThrottling,CalculateNativeWinOcclusion,"
+                             "HeuristicMemorySaver,BatterySaverModeAvailable")
         if headless:
             options.add_argument("--headless=new")
         options.add_experimental_option("prefs", {
             "intl.accept_languages": "vi-VN,vi,en",
             "translate": {"enabled": False},  # không để Google Dịch đổi chữ trong thư OTP
+            "performance_tuning": {"high_efficiency_mode": {"state": 0}, "battery_saver_mode": {"state": 0}},
             "download.default_directory": str(self.downloads),
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,

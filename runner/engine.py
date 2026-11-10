@@ -290,7 +290,12 @@ class Engine:
         planned = 0.0
         while not self.closing:
             with self.lock:
-                working = bool(self.threads)
+                working = bool(self.threads) or self.enabled
+            if working and not self.threads:
+                try:
+                    working = self.store.has_waiting()  # bộ chạy bật và còn prompt chờ (vd đang chờ mạng): vẫn giữ máy thức
+                except Exception:
+                    pass
             self.awake.set(working)
             with self.lock:
                 pair = (self.store.claim(self.limit) if self.enabled and self.license_ok()
@@ -411,7 +416,11 @@ class Engine:
         with self.lock:
             browser = self.browsers.get(account["id"])
         if browser is not None and getattr(browser, "router", None) is not None and browser.router.active():
-            return browser  # tab khác đang chạy: Chrome chắc chắn còn sống, không chen vào kiểm tra
+            try:
+                if browser.driver.window_handles:
+                    return browser  # tab khác đang chạy và Chrome còn sống: không chen vào kiểm tra phiên
+            except Exception:
+                pass  # người dùng đã đóng cả Chrome: mở Chrome mới bên dưới
         if browser is not None and not self.alive(browser):
             with self.lock:
                 if self.browsers.get(account["id"]) is browser:
@@ -476,7 +485,11 @@ class Engine:
             message = str(error) if known else (
                 f"Bộ chạy gặp lỗi Chrome/trang Muse ({technical}). Chi tiết trong data/logs/runner.log; không tự gửi lại.")
             if known and getattr(error, "region", False):
-                self.store.set_video_blocked(account["id"])  # không giao prompt cho tài khoản này nữa
+                # Muse không tạo video cho tài khoản này ở khu vực của nó: chuyển prompt (và mọi prompt đang chờ) sang
+                # tài khoản khác; không giao prompt cho tài khoản này nữa.
+                if self.store.reassign_blocked(job["id"], account["id"]):
+                    return
+                self.store.set_video_blocked(account["id"])
             dead = not known and any(t in f"{type(error).__name__} {error}" for t in (
                 "NoSuchWindow", "InvalidSessionId", "invalid session id", "not connected to DevTools",
                 "target window already closed", "web view not found", "chrome not reachable"))
