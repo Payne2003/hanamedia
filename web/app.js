@@ -508,10 +508,17 @@ async function runPipelineFlow(){
     pipeStep('download','active');
     if(link&&(!content.videoFile||content.videoFrom!==link)){
       content.video=link;saveContent();
-      await api('/api/production/download',{url:link});
-      let st;do{await sleep(1500);st=await (await fetch('/api/production/download')).json();$('contentVideoFile').textContent=st.status||'Đang tải…';}while(st.busy);
-      if(st.error||!st.path)throw Error(st.error||'Không tải được video.');
-      content.videoFile=st.path;content.videoFrom=link;saveContent();renderVideoFile();
+      try{
+        await api('/api/production/download',{url:link});
+        let st;do{await sleep(1500);st=await (await fetch('/api/production/download')).json();$('contentVideoFile').textContent=st.status||'Đang tải…';}while(st.busy);
+        if(st.error||!st.path)throw Error(st.error||'Không tải được video.');
+        content.videoFile=st.path;content.videoFrom=link;saveContent();renderVideoFile();
+      }catch(error){
+        // Không tải được (YouTube chặn, video riêng tư…): link YouTube thì Gemini vẫn xem qua link, chỉ thiếu phần FFmpeg.
+        if(!/youtu\.?be/i.test(link))throw error;
+        content.videoFile='';content.videoFrom='';saveContent();renderVideoFile();
+        toast(`Không tải được video (${error.message}). Gemini sẽ xem qua link YouTube; bước FFmpeg (điểm cắt, khung hình) bị bỏ qua.`,true);
+      }
     }
     pipeStep('download','done');current='script';pipeStep('script','active');
     if(!await runAuto('generate',true))throw Error('Không chạy được Gemini.');
@@ -530,6 +537,16 @@ async function runPipelineFlow(){
   finally{pipeline=null;renderAuto();}
 }
 $('runPipeline').onclick=runPipelineFlow;
+// Dán link là tự chạy (bật/tắt bằng ô "Tự chạy ngay khi dán link", nhớ trên máy).
+try{$('autoStart').checked=localStorage.getItem('hana-auto-start')!=='0';}catch{}
+$('autoStart').onchange=()=>{try{localStorage.setItem('hana-auto-start',$('autoStart').checked?'1':'0');}catch{}};
+function autoStartFromLink(){
+  const link=$('contentVideo').value.trim();
+  if(!$('autoStart').checked||!/^https?:\/\/\S+$/i.test(link)||pipeline||autoJob||chatJob)return;
+  content.video=link;saveContent();toast('Đã nhận link · tool tự chạy: tải video → phân tích → viết prompt → kiểm duyệt.');runPipelineFlow();
+}
+$('contentVideo').addEventListener('paste',()=>setTimeout(autoStartFromLink,300));
+$('contentVideo').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();autoStartFromLink();}});
 $('takeEnglish').onclick=()=>api('/api/content/web-take',{engine:content.englishEngine}).then(()=>$('englishStatus').textContent='Đang đọc câu trả lời trên trang…').catch(error=>toast(error.message,true));
 $('stopEnglish').onclick=()=>api('/api/content/web-stop',{engine:content.englishEngine}).then(()=>$('englishStatus').textContent='Đang dừng…').catch(error=>toast(error.message,true));
 // Tách đầu vào giống máy chủ (content.split_scene_lines): mỗi dòng một cảnh, hoặc "[...; Bối cảnh 2: ...]".
