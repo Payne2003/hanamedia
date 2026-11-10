@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from unittest.mock import patch
 
 from app import AppServer
@@ -109,6 +110,17 @@ class ContentHTTPTests(unittest.TestCase):
         connection.close()
         return data
 
+    def test_video_file_is_checked_before_gemini_starts(self):
+        status, data = self.post("/api/content/web-run", {"brief": "x", "video_file": "/khong/co/file.mp4"})
+        self.assertEqual(status, 400)
+        self.assertIn("Không thấy file video", data["error"])
+        with tempfile.TemporaryDirectory() as folder:
+            other = Path(folder) / "a.mkv"
+            other.write_bytes(b"x")
+            status, data = self.post("/api/content/web-run", {"brief": "x", "video_file": str(other)})
+            self.assertEqual(status, 400)
+            self.assertIn(".mp4", data["error"])
+
     def test_only_gemini_pro_endpoints_remain_and_old_key_is_cleared(self):
         for path in ("/api/content/settings", "/api/content/generate", "/api/content/review",
                      "/api/content/duration", "/api/content/web-prompt", "/api/content/parse"):
@@ -195,6 +207,110 @@ class GeminiWebTests(unittest.TestCase):
                 threading.Event().wait(0.05)
             self.assertIn("chưa nhận", runner.snapshot()["error"])
             runner.close()
+
+
+class GeminiVideoFileTests(unittest.TestCase):
+    line = staticmethod(lambda n: f"Bối cảnh {n}: Cảnh {n}, góc quay: Trung cảnh, hành vi nhân vật: Đi, Nội dung hành động nhân vật: Bước {n};")
+    shots = [dict(start=0.0, end=2.0), dict(start=2.0, end=3.5), dict(start=3.5, end=6.0)]
+
+    def test_prompt_with_attached_file_accepts_any_link_and_is_isolated(self):
+        prompt = content.web_prompt("generate", "Phân tích video", "https://www.tiktok.com/@a/video/1", attached=True)
+        self.assertIn("FILE VIDEO GỐC ĐÍNH KÈM", prompt)
+        self.assertNotIn("tiktok", prompt)
+        self.assertTrue(prompt.startswith(content.ISOLATION))
+        with self.assertRaises(ValueError):  # không đính kèm file thì vẫn chỉ nhận link YouTube
+            content.web_prompt("generate", "x", "https://www.tiktok.com/@a/video/1")
+        table = content.shot_section(self.shots, 6)
+        self.assertIn("video có 3 shot", table)
+        self.assertIn("Shot 3: 00:03.50 – 00:06.00", table)
+        self.assertIn("Viết ĐÚNG 3 cảnh", table)
+
+    def test_missing_scenes_versus_measured_shots_are_asked_again(self):
+        from runner import gemini_web
+        test = self
+
+        class Session:
+            def __init__(self):
+                self.sent, self.attached, self.counts = [], [], [2, 0]  # lần đầu trang còn cuộc trò chuyện cũ
+                self.answers = ["KỊCH BẢN VIDEO GỐC:\nK\nDANH SÁCH CẢNH:\n" + test.line(1) + "\n" + test.line(2)
+                                + "\n" + gemini_web.END_MARK, test.line(3) + "\n" + gemini_web.END_MARK]
+                self.opened = 0
+            def new_chat(self): self.opened += 1
+            def wait_ready(self, status, stop, email=""): pass
+            def state(self): return {"count": self.counts.pop(0) if self.counts else 0}
+            def choose_model(self, name): return name
+            def attach_images(self, files, status, stop, email=""): self.attached += files
+            def ask(self, text, status, stop, email="", label=""):
+                self.sent.append(text)
+                return self.answers.pop(0)
+
+        session = Session()
+        with mock.patch.object(gemini_web.time, "sleep"):
+            result = gemini_web.run_conversation(session, "Yêu cầu", lambda _: None, threading.Event(),
+                                                 files=["v.mp4"], shots=self.shots)
+        self.assertEqual(session.opened, 2)  # trang cũ chưa trống: mở lại cuộc trò chuyện mới
+        self.assertEqual(session.attached, ["v.mp4"])
+        self.assertEqual(len(result["scenes"]), 3)
+        self.assertIn("mới có 2 cảnh", session.sent[1])
+        self.assertIn("Shot 3", session.sent[1])
+        self.assertEqual(result["issues"], [])
+
+    def test_runner_measures_shots_and_attaches_short_named_copy(self):
+        from runner import gemini_web, reverse_engineer
+        seen = {}
+        line = self.line
+
+        class Session:
+            def __init__(self, profile): pass
+            def alive(self): return True
+            def close(self): pass
+            def new_chat(self): pass
+            def wait_ready(self, status, stop, email=""): pass
+            def choose_model(self, name): return ""
+            def attach_images(self, files, status, stop, email=""):
+                seen["files"] = [Path(f) for f in files]
+                seen["exists"] = all(Path(f).is_file() for f in files)
+            def ask(self, text, status, stop, email="", label=""):
+                seen["prompt"] = text
+                return line(1) + "\n" + line(2) + "\n" + gemini_web.END_MARK
+
+        with tempfile.TemporaryDirectory() as folder:
+            video = Path(folder) / "Một tiêu đề rất dài [abc].mp4"
+            video.write_bytes(b"video")
+            with mock.patch.object(reverse_engineer, "quick_shots", return_value=(self.shots[:2], 3.5)):
+                runner = gemini_web.GeminiWebRunner(Path(folder) / "profile", Session)
+                runner.start("generate", "Yêu cầu", lines={"video": str(video), "measure": True})
+                for _ in range(100):
+                    if not runner.snapshot()["busy"]:
+                        break
+                    threading.Event().wait(0.05)
+                runner.close()
+            snap = runner.snapshot()
+            self.assertEqual(snap["error"], "")
+            self.assertEqual(snap["result"]["shots"], 2)
+            self.assertTrue(seen["exists"])
+            self.assertTrue(seen["files"][0].name.startswith("video-goc-"))
+            self.assertIn("BẢNG ĐIỂM CẮT", seen["prompt"])
+            self.assertTrue(video.exists())  # file gốc của người dùng giữ nguyên
+
+    def test_clear_field_refuses_to_send_when_old_text_stays(self):
+        from runner import gemini_web
+
+        class Driver:
+            def __init__(self, left): self.left = left
+            def execute_script(self, script, *args): return self.left.pop(0) if len(self.left) > 1 else self.left[0]
+
+        class Field:
+            def click(self): pass
+            def send_keys(self, *keys): pass
+
+        session = gemini_web.GeminiWebSession.__new__(gemini_web.GeminiWebSession)
+        with mock.patch.object(gemini_web.time, "sleep"):
+            session.driver = Driver([12, 0])
+            session.clear_field(Field())  # lần 2 đã xóa sạch
+            session.driver = Driver([40])
+            with self.assertRaises(gemini_web.GeminiWebError):
+                session.clear_field(Field())
 
 
 class GeminiLoginTests(unittest.TestCase):

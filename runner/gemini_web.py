@@ -45,7 +45,8 @@ const squash = value => (value || '').replace(/\s+/g, '');
 const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
 const head = squash(lines[0]).slice(0, 40), tail = squash(lines[lines.length - 1]).slice(-40);
 const filled = () => { const value = squash(element.tagName === 'TEXTAREA' ? element.value : element.innerText);
-  return value.includes(head) && value.includes(tail) && value.length >= squash(text).length * 0.9; };
+  const wanted = squash(text).length;
+  return value.includes(head) && value.includes(tail) && value.length >= wanted * 0.9 && value.length <= wanted * 1.05 + 30; };
 const result = () => ({length: (element.tagName === 'TEXTAREA' ? element.value : element.innerText).length, ok: filled()});
 element.focus();
 if (element.tagName === 'TEXTAREA') {
@@ -86,8 +87,10 @@ const [element, text] = arguments;
 const squash = value => (value || '').replace(/\s+/g, '');
 const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
 const value = squash(element.tagName === 'TEXTAREA' ? element.value : element.innerText);
+const wanted = squash(text).length;
+// Không được thừa chữ: ô còn sót yêu cầu cũ (lần chạy trước) thì KHÔNG coi là đã điền đúng.
 const ok = value.includes(squash(lines[0]).slice(0, 40)) && value.includes(squash(lines[lines.length - 1]).slice(-40)) &&
-  value.length >= squash(text).length * 0.9;
+  value.length >= wanted * 0.9 && value.length <= wanted * 1.05 + 30;
 return {length: value.length, ok};
 """
 
@@ -209,6 +212,42 @@ MOD_KEY = "\ue03d" if sys.platform == "darwin" else "\ue009"
 
 class GeminiWebError(RuntimeError):
     pass
+
+
+# File video Gemini web nhận (mkv không được Gemini hỗ trợ). Gemini giới hạn khoảng 2 GB mỗi file.
+VIDEO_TYPES = (".mp4", ".mov", ".webm", ".avi", ".mpeg", ".mpg")
+VIDEO_LIMIT = 2 * 1024 ** 3
+
+
+def upload_copy(path, folder):
+    """Bản sao tên ngắn của video gốc để đính kèm (tên dài/ký tự lạ có thể bị Gemini cắt, tool không xác nhận được)."""
+    import shutil
+    source = Path(path)
+    folder = Path(folder)
+    shutil.rmtree(folder, ignore_errors=True)  # chỉ giữ video của lần chạy này
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / ("video-goc-" + uuid.uuid4().hex[:6] + source.suffix.lower())
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+    return target
+
+
+def start_fresh(session, status, stop, email=""):
+    """Mở cuộc trò chuyện MỚI và chắc chắn trang trống (không còn câu trả lời của lần chạy trước)."""
+    for attempt in range(3):
+        session.new_chat()
+        session.wait_ready(status, stop, email)
+        try:
+            count = int((session.state() or {}).get("count") or 0)
+        except Exception:
+            return  # phiên không đọc được trạng thái (bản thử): coi như trang mới
+        if count == 0:
+            return
+        status(f"Trang vẫn hiện cuộc trò chuyện cũ · mở lại cuộc trò chuyện mới (lần {attempt + 1})")
+        time.sleep(2)
+    raise GeminiWebError("Không mở được cuộc trò chuyện mới (trang vẫn hiện cuộc trò chuyện cũ). Chưa gửi để không lẫn kết quả cũ.")
 
 
 def chrome_executable():
@@ -365,8 +404,8 @@ class GeminiWebSession:
                 "origin": origin, "permissions": ["clipboardReadWrite", "clipboardSanitizedWrite"]})
         except Exception:
             pass
+        self.clear_field(field)
         try:
-            self.driver.execute_script(JS_CLEAR, field)
             field.click()
             if self.driver.execute_async_script(JS_CLIPBOARD, text):
                 ActionChains(self.driver).key_down(MOD_KEY).send_keys("v").key_up(MOD_KEY).perform()
@@ -378,8 +417,8 @@ class GeminiWebSession:
         if result.get("ok"):
             return result
         # 2) Gõ như bàn phím: chèn từng dòng, xuống dòng bằng Shift+Enter (Enter = Gửi trong Gemini).
+        self.clear_field(field)
         try:
-            self.driver.execute_script(JS_CLEAR, field)
             field.click()
             lines = text.split("\n")
             for index, line in enumerate(lines):
@@ -402,6 +441,27 @@ class GeminiWebSession:
         if self.sent_early(before):
             raise GeminiWebError(f"{self.NAME} đã gửi yêu cầu trước khi tool điền xong. Thử lại.")
         return result
+
+    def clear_field(self, field):
+        """Xóa sạch ô nhập trước khi dán: chữ cũ còn sót (yêu cầu lần trước, bản nháp Gemini tự khôi phục) không được
+        dính vào yêu cầu mới. Không xóa được thì dừng, không gửi."""
+        from selenium.webdriver.common.keys import Keys
+        for attempt in range(3):
+            try:
+                left = self.driver.execute_script(JS_CLEAR, field)
+            except Exception:
+                left = None
+            if left == 0:
+                return
+            try:
+                field.click()
+                field.send_keys(MOD_KEY + "a")
+                field.send_keys(Keys.DELETE)
+            except Exception:
+                pass
+            time.sleep(.3)
+        raise GeminiWebError(f"Ô nhập của {self.NAME} còn chữ cũ mà tool không xóa được; chưa gửi để không lẫn yêu cầu cũ. "
+                             f"Xóa ô nhập trong cửa sổ {self.NAME} rồi chạy lại.")
 
     def wait_idle(self, status, stop, timeout=900):
         """Không gửi yêu cầu mới khi Gemini còn đang viết câu trước."""
@@ -449,10 +509,17 @@ class GeminiWebSession:
             field.send_keys(Keys.ENTER)
 
     def attach_images(self, files, status, stop, email=""):
-        """Attach local evidence images. Fail closed if the current page cannot confirm uploads."""
+        """Attach local evidence images (hoặc 1 file video gốc). Fail closed if the current page cannot confirm uploads."""
         files = [Path(file).resolve() for file in files]
+        videos = [f for f in files if f.suffix.lower() in VIDEO_TYPES]
+        if videos and len(files) == 1 and files[0].is_file():
+            return self.attach_upload(files, status, stop, email, video=True)
         if not 1 <= len(files) <= 8 or any(not f.is_file() or f.suffix.lower() not in (".jpg", ".jpeg", ".png") for f in files):
             raise GeminiWebError("Ảnh bằng chứng không hợp lệ (tối đa 8 ảnh).")
+        return self.attach_upload(files, status, stop, email)
+
+    def attach_upload(self, files, status, stop, email="", video=False):
+        noun = "video gốc" if video else "ảnh bằng chứng"
         self.wait_ready(status, stop, email)
         for file in files:
             inputs = self.driver.find_elements("css selector", 'input[type="file"]')
@@ -466,16 +533,20 @@ class GeminiWebSession:
                         break
                 inputs = self.driver.find_elements("css selector", 'input[type="file"]')
             if not inputs:
-                raise GeminiWebError("Không tìm thấy nút đính kèm ảnh của AI. Giao diện có thể đã thay đổi; chưa gửi yêu cầu QC.")
+                raise GeminiWebError(f"Không tìm thấy nút đính kèm tệp của {self.NAME}. Giao diện có thể đã thay đổi; "
+                                     "chưa gửi yêu cầu.")
+            kinds = ("video", "mp4", "*") if video else ("image", "jpg", "jpeg", "png", "*")
             compatible = [field for field in inputs if not field.get_attribute("accept") or
-                          any(kind in field.get_attribute("accept").lower() for kind in ("image", "jpg", "jpeg", "png", "*"))]
+                          any(kind in field.get_attribute("accept").lower() for kind in kinds)]
             if not compatible:
-                raise GeminiWebError("Trang AI không có ô tải ảnh phù hợp; chưa gửi QC.")
+                raise GeminiWebError(f"Trang {self.NAME} không có ô tải {noun} phù hợp; chưa gửi yêu cầu.")
+            if video:
+                status(f"Đang tải video gốc lên {self.NAME} ({file.stat().st_size / 1048576:.0f} MB)…")
             compatible[-1].send_keys(str(file))
-            deadline = time.monotonic() + 120
+            deadline = time.monotonic() + (900 if video else 120)
             while time.monotonic() < deadline:
                 if stop.is_set():
-                    raise GeminiWebError("Đã dừng tải ảnh bằng chứng.")
+                    raise GeminiWebError(f"Đã dừng tải {noun}.")
                 uploaded = self.driver.execute_script("""const name=arguments[0];
                     const body=document.body.innerText||'';
                     const found=body.includes(name)||[...document.querySelectorAll('[aria-label],[title],img')].some(e=>
@@ -485,14 +556,18 @@ class GeminiWebSession:
                     break
                 time.sleep(.5)
             else:
-                raise GeminiWebError("Không xác nhận được ảnh đã tải xong. Dừng trước khi gửi QC.")
+                where = self.dump(f"Không xác nhận được {noun} đã tải lên xong")
+                raise GeminiWebError(f"Không xác nhận được {noun} đã tải lên {self.NAME} xong. Dừng trước khi gửi yêu cầu."
+                                     + (f" Gửi file chẩn đoán {where} cho người hỗ trợ." if where else ""))
 
         confirmed = self.driver.execute_script("""return arguments[0].every(name=>
           (document.body.innerText||'').includes(name)||[...document.querySelectorAll('[aria-label],[title],img')].some(e=>
           [e.getAttribute('aria-label'),e.getAttribute('title'),e.getAttribute('alt')].some(v=>v&&v.includes(name))));""",
           [file.name for file in files])
         if not confirmed:
-            raise GeminiWebError("Trang AI chưa giữ đủ ảnh bằng chứng; chưa gửi QC.")
+            raise GeminiWebError(f"Trang {self.NAME} chưa giữ đủ {noun}; chưa gửi yêu cầu.")
+        if video:
+            status(f"Đã tải video gốc lên {self.NAME}")
 
     def ask(self, text, status, stop, email="", timeout=1200, label="Gemini đang viết"):
         field = self.wait_ready(status, stop, email)
@@ -571,18 +646,27 @@ def finish_instruction():
             "tôi sẽ nhắn \"viết tiếp\".")
 
 
-def continue_instruction(count):
+def continue_instruction(count, shots=None):
+    shots = list(shots or [])
+    if shots and count < len(shots):
+        nxt = shots[count]
+        return (f"Video có {len(shots)} shot theo BẢNG ĐIỂM CẮT nhưng mới có {count} cảnh. Viết tiếp từ Bối cảnh {count + 1} "
+                f"(Shot {count + 1}: {nxt['start']:.2f}s – {nxt['end']:.2f}s) đến Bối cảnh {len(shots)}, cùng đúng định dạng "
+                f"mỗi cảnh một dòng, không lặp lại cảnh đã viết. Viết xong Bối cảnh {len(shots)} thì viết dòng {END_MARK}.")
     return (f"Viết tiếp danh sách cảnh, bắt đầu từ Bối cảnh {count + 1}, cùng đúng định dạng mỗi cảnh một dòng, "
             f"không lặp lại cảnh đã viết. Khi viết xong cảnh cuối cùng của video, viết dòng {END_MARK}.")
 
 
-def run_conversation(session, prompt, status, stop, email="", model="", review=False):
-    """Gửi yêu cầu, tự nhắn viết tiếp đến khi đủ, trả về kết quả đã đọc (kịch bản, cảnh, vấn đề)."""
-    session.new_chat()
-    session.wait_ready(status, stop, email)
+def run_conversation(session, prompt, status, stop, email="", model="", review=False, files=(), shots=None):
+    """Gửi yêu cầu, tự nhắn viết tiếp đến khi đủ, trả về kết quả đã đọc (kịch bản, cảnh, vấn đề).
+    files: video gốc đính kèm; shots: điểm cắt tool đo được — thiếu cảnh so với số shot thì tự nhắn viết tiếp."""
+    shots = list(shots or [])
+    start_fresh(session, status, stop, email)
     if model:
         picked = session.choose_model(model)
         status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
+    if files:
+        session.attach_images(list(files), status, stop, email)
     answers = [session.ask(prompt + finish_instruction(), status, stop, email,
                            label="Gemini đang kiểm tra" if review else "Gemini đang xem video và viết")]
     try:
@@ -592,11 +676,14 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
         raise GeminiWebError("Tool không đọc được cảnh nào trong câu trả lời của Gemini nên đã dừng (không gửi lại). "
                              + (f"Gửi file chẩn đoán {where} cho người hỗ trợ." if where else ""))
     for round_number in range(MAX_CONTINUE):
-        if END_MARK.lower() in answers[-1].lower():
-            break
         count = len(result["scenes"])
-        more = session.ask(continue_instruction(count), status, stop, email,
-                           label=f"Đã có {count} cảnh · Gemini đang viết tiếp (lần {round_number + 1})")
+        if END_MARK.lower() in answers[-1].lower() and (not shots or count >= len(shots)):
+            break
+        if shots and count >= len(shots):
+            break
+        more = session.ask(continue_instruction(count, shots), status, stop, email,
+                           label=f"Đã có {count}{f'/{len(shots)}' if shots else ''} cảnh · Gemini đang viết tiếp "
+                                 f"(lần {round_number + 1})")
         answers.append(more)
         try:
             extra = content.parse_answer(more)
@@ -609,7 +696,12 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
         result["scenes"] += new
         result["issues"] += extra["issues"]
     result["scenes"] = result["scenes"][:content.MAX_SCENES]
+    if shots and len(result["scenes"]) != min(len(shots), content.MAX_SCENES):
+        result["issues"] = list(result.get("issues") or []) + [
+            f"Gemini viết {len(result['scenes'])} cảnh nhưng tool đo được {len(shots)} shot trong video gốc. "
+            "Bấm “Kiểm tra thiếu cảnh / lỗi” hoặc xem lại các shot ngắn."]
     result["rounds"] = len(answers)
+    result["shots"] = len(shots)
     return result
 
 
@@ -621,8 +713,7 @@ def run_characters(session, script, scenes, status, stop, email="", model=""):
     from . import characters as chars
     total = len(scenes)
     name = getattr(session, "NAME", "Gemini")
-    session.new_chat()
-    session.wait_ready(status, stop, email)
+    start_fresh(session, status, stop, email)
     if model:
         picked = session.choose_model(model)
         status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
@@ -654,8 +745,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
     """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
     total = len(lines)
     name = getattr(session, "NAME", "Gemini")
-    session.new_chat()
-    session.wait_ready(status, stop, email)
+    start_fresh(session, status, stop, email)
     if model:
         picked = session.choose_model(model)
         status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
@@ -836,8 +926,7 @@ class GeminiWebRunner:
                     except Exception:
                         pass
                 if kind == "production":
-                    self.session.new_chat()
-                    self.session.wait_ready(status, self.stop, email)
+                    start_fresh(self.session, status, self.stop, email)
                     if model and not self.session.choose_model(model):
                         raise GeminiWebError(f"Không chọn được model {model} trên {self.name}. Kiểm tra model trên website.")
                     files = lines.get("files", []) if isinstance(lines, dict) else []
@@ -864,7 +953,23 @@ class GeminiWebRunner:
                              status=f"Xong: {done}/{result['total']} prompt tiếng Anh sau {result['rounds']} lượt"
                                     + (f" · còn thiếu {len(result['missing'])}" if result["missing"] else ""))
                     continue
-                result = run_conversation(self.session, prompt, status, self.stop, email, model, kind == "review")
+                files, shots = [], None
+                if isinstance(lines, dict) and lines.get("video"):
+                    source = Path(lines["video"])
+                    if lines.get("measure", True):
+                        status("Đang đo điểm cắt cảnh trong video gốc (để Gemini viết đủ cảnh)…")
+                        from . import reverse_engineer
+                        try:
+                            shots, duration = reverse_engineer.quick_shots(source, self.stop)
+                            prompt += "\n\n" + content.shot_section(shots, duration)
+                        except Exception as error:  # không đo được: vẫn cho Gemini xem file, chỉ bỏ bảng điểm cắt
+                            if self.stop.is_set():
+                                raise GeminiWebError("Đã dừng.") from None
+                            shots = None
+                            status(f"Không đo được điểm cắt ({str(error)[:80]}); Gemini vẫn xem file video")
+                    files = [upload_copy(source, self.profile.parent / "gemini-uploads")]
+                result = run_conversation(self.session, prompt, status, self.stop, email, model, kind == "review",
+                                          files=files, shots=shots)
                 result["prompts"] = content.format_prompts(result["scenes"])
                 self.set(busy=False, result=result,
                          status=f"Xong: {len(result['scenes'])} cảnh sau {result['rounds']} lượt trả lời của {self.name}")

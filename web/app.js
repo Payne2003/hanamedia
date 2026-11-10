@@ -227,8 +227,8 @@ $('importButton').onclick=()=>$('importFile').click();$('importFile').onchange=a
 // ---- Viết content: Prompt + link video gốc → Gemini Pro (tự động trên gemini.google.com) → cảnh → hàng loạt prompt ----
 const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior','Hành vi nhân vật'],['action','Nội dung hành động nhân vật']];
 const defaultBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 15 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
-let content={brief:defaultBrief,video:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',englishAspect:'16:9',englishStructured:true,englishSeconds:8,englishAngles:0,englishIssues:[],english:'',englishMissing:[],englishEngine:'chatgpt',englishChatgpt:'',englishChatgptMissing:[]};
-try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,brief:saved.brief??content.brief,video:saved.video||'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,englishSeconds:[5,8,10,15].includes(Number(saved.englishSeconds))?Number(saved.englishSeconds):15,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:'chatgpt',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
+let content={brief:defaultBrief,video:'',videoFile:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',englishAspect:'16:9',englishStructured:true,englishSeconds:8,englishAngles:0,englishIssues:[],english:'',englishMissing:[],englishEngine:'chatgpt',englishChatgpt:'',englishChatgptMissing:[]};
+try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,brief:saved.brief??content.brief,video:saved.video||'',videoFile:typeof saved.videoFile==='string'?saved.videoFile:'',videoFrom:typeof saved.videoFrom==='string'?saved.videoFrom:'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,englishSeconds:[5,8,10,15].includes(Number(saved.englishSeconds))?Number(saved.englishSeconds):15,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:'chatgpt',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
 // Bản nháp còn đúng câu mẫu cũ (8 giây) thì đổi sang câu mẫu mới (15 giây).
 if(content.brief==='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.')content.brief=defaultBrief;
 const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
@@ -250,7 +250,7 @@ function renderScenes(){
   $('sceneList').innerHTML=content.scenes.map((scene,index)=>`<article class="scene-card"><div class="scene-top"><b>Cảnh ${index+1}</b><span class="bulk-spacer"></span><button type="button" data-scene-move="${index}" data-dir="-1" ${index?'':'disabled'} aria-label="Đưa cảnh ${index+1} lên">↑</button><button type="button" data-scene-move="${index}" data-dir="1" ${index<content.scenes.length-1?'':'disabled'} aria-label="Đưa cảnh ${index+1} xuống">↓</button><button type="button" class="danger-outline" data-scene-delete="${index}" aria-label="Xóa cảnh ${index+1}">✕</button></div><div class="scene-fields">${sceneFields.map(([field,name])=>`<label>${name}<textarea rows="2" data-scene="${index}" data-field="${field}">${esc(scene[field])}</textarea></label>`).join('')}</div></article>`).join('');
   renderContentOutput();
 }
-const CONTENT_VERSION='content-19';
+const CONTENT_VERSION='content-20';
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
   const isProduction=view==='production',isContent=view==='content',isSettings=view==='settings',isMedia=view==='media',isCommunity=view==='community',isLicense=view==='license';
@@ -261,7 +261,7 @@ function showView(view){
   if(isLicense)loadLicense();
   if(isSettings){applyAutoSettings(true);renderSettings(true);}
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
-  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles||0);renderEnglishEngine();openCharacters();}
+  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;renderVideoFile();$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles||0);renderEnglishEngine();openCharacters();}
   const hash=isProduction?'#production':isContent?'#content':isSettings?'#settings':isMedia?'#media':isCommunity?'#community':isLicense?'#license':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);markSidebar();
 }
@@ -269,7 +269,29 @@ document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>showView(b.data
 $('closeContent').onclick=()=>showView('studio');
 window.addEventListener('hashchange',()=>{if(/^#job=/.test(location.hash))return;showView(location.hash==='#production'?'production':location.hash==='#content'?'content':location.hash==='#settings'?'settings':location.hash==='#media'?'media':location.hash==='#community'?'community':location.hash==='#license'?'license':'studio');});
 $('contentBrief').oninput=()=>{content.brief=$('contentBrief').value;saveContent();};
-$('contentVideo').oninput=()=>{content.video=$('contentVideo').value.trim();saveContent();};
+$('contentVideo').oninput=()=>{content.video=$('contentVideo').value.trim();
+  // File tải từ link cũ: đổi link thì bỏ file để không gửi nhầm video của lần trước cho Gemini.
+  if(content.videoFile&&content.videoFrom&&content.videoFrom!==content.video){content.videoFile='';content.videoFrom='';renderVideoFile();}
+  saveContent();};
+// Đính kèm FILE video gốc cho Gemini (xem đủ từng khung hình thay vì đọc link); tool còn đo điểm cắt để Gemini viết đủ cảnh.
+function renderVideoFile(){
+  const file=content.videoFile;$('contentClearVideo').hidden=!file;
+  $('contentVideoFile').textContent=file?`📎 Gemini sẽ xem file: ${file.split(/[\\/]/).pop()} · tool đo điểm cắt để viết đủ cảnh`:'Chưa đính kèm file. Tải video từ link hoặc chọn file để Gemini xem đủ từng cảnh (chính xác hơn đọc link).';
+}
+let contentDownloadTimer=null;
+async function pollContentDownload(){
+  try{
+    const st=await (await fetch('/api/production/download')).json(),bar=$('contentDownloadProgress');
+    bar.hidden=!st.busy;bar.value=st.progress||0;
+    if(st.busy){$('contentVideoFile').textContent=st.status||'Đang tải…';contentDownloadTimer=setTimeout(pollContentDownload,1000);return;}
+    $('contentDownload').disabled=false;contentDownloadTimer=null;
+    if(st.error){toast(st.error,true);renderVideoFile();return;}
+    if(st.path){content.videoFile=st.path;content.videoFrom=st.url||content.video;saveContent();renderVideoFile();toast('Đã tải video gốc. Bấm Chạy tự động trên Gemini: tool sẽ đính kèm file này.');}
+  }catch(error){$('contentDownload').disabled=false;toast(error.message,true);}
+}
+$('contentDownload').onclick=async()=>{try{const url=$('contentVideo').value.trim();if(!url)throw Error('Dán link video gốc trước.');await api('/api/production/download',{url});$('contentDownload').disabled=true;if(contentDownloadTimer)clearTimeout(contentDownloadTimer);pollContentDownload();}catch(error){toast(error.message,true);}};
+$('contentPickVideo').onclick=async()=>{try{const r=await api('/api/production/pick-video',{});if(r.path){content.videoFile=r.path;content.videoFrom='';saveContent();renderVideoFile();}}catch(error){toast(error.message,true);}};
+$('contentClearVideo').onclick=()=>{content.videoFile='';content.videoFrom='';saveContent();renderVideoFile();};
 $('contentLanguage').onchange=()=>{content.language=$('contentLanguage').value;saveContent();};
 $('contentScript').oninput=()=>{content.script=$('contentScript').value;saveContent();};
 // Gemini Pro tự động: tool điều khiển Chrome đã đăng nhập tài khoản Google.
@@ -285,7 +307,7 @@ async function runAuto(kind){
   if(kind!=='review'&&content.scenes.length&&!confirm('Chạy lại sẽ thay thế danh sách cảnh hiện tại. Tiếp tục?'))return;
   try{
     await saveAutoSettings();
-    const {id}=await api('/api/content/web-run',{kind,brief:content.brief,video_url:content.video,language:content.language,scenes:kind==='review'?content.scenes:undefined});
+    const {id}=await api('/api/content/web-run',{kind,brief:content.brief,video_url:content.video,video_file:content.videoFile||undefined,language:content.language,scenes:kind==='review'?content.scenes:undefined});
     autoJob={id,kind};renderAuto();refresh();
   }catch(error){toast(error.message,true);}
 }
@@ -310,6 +332,7 @@ function pollAuto(){
   if(job.kind==='english')return finishEnglish('gemini',result);
   if(job.kind==='review'){content.scenes=result.scenes;content.issues=result.issues;}
   else{content.scenes=result.scenes;content.script=result.original_script;content.issues=result.issues||[];}
+  if(result.shots)toast(`Video gốc có ${result.shots} shot · Gemini viết ${result.scenes.length} cảnh.`);
   saveContent();renderScenes();if(job.kind!=='review')setStep(2);
   toast(job.kind==='review'?`Đã kiểm tra: ${result.scenes.length} cảnh · ${result.issues.length} vấn đề.`:`Gemini đã viết ${result.scenes.length} cảnh (${result.rounds} lượt trả lời). Bấm “Kiểm tra thiếu cảnh / lỗi” để rà lại.`);
 }

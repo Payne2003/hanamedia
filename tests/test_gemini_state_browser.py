@@ -3,7 +3,7 @@ Bỏ qua nếu máy không có Playwright + Chromium."""
 import glob
 import unittest
 
-from runner.gemini_web import JS_STATE
+from runner.gemini_web import JS_CHECK, JS_STATE
 
 try:
     from playwright.sync_api import sync_playwright
@@ -51,6 +51,22 @@ class GeminiStateTests(unittest.TestCase):
     def test_streaming_with_stop_button_stays_busy(self):
         state = self.state(STREAMING)
         self.assertEqual((state["busy"], state["done"]), (True, False))
+
+
+    def test_field_with_old_prompt_left_over_is_not_accepted(self):
+        new = "Yêu cầu mới\nVideo con hổ\nViết đủ cảnh"
+        with sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=CHROME, args=["--headless", "--no-sandbox"])
+            try:
+                page = browser.new_page()
+                page.set_content('<div id="f" contenteditable="true"></div>')
+                check = lambda value: page.evaluate("([v,t]) => {const e=document.getElementById('f');e.innerText=v;"
+                                                    "return ((element, text) => {" + JS_CHECK.replace("const [element, text] = arguments;", "")
+                                                    + "})(e,t);}", [value, new])
+                self.assertTrue(check(new)["ok"])
+                self.assertFalse(check("Yêu cầu CŨ về con gấu nâu, kịch bản 40 cảnh cũ…\n" + new)["ok"])  # chữ cũ còn sót
+            finally:
+                browser.close()
 
 
 if __name__ == "__main__":

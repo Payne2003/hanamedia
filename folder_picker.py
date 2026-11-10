@@ -13,7 +13,7 @@ def main(output=None, video=False):
     root.withdraw()
     root.attributes("-topmost", True)
     if video:
-        folder = filedialog.askopenfilename(title="Chọn video gốc cho phim Wildlife",
+        folder = filedialog.askopenfilename(title="Chọn video gốc",
                                             filetypes=[("Video", "*.mp4 *.mov *.mkv *.webm *.m4v *.avi"), ("Tất cả", "*.*")])
     else:
         folder = filedialog.askdirectory(title="Chọn thư mục lưu video HANA MEDIA", mustexist=True)
