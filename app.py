@@ -371,10 +371,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"ok": True, "public_key": manager.init_signing_key()})
             if path == "/api/license/accounts":
                 account, token = manager.save_account(body)
-                return self.reply({"ok": True, "account": account, "key": token})
+                return self.reply({"ok": True, "account": account, "key": token, "short": manager.share_code(account["id"], token)})
             if path == "/api/license/renew":
                 account, token = manager.renew(str(body.get("id")), body.get("plan"), body.get("amount"))
-                return self.reply({"ok": True, "account": account, "key": token})
+                return self.reply({"ok": True, "account": account, "key": token, "short": manager.share_code(account["id"], token)})
             if path == "/api/license/lock":
                 account, revocation = manager.set_locked(str(body.get("id")), body.get("locked") is True)
                 return self.reply({"ok": True, "account": account, "revocation": revocation})
