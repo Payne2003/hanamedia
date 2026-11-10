@@ -83,7 +83,26 @@ ACCOUNT_COLUMNS = {
     # 1 = Muse báo tài khoản không dùng được tính năng tạo video ở khu vực của nó: không giao prompt nữa (kể cả sau
     # khi đăng nhập lại) cho tới khi người dùng tự bỏ đánh dấu.
     "video_blocked": "INTEGER NOT NULL DEFAULT 0",
+    # Số luồng (tab) chạy cùng lúc trên một tài khoản: mỗi luồng một tác vụ, chung một Chrome. Mặc định 2.
+    "threads": "INTEGER NOT NULL DEFAULT 2",
 }
+THREAD_CHOICES = (1, 2, 3)
+DEFAULT_BUDGET = 100  # credit dự kiến mặc định của tài khoản mới
+
+
+def account_after(db, account_id, wanted, job_id):
+    """Trạng thái tài khoản sau khi một tác vụ của nó kết thúc. Còn tab khác của tài khoản đang chạy thì vẫn 'busy';
+    nếu tác vụ khác đã đánh dấu tài khoản có vấn đề (cần đăng nhập, hết hạn mức…) thì giữ nguyên dấu đó."""
+    others = db.execute("SELECT count(*) FROM jobs WHERE status='running' AND account_id=? AND id!=?",
+                        (account_id, job_id)).fetchone()[0]
+    current = db.execute("SELECT state FROM accounts WHERE id=?", (account_id,)).fetchone()
+    current = current["state"] if current else ""
+    if wanted in ("ready", "new"):
+        if others:
+            return "busy"
+        if current not in ("busy", "new", "ready"):
+            return current  # tab khác vừa báo lỗi tài khoản: không xóa dấu đó
+    return wanted
 
 
 class Store:
@@ -269,13 +288,16 @@ class Store:
                           health_before='' WHERE id=?""",
                        (state, detail, health, now, "" if health == "LIVE" else error, failures, account_id))
 
-    def configure_account(self, account_id, enabled, budget):
+    def configure_account(self, account_id, enabled, budget, threads=None):
+        if threads is not None and threads not in THREAD_CHOICES:
+            raise ValueError("Số luồng mỗi tài khoản là 1, 2 hoặc 3.")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
             if not row or row["state"] in LOCKED_STATES:
                 raise ValueError("Tài khoản đang bận hoặc không tồn tại.")
-            db.execute("UPDATE accounts SET enabled=?,budget=? WHERE id=?", (int(bool(enabled)), number(budget), account_id))
+            db.execute("UPDATE accounts SET enabled=?,budget=?,threads=? WHERE id=?",
+                       (int(bool(enabled)), number(budget), row["threads"] if threads is None else threads, account_id))
         self.plan_waiting()
 
     def delete_account(self, account_id):
@@ -553,15 +575,20 @@ class Store:
         self.plan_waiting()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            if db.execute("SELECT count(*) FROM accounts WHERE state IN ('busy','authenticating','reviewing')").fetchone()[0] >= limit:
-                return None
+            # limit = số Chrome (tài khoản) chạy cùng lúc. Tài khoản đang chạy còn luồng trống thì mở thêm TAB (không thêm
+            # Chrome): chỉ khi mọi tác vụ đang chạy của nó đã gửi prompt xong (gửi lần lượt, không chen nhau lúc đăng nhập).
+            room = int(db.execute("SELECT count(*) FROM accounts WHERE state IN ('busy','authenticating','reviewing')")
+                       .fetchone()[0] < limit)
             pick = """SELECT j.id AS job_id, a.id AS account_id FROM jobs j JOIN accounts a
-                ON a.id=j.assigned_account_id AND a.enabled=1 AND a.video_blocked=0 AND a.state IN ('new','ready')
+                ON a.id=j.assigned_account_id AND a.enabled=1 AND a.video_blocked=0
                 AND a.budget+0.000001>=j.cost
+                AND ((a.state IN ('new','ready') AND ?=1) OR (a.state='busy'
+                     AND (SELECT count(*) FROM jobs r WHERE r.status='running' AND r.account_id=a.id) < MAX(a.threads, 1)
+                     AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.status='running' AND r.account_id=a.id AND r.submitted=0)))
                 WHERE j.status='waiting' ORDER BY j.created,j.rowid LIMIT 1"""
-            pair = db.execute(pick).fetchone()
-            if not pair and self.rebalance(db):
-                pair = db.execute(pick).fetchone()
+            pair = db.execute(pick, (room,)).fetchone()
+            if not pair and room and self.rebalance(db):
+                pair = db.execute(pick, (room,)).fetchone()
             if not pair:
                 return None
             job = dict(db.execute("SELECT * FROM jobs WHERE id=?", (pair["job_id"],)).fetchone())
@@ -707,7 +734,9 @@ class Store:
             db.execute("UPDATE jobs SET status=?,phase=?,progress=?,output=?,error=?,updated=? WHERE id=?",
                        ("error" if error else "done", "Cần kiểm tra" if error else "Đã tải MP4",
                         job["progress"] if error else 100, output, error, time.time(), job_id))
-            db.execute("UPDATE accounts SET state=?,detail=? WHERE id=?", (account_state, error, job["account_id"]))
+            state = account_after(db, job["account_id"], account_state, job_id)
+            db.execute("UPDATE accounts SET state=?,detail=? WHERE id=?",
+                       (state, "Đang chạy tác vụ" if state == "busy" and account_state == "ready" else error, job["account_id"]))
             if not error:  # vừa tải được video: phiên chắc chắn còn sống
                 db.execute("UPDATE accounts SET health='LIVE',last_checked=?,last_error='',check_failures=0 WHERE id=?",
                            (time.time(), job["account_id"]))
@@ -840,20 +869,21 @@ class Store:
             result["status"] = "running"
             return result, dict(account)
 
-    def requeue_unsent(self, job_id, note, account_state="ready"):
+    def requeue_unsent(self, job_id, note, account_state="ready", count=True):
         """Lỗi Chrome/trang Muse TRƯỚC khi gửi (submitted=0, Muse chưa nhận prompt): tự đưa tác vụ về hàng đợi, cho tài
         khoản khác nhận, tối đa AUTO_RETRIES lần. Trả về True nếu đã đưa lại; False nếu đã gửi hoặc hết lượt."""
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             job = db.execute("SELECT * FROM jobs WHERE id=? AND status='running'", (job_id,)).fetchone()
-            if not job or job["submitted"] or job["auto_retries"] >= self.AUTO_RETRIES:
+            if not job or job["submitted"] or (count and job["auto_retries"] >= self.AUTO_RETRIES):
                 return False
             db.execute("UPDATE accounts SET budget=budget+?,state=?,detail=? WHERE id=?",
-                       (job["cost"], account_state, note, job["account_id"]))
+                       (job["cost"], account_after(db, job["account_id"], account_state, job_id), note, job["account_id"]))
             assigned = job["assigned_account_id"] if job["assigned_manual"] else None
             db.execute("""UPDATE jobs SET status='waiting',phase=?,progress=0,error='',account_id=NULL,
-                          assigned_account_id=?,auto_retries=auto_retries+1,updated=? WHERE id=?""",
-                       (f"Tự chạy lại (lần {job['auto_retries'] + 1}): {note}"[:300], assigned, time.time(), job_id))
+                          assigned_account_id=?,auto_retries=auto_retries+?,updated=? WHERE id=?""",
+                       (f"Tự chạy lại (lần {job['auto_retries'] + 1}): {note}"[:300] if count else note[:300], assigned,
+                        int(count), time.time(), job_id))
             return True
 
     def retry(self, job_id):
@@ -907,7 +937,8 @@ class Store:
     def snapshot(self):
         with self.connect() as db:
             accounts = [dict(r) for r in db.execute(
-                """SELECT a.id,a.email,a.enabled,a.budget,a.state,a.detail,a.health,a.last_checked,a.last_error,a.video_blocked,
+                """SELECT a.id,a.email,a.enabled,a.budget,a.state,a.detail,a.health,a.last_checked,a.last_error,a.video_blocked,a.threads,
+                   (SELECT count(*) FROM jobs j WHERE j.status='running' AND j.account_id=a.id) AS jobs_running,
                    (SELECT count(*) FROM jobs j WHERE j.status='waiting' AND j.assigned_account_id=a.id) AS jobs_assigned,
                    (SELECT count(*) FROM jobs j WHERE j.status='done' AND j.account_id=a.id) AS jobs_completed,
                    (SELECT count(*) FROM jobs j WHERE j.status='error' AND j.account_id=a.id) AS jobs_failed

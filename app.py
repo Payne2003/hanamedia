@@ -26,7 +26,7 @@ from runner.claude_web import claude_runner
 from runner.characters import NeedsConfirm
 from runner.media import MediaError, MediaInUse
 from runner import license as licensing
-from runner.store import Store
+from runner.store import DEFAULT_BUDGET, Store
 from runner.instance import InstanceLock
 from runner.paths import data_root, frozen, resource_root
 from runner.version import APP_VERSION
@@ -767,8 +767,8 @@ class Handler(BaseHTTPRequestHandler):
                                                              body.get("output", ""), body.get("job_id")))
             elif path == "/api/accounts":
                 if "emails" in body:
-                    return self.reply({"ok": True, **store.add_accounts(body["emails"], body["budget"])})
-                store.add_account(body["email"], body.get("mailbox", ""), body["budget"])
+                    return self.reply({"ok": True, **store.add_accounts(body["emails"], body.get("budget", DEFAULT_BUDGET))})
+                store.add_account(body["email"], body.get("mailbox", ""), body.get("budget", DEFAULT_BUDGET))
             elif path == "/api/accounts/login-all":
                 return self.reply({"ok": True, "count": engine.login_all(body.get("parallel", 2))})
             elif path == "/api/accounts/delete":
@@ -787,7 +787,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"ok": True, **engine.health.check_all()})
             elif path == "/api/accounts/update":
                 with engine.lock:
-                    store.configure_account(body["id"], body["enabled"], body["budget"])
+                    store.configure_account(body["id"], body["enabled"], body["budget"], body.get("threads"))
             elif path == "/api/login":
                 engine.login(body["id"])
             elif path == "/api/review":

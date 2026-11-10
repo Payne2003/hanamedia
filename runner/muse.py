@@ -125,11 +125,18 @@ return false;
 """
 
 
+INDEPENDENT = ("Đây là yêu cầu độc lập: chỉ làm đúng nội dung tin nhắn này, không dùng nhân vật, bối cảnh hay nội dung "
+               "của các tin nhắn trước, không đề xuất cảnh tiếp theo. Khi trả video, ghi lại dòng mã tác vụ bên dưới.")
+
+
 def compose_request(prompt, job_id, use_images=False, spec=""):
     """spec: dòng thông số (tỉ lệ khung, thời lượng, độ phân giải) — xem video_tools.request_spec."""
     instruction = ("Tạo video dựa trên các ảnh tham chiếu đã đính kèm theo yêu cầu sau và trả về file video để tải xuống:"
                    if use_images else "Tạo video theo yêu cầu sau và trả về file video để tải xuống:")
-    return instruction + "\n\n" + prompt + ("\n\n" + spec if spec else "") + "\n\nMã tác vụ: " + job_id
+    # Muse giữ MỘT cuộc trò chuyện dài cho mỗi tài khoản và nhớ các tin nhắn trước (từng tự đề xuất "cảnh 3" từ cảnh
+    # trước): dặn rõ yêu cầu này độc lập, và nhắc lại mã tác vụ trong câu trả lời để tool nhận đúng video của prompt.
+    return (instruction + "\n\n" + prompt + ("\n\n" + spec if spec else "") + "\n\n" + INDEPENDENT
+            + "\n\nMã tác vụ: " + job_id)
 
 
 # Muse trả lời bằng chữ thay vì tạo video. Chỉ đọc câu trả lời NẰM SAU mã tác vụ của chính prompt vừa gửi.
@@ -198,6 +205,13 @@ def valid_mp4(path):
 
 class MuseBrowser:
     url_seen = staticmethod(lambda url: None)  # bộ chạy gắn hàm lưu địa chỉ cuộc trò chuyện của tác vụ
+    router = None  # TabRouter khi tài khoản chạy nhiều luồng (nhiều tab trong cùng Chrome)
+
+    def exclusive(self):
+        """Giữ tab này trong một đoạn nhiều lệnh liền mạch (gõ + gửi prompt, bấm tải + chờ file bắt đầu tải)."""
+        import contextlib
+        return self.router.lock if self.router else contextlib.nullcontext()
+
     def __init__(self, profile, downloads, headless, phase=lambda value: None):
         # Import lazily: the queue and HTTP server can be tested without a browser.
         from selenium import webdriver
@@ -757,9 +771,7 @@ return false;
         self.phase("Mở lại cuộc trò chuyện Muse của tác vụ")
         self.driver.get(url)
         marker = "Mã tác vụ: " + job_id
-        found = self.wait(lambda: self.driver.execute_script(
-            "return [...document.querySelectorAll('[role=\"log\"] p')].some(p=>p.innerText.includes(arguments[0]))", marker),
-            45, "Không thấy prompt của tác vụ này trong cuộc trò chuyện Muse đã lưu.")
+        found = self.find_in_history(marker)
         if not found:
             raise MuseFailure("Không thấy prompt của tác vụ này trong cuộc trò chuyện Muse đã lưu.")
         files_before = set(self.downloads.iterdir())
@@ -770,6 +782,33 @@ return false;
                 raise MuseFailure("Muse vẫn chưa xong video này. Đợi thêm rồi bấm ⇩ Lấy video lần nữa.", pending=True) from None
             raise
         return self.download_card(card, files_before, True, marker)
+
+    # Cuộc trò chuyện Muse rất dài (mọi prompt của tài khoản nằm chung): tin nhắn cũ chỉ được tải khi cuộn lên.
+    JS_FIND_OR_SCROLL = r"""
+const marker=arguments[0];
+const log=document.querySelector('[role="log"]');
+if (!log) return 'wait';
+if ([...log.querySelectorAll('p,span,div')].some(e=>e.childElementCount===0 && (e.innerText||'').includes(marker))) return 'found';
+let box=log;
+while (box && box!==document.body && !(box.scrollHeight>box.clientHeight+20 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box=box.parentElement;
+box=box && box!==document.body ? box : document.scrollingElement;
+const before=box.scrollTop;
+box.scrollTop=0;
+return before>0 ? 'scrolled' : 'top';
+"""
+
+    def find_in_history(self, marker, timeout=180):
+        """Tìm prompt của tác vụ trong cuộc trò chuyện: cuộn dần lên để Muse tải tin nhắn cũ."""
+        until, tops = time.monotonic() + timeout, 0
+        while time.monotonic() < until:
+            result = self.driver.execute_script(self.JS_FIND_OR_SCROLL, marker)
+            if result == "found":
+                return True
+            tops = tops + 1 if result == "top" else 0
+            if tops >= 6:  # đã ở đầu cuộc trò chuyện nhiều lần mà vẫn không có
+                break
+            time.sleep(1.5)
+        return False
 
     @staticmethod
     def card_key(card):
@@ -805,6 +844,13 @@ return false;
         files_before = set(self.downloads.iterdir())
         marker = "Mã tác vụ: " + job_id
         request = compose_request(prompt, job_id, bool(images), spec)
+        with self.exclusive():  # tab khác không được chen vào giữa lúc gõ và gửi prompt
+            self.type_and_send(box, request, prompt, marker, images, before_submit, automatic)
+        return self.finish_generation(marker, before, files_before, automatic, timeout)
+
+    def type_and_send(self, box, request, prompt, marker, images, before_submit, automatic):
+        from selenium.webdriver.common.keys import Keys
+        from selenium.webdriver.common.action_chains import ActionChains
         box.clear()
         box.click()
         for index, line in enumerate(request.split("\n")):
@@ -826,6 +872,8 @@ return false;
         before_submit()
         if automatic:
             box.send_keys(Keys.ENTER)
+
+    def finish_generation(self, marker, before, files_before, automatic, timeout):
         self.phase("Muse đang tạo video" if automatic else "Prompt đã điền; bấm Gửi trên cửa sổ Muse")
         new_card = self.wait_for_card(marker, before, timeout)
         return self.download_card(new_card, files_before, automatic, marker)
@@ -835,6 +883,15 @@ return false;
     JS_IN_SEGMENT = r"""
 const node=arguments[0], marker=arguments[1];
 const root=node.closest('[role="log"]') || document;
+// Muse ghi lại "Mã tác vụ: …" trong lượt trả lời có video: lượt trả lời nào nhắc mã thì video thuộc đúng tác vụ đó
+// (cần khi nhiều tab cùng tài khoản gửi prompt vào chung một cuộc trò chuyện, câu trả lời có thể xen kẽ).
+const turn=node.closest('[data-message-turn-id]');
+if (turn) {
+  const id=turn.getAttribute('data-message-turn-id');
+  const parts=[...root.querySelectorAll('[data-message-turn-id]')].filter(e=>e.getAttribute('data-message-turn-id')===id);
+  const text=parts.map(e=>e.innerText||'').join('\n');
+  if (text.includes('Mã tác vụ:')) return text.includes(marker);
+}
 const leaves=[...root.querySelectorAll('p,div,span')].filter(e => e.childElementCount===0 && (e.innerText||'').includes('Mã tác vụ:'));
 const mine=leaves.filter(e => e.innerText.includes(marker)).pop();
 if (!mine || !(mine.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
@@ -915,42 +972,51 @@ return !leaves.some(e => e!==mine && !e.innerText.includes(marker)
                 if marker:
                     new_card = self.relocate_card(marker, new_card)
             time.sleep(2)
-        menu_error = None
-        for attempt in range(3):
-            if not automatic or any(matching_download(p) for p in self.downloads.iterdir() if p not in files_before):
-                break
-            try:
-                # Nearest common ancestor of THIS card and its overflow menu; never global last menu.
-                host = new_card
-                menu = None
-                for _ in range(8):
-                    host = host.find_element("xpath", "..")
-                    if host.get_attribute("role") == "log":
-                        break
-                    candidates = [b for b in host.find_elements("css selector", "button[aria-label],[role='button'][aria-label]")
-                                  if (b.get_attribute("aria-label") or "").strip() in MENU_LABELS]
-                    if len(candidates) == 1:
-                        menu = candidates[0]
-                        break
-                ActionChains(self.driver).move_to_element(new_card).perform()
-                if menu is None:
-                    self.write_video_debug()
-                    raise MuseFailure("Đã có video nhưng không tìm thấy nút ··· để tải. Bấm ··· cạnh video → Tải xuống trên Muse, "
-                                      "hoặc bấm ⇩ Lấy video. Đã lưu data/logs/muse-video-debug.html để sửa tool.", pending=True)
-                menu.click()
-                download = self.wait(lambda: self.named("[role='menuitem'],[role='menuitemradio'],[role='option']",
-                                                        DOWNLOAD_LABELS), 15,
-                                     "Menu video không có Tải xuống; chưa thể tải tự động.")
-                download.click()
-                menu_error = None
-                break
-            except MuseFailure:
-                raise
-            except Exception as error:  # khung video bị vẽ lại giữa chừng: lấy lại khung rồi thử lại
-                menu_error = error
-                time.sleep(2)
-                if marker:
-                    new_card = self.relocate_card(marker, new_card)
+        # Nhiều tab cùng tài khoản: thư mục tải của Chrome là chung, nên giữ tab này từ lúc đặt thư mục tải tới khi file
+        # bắt đầu tải vào đúng thư mục của tác vụ (tab khác không bấm tải hay đổi thư mục xen giữa).
+        with self.exclusive():
+            if self.router and automatic:
+                self.set_download_directory(self.downloads)
+            menu_error = None
+            for attempt in range(3):
+                if not automatic or any(matching_download(p) for p in self.downloads.iterdir() if p not in files_before):
+                    break
+                try:
+                    # Nearest common ancestor of THIS card and its overflow menu; never global last menu.
+                    host = new_card
+                    menu = None
+                    for _ in range(8):
+                        host = host.find_element("xpath", "..")
+                        if host.get_attribute("role") == "log":
+                            break
+                        candidates = [b for b in host.find_elements("css selector", "button[aria-label],[role='button'][aria-label]")
+                                      if (b.get_attribute("aria-label") or "").strip() in MENU_LABELS]
+                        if len(candidates) == 1:
+                            menu = candidates[0]
+                            break
+                    ActionChains(self.driver).move_to_element(new_card).perform()
+                    if menu is None:
+                        self.write_video_debug()
+                        raise MuseFailure("Đã có video nhưng không tìm thấy nút ··· để tải. Bấm ··· cạnh video → Tải xuống trên Muse, "
+                                          "hoặc bấm ⇩ Lấy video. Đã lưu data/logs/muse-video-debug.html để sửa tool.", pending=True)
+                    menu.click()
+                    download = self.wait(lambda: self.named("[role='menuitem'],[role='menuitemradio'],[role='option']",
+                                                            DOWNLOAD_LABELS), 15,
+                                         "Menu video không có Tải xuống; chưa thể tải tự động.")
+                    download.click()
+                    menu_error = None
+                    break
+                except MuseFailure:
+                    raise
+                except Exception as error:  # khung video bị vẽ lại giữa chừng: lấy lại khung rồi thử lại
+                    menu_error = error
+                    time.sleep(2)
+                    if marker:
+                        new_card = self.relocate_card(marker, new_card)
+            if self.router and automatic and menu_error is None:
+                started = time.monotonic() + 30
+                while time.monotonic() < started and not any(p not in files_before for p in self.downloads.iterdir()):
+                    time.sleep(.5)
         if menu_error is not None:
             raise MuseFailure("Muse đã có video nhưng tool không bấm được nút tải (giao diện Muse thay đổi giữa chừng). "
                               "Bấm ⇩ Lấy video để thử lại — không gửi lại prompt.", pending=True)
