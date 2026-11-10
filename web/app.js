@@ -1010,14 +1010,14 @@ function renderLibraryIfOpen(){if($('imageLibrary').open)loadPicker();}
 // ===== Thiết lập video của Studio: tỉ lệ, thời lượng, độ phân giải, nick, tự ghép, ảnh nhân vật cố định =====
 function videoOptions(){
   return {aspect:$('vAspect').value,duration:Number($('vDuration').value)||0,resolution:$('vResolution').value,
-    stitch:$('vStitch').checked,characters:fixedCharacters.map(c=>c.token),account_id:$('vAccount').value||null,folder:$('vFolder').value.trim()};
+    stitch:$('vStitch').checked,characters:fixedCharacters.map(c=>c.token),account_id:$('vAccount').value||null};
 }
 function saveVideoSettings(){try{localStorage.setItem(VIDEO_KEY,JSON.stringify({...videoOptions(),fixed:fixedCharacters}));}catch{}}
 function loadVideoSettings(){
   try{const v=JSON.parse(localStorage.getItem(VIDEO_KEY)||'null');if(!v)return;
     for(const [id,key] of [['vAspect','aspect'],['vResolution','resolution']])if([...$(id).options].some(o=>o.value===v[key]))$(id).value=v[key];
     if([...$('vDuration').options].some(o=>o.value===String(v.duration||'')))$('vDuration').value=String(v.duration||'');
-    $('vStitch').checked=Boolean(v.stitch);$('vFolder').value=v.folder||'';$('vAccount').dataset.want=v.account_id||'';
+    $('vStitch').checked=Boolean(v.stitch);$('vAccount').dataset.want=v.account_id||'';
     fixedCharacters=Array.isArray(v.fixed)?v.fixed.filter(c=>/^[a-f0-9]{32}$/.test(c.token||'')).slice(0,10):[];
   }catch{}
 }
@@ -1043,7 +1043,7 @@ function renderStitchPanel(){
 document.addEventListener('click',e=>{const b=e.target.closest('[data-stitch-now]');if(!b)return;
   if(!confirm('Ghép ngay các cảnh đã xong của lượt này? Cảnh lỗi hoặc chưa xong sẽ bị bỏ qua.'))return;
   action(async()=>{await api('/api/batch/stitch',{batch:b.dataset.stitchNow});toast('Đang ghép video. Xem tiến độ ở khung Video ghép.');});});
-for(const id of ['vAspect','vDuration','vResolution','vStitch','vAccount','vFolder'])$(id).addEventListener('change',saveVideoSettings);
+for(const id of ['vAspect','vDuration','vResolution','vStitch','vAccount'])$(id).addEventListener('change',saveVideoSettings);
 $('vCharacters').onclick=()=>openPicker('characters');
 $('vClearCharacters').onclick=()=>{fixedCharacters=[];saveVideoSettings();renderFixedCharacters();};
 $('vCharacterChips').onclick=e=>{const b=e.target.closest('[data-remove-fixed]');if(!b)return;fixedCharacters.splice(Number(b.dataset.removeFixed),1);saveVideoSettings();renderFixedCharacters();};

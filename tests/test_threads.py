@@ -221,3 +221,27 @@ class MuseBusyTests(unittest.TestCase):
         with self.assertRaises(muse.MuseFailure) as caught:
             browser.wait_previous()
         self.assertTrue(caught.exception.unsent)
+
+
+class LostVideoTests(unittest.TestCase):
+    def test_done_jobs_whose_video_was_deleted_from_temp_can_be_fetched_again(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(Path(folder) / "t.db")
+            store.add_account("a@tuan89.site", "", 100)
+            store.enqueue(["Một", "Hai"], 1, uuid.uuid4().hex)
+            lost, _ = store.claim(1)
+            store.submitting(lost["id"])
+            store.set_source(lost["id"], "https://muse.ai/chat/1")
+            store.finish(lost["id"], output=str(Path(folder) / "downloads" / lost["id"] / "video.mp4"))  # file đã bị xóa
+            kept, _ = store.claim(1)
+            store.submitting(kept["id"])
+            real = Path(folder) / "1.mp4"
+            real.write_bytes(b"x")
+            store.finish(kept["id"], output=str(real))
+            store = Store(Path(folder) / "t.db")  # mở lại app
+            store.recover()
+            jobs = {j["id"]: j for j in store.snapshot()["jobs"]}
+            self.assertEqual(jobs[lost["id"]]["status"], "error")
+            self.assertIn("Lấy video", jobs[lost["id"]]["error"])
+            self.assertEqual(jobs[kept["id"]]["status"], "done")

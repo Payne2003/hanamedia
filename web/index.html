@@ -63,7 +63,6 @@
             <label>Độ phân giải<select id="vResolution"><option value="4K">4K Ultra HD</option><option value="1080p">1080p Full HD</option><option value="720p">720p HD</option><option value="">Giữ nguyên của Muse</option></select></label>
             <label>Nick Muse xử lý<select id="vAccount"><option value="">🔄 Xoay vòng nick</option></select></label>
           </div>
-          <label class="vs-folder">📁 Thư mục dự án <small>(tuỳ chọn)</small><input id="vFolder" maxlength="80" placeholder="Ví dụ: Dê núi tập 1 — để trống thì lưu thẳng"><small>Video lưu thành <b>1.mp4, 2.mp4…</b> trong thư mục này (tạo trong thư mục lưu). Mỗi prompt đúng 1 video.</small></label>
           <label class="check vs-stitch"><input id="vStitch" type="checkbox"><span>🔗 Tự ghép thành một video dài<small>Xong hết các cảnh thì ghép theo thứ tự prompt (dùng bản đã nâng độ phân giải nếu có). Video từng cảnh vẫn giữ.</small></span></label>
           <div class="fixed-chars"><div class="fc-head"><span><b>Ảnh nhân vật cố định</b><small>gắn vào mọi cảnh</small></span><button id="vCharacters" type="button">👤 + Nhân vật</button><button id="vClearCharacters" type="button" class="danger-outline" hidden>Xóa hết</button></div><div id="vCharacterChips" class="image-chips"></div></div>
           <p class="detail vs-note">Thông số được ghi vào yêu cầu gửi Muse (Muse tối đa 10 giây/cảnh). Video tải về nhỏ hơn độ phân giải đã chọn sẽ được tool phóng lên trên máy (giữ file gốc; phóng to không thêm chi tiết như AI).</p>

@@ -211,6 +211,27 @@ class Store:
             db.execute("UPDATE accounts SET health=CASE WHEN health_before!='' THEN health_before ELSE 'UNKNOWN' END,"
                        "health_before='' WHERE health='CHECKING'")
         self.characters.recover_image_tasks()
+        self.recover_lost_videos()
+
+    def recover_lost_videos(self):
+        """Bản 1.1.84–1.1.89: thư mục lưu ở ổ khác (D:) thì video không chuyển được và bị xóa cùng thư mục tạm. Tác vụ
+        'Xong' mà video (nằm trong thư mục tạm của app) không còn: chuyển sang lỗi để bấm ⇩ Lấy video tải lại từ Muse
+        (không gửi lại prompt)."""
+        temp = str((Path(self.path).parent / "downloads").resolve())
+        with self.connect() as db:
+            for job in db.execute("SELECT id,output,source_url FROM jobs WHERE status='done' AND output IS NOT NULL").fetchall():
+                output = str(job["output"] or "")
+                try:
+                    inside = str(Path(output).resolve()).startswith(temp)
+                except (OSError, ValueError):
+                    continue
+                if inside and not Path(output).is_file():
+                    lost = str(job["source_url"] or "").startswith("https://")
+                    db.execute("""UPDATE jobs SET status='error',phase='Video bị mất khi chuyển sang thư mục lưu',output=NULL,
+                                  error=?,updated=? WHERE id=?""",
+                               ("Video đã tạo nhưng bị mất khi chuyển sang thư mục lưu ở ổ đĩa khác (lỗi bản cũ). "
+                                + ("Bấm ⇩ Lấy video để tải lại từ Muse (không gửi lại prompt)." if lost
+                                   else "Không còn liên kết cuộc trò chuyện Muse để tải lại."), time.time(), job["id"]))
 
     def add_account(self, email, mailbox, budget):
         email, mailbox = mailbox_for(email, mailbox)
