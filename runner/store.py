@@ -86,6 +86,8 @@ ACCOUNT_COLUMNS = {
     # Số luồng (tab) chạy cùng lúc trên một tài khoản. Mặc định 1: Muse chỉ nhận một yêu cầu mỗi lúc trên một tài khoản
     # (mọi prompt chung một cuộc trò chuyện) — luồng 2 chỉ gửi ngay khi luồng 1 vừa xong.
     "threads": "INTEGER NOT NULL DEFAULT 1",
+    # Hết hạn mức Muse (state 'limited') tới thời điểm này; quá hạn thì tool tự cho tài khoản chạy lại.
+    "limited_until": "REAL NOT NULL DEFAULT 0",
 }
 THREAD_CHOICES = (1, 2, 3)
 DEFAULT_BUDGET = 100  # credit dự kiến mặc định của tài khoản mới
@@ -602,6 +604,7 @@ class Store:
         return len(job_ids)
 
     def claim(self, limit):
+        self.release_limits()
         self.plan_waiting()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -868,6 +871,49 @@ class Store:
             row = db.execute("SELECT status,submitted,source_url FROM jobs WHERE id=?", (job_id,)).fetchone()
         return dict(row) if row else {}
 
+    FAILED_RETRIES = 2  # Muse lỗi / không trả video: tự chạy lại tối đa 2 lần (có thể bằng tài khoản khác)
+
+    def mark_limited(self, account_id, until, note):
+        """Tài khoản hết hạn mức: tạm dừng tới `until` (không có ngày thì 24 giờ), chia lại mọi prompt đang chờ của nó."""
+        until = until if until and until > time.time() else time.time() + 24 * 3600
+        with self.connect() as db:
+            db.execute("UPDATE accounts SET state='limited',detail=?,limited_until=? WHERE id=?", (note[:300], until, account_id))
+            db.execute("UPDATE jobs SET assigned_account_id=NULL,assigned_manual=0 WHERE status='waiting' AND assigned_account_id=?",
+                       (account_id,))
+        self.plan_waiting()
+
+    def release_limits(self):
+        """Hạn mức đã đặt lại: cho tài khoản chạy tiếp."""
+        with self.connect() as db:
+            db.execute("""UPDATE accounts SET state='ready',detail='Hạn mức đã đặt lại; tài khoản chạy tiếp.',limited_until=0
+                          WHERE state='limited' AND limited_until>0 AND limited_until<=?""", (time.time(),))
+
+    def requeue_failed(self, job_id, note, refund=True, limit=None):
+        """Muse không tạo được video (lỗi, hết hạn mức, quá lâu không trả video): đưa tác vụ về hàng đợi để chạy lại, có thể
+        bằng tài khoản khác. Tối đa FAILED_RETRIES lần. Trả về True nếu đã đưa lại."""
+        limit = self.FAILED_RETRIES if limit is None else limit
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            job = db.execute("SELECT * FROM jobs WHERE id=? AND status='running'", (job_id,)).fetchone()
+            if not job or job["auto_retries"] >= limit:
+                return False
+            if refund:
+                db.execute("UPDATE accounts SET budget=budget+? WHERE id=?", (job["cost"], job["account_id"]))
+            db.execute("UPDATE accounts SET state=?,detail=? WHERE id=? AND state='busy'",
+                       (account_after(db, job["account_id"], "ready", job_id), "", job["account_id"]))
+            db.execute("""UPDATE jobs SET status='waiting',phase=?,progress=0,error='',account_id=NULL,assigned_account_id=NULL,
+                          assigned_manual=0,submitted=0,auto_retries=auto_retries+1,updated=? WHERE id=?""",
+                       (f"Tự chạy lại (lần {job['auto_retries'] + 1}/{limit}): {note}"[:300], time.time(), job_id))
+        self.plan_waiting()
+        return True
+
+    def failing_streak(self, account_id, count=3):
+        """True nếu `count` tác vụ gần nhất của tài khoản đều lỗi (tài khoản có vấn đề: tạm dừng, chia prompt cho tài khoản khác)."""
+        with self.connect() as db:
+            rows = db.execute("""SELECT status FROM jobs WHERE account_id=? AND status IN ('done','error')
+                                 ORDER BY updated DESC LIMIT ?""", (account_id, count)).fetchall()
+        return len(rows) == count and all(r["status"] == "error" for r in rows)
+
     def has_waiting(self):
         with self.connect() as db:
             return db.execute("SELECT 1 FROM jobs WHERE status='waiting' LIMIT 1").fetchone() is not None
@@ -995,7 +1041,7 @@ class Store:
     def snapshot(self):
         with self.connect() as db:
             accounts = [dict(r) for r in db.execute(
-                """SELECT a.id,a.email,a.enabled,a.budget,a.state,a.detail,a.health,a.last_checked,a.last_error,a.video_blocked,a.threads,
+                """SELECT a.id,a.email,a.enabled,a.budget,a.state,a.detail,a.health,a.last_checked,a.last_error,a.video_blocked,a.threads,a.limited_until,
                    (SELECT count(*) FROM jobs j WHERE j.status='running' AND j.account_id=a.id) AS jobs_running,
                    (SELECT count(*) FROM jobs j WHERE j.status='waiting' AND j.assigned_account_id=a.id) AS jobs_assigned,
                    (SELECT count(*) FROM jobs j WHERE j.status='done' AND j.account_id=a.id) AS jobs_completed,

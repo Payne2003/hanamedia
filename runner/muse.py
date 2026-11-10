@@ -15,9 +15,11 @@ MOD_KEY = "\ue03d" if sys.platform == "darwin" else "\ue009"
 
 
 class MuseFailure(Exception):
-    def __init__(self, message, state="ready", pending=False, region=False, unsent=False):
+    def __init__(self, message, state="ready", pending=False, region=False, unsent=False, kind="", until=0.0):
         super().__init__(message)
         self.state = state
+        self.kind = kind  # "quota": tài khoản hết hạn mức · "server": Muse lỗi, không tạo video · "refusal": Muse từ chối nội dung
+        self.until = until  # hết hạn mức tới lúc này (giờ máy, giây) — 0 nếu Muse không nói ngày đặt lại
         self.unsent = unsent  # prompt CHƯA gửi: bộ chạy tự đưa lại hàng đợi
         self.region = region  # Muse chặn tính năng tạo video ở khu vực của tài khoản
         self.pending = pending  # đã gửi, Muse có thể vẫn đang tạo: lấy video sau bằng "Lấy video", không gửi lại
@@ -157,6 +159,39 @@ REFUSAL = re.compile(r"(không|chưa)\s+(thể\s+)?(tiếp tục\s+)?tạo\s+(đ
                      r"(can't|cannot|can not|unable to|won't)\s+(continue\s+)?(create|generate|make|produce)\s+(this|that|the|a)?\s*video")
 
 
+QUOTA = re.compile(r"hết (?:hạn mức|lượt|tín dụng|credit)|đã dùng hết|đạt (?:tới )?giới hạn|vượt (?:quá )?giới hạn|giới hạn (?:hàng|mỗi) "
+                   r"(?:tuần|ngày|tháng)|hạn mức (?:hàng|mỗi) (?:tuần|ngày)|đã dùng 100|sẽ (?:được )?đặt lại|"
+                   r"reached (?:your|the) (?:\w+ )?limit|usage limit|(?:weekly|daily|monthly) limit|out of credits|"
+                   r"no (?:more )?credits|limit (?:will )?resets?|used 100%|quota", re.IGNORECASE)
+SERVER_ERROR = re.compile(r"đã xảy ra lỗi|lỗi không mong muốn|có lỗi xảy ra|đã có lỗi|something went wrong|"
+                          r"an unexpected error|error occurred|internal server error|\b50[023]\b|please try again", re.IGNORECASE)
+MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
+
+
+def quota_reset(text, now=None):
+    """Thời điểm hạn mức đặt lại (giây) từ "đặt lại vào 17 tháng 11" / "resets on Nov 17" / "17/11"; 0 nếu không có."""
+    import datetime
+    text = str(text or "").lower()
+    day = month = None
+    match = re.search(r"(?:đặt lại|reset\w*)[^0-9]{0,40}?(\d{1,2})\s*(?:tháng\s*|/|-)\s*(\d{1,2})", text)
+    if match:
+        day, month = int(match.group(1)), int(match.group(2))
+    else:
+        match = re.search(r"reset\w*[^a-z0-9]{0,20}(?:on\s+)?([a-z]{3})[a-z]*\.?\s+(\d{1,2})", text)
+        if match and match.group(1) in MONTHS:
+            month, day = MONTHS[match.group(1)], int(match.group(2))
+    if not day or not month or not (1 <= month <= 12 and 1 <= day <= 31):
+        return 0.0
+    today = datetime.datetime.fromtimestamp(now or time.time())
+    try:
+        when = datetime.datetime(today.year, month, day)
+        if when < today - datetime.timedelta(days=1):
+            when = datetime.datetime(today.year + 1, month, day)
+    except ValueError:
+        return 0.0
+    return when.timestamp()
+
+
 def reply_problem(text):
     """(thông báo, trạng thái tài khoản) nếu câu trả lời của Muse cho thấy không có video; None nếu chưa thấy."""
     text = re.sub(r"\s+", " ", str(text or "")).lower()
@@ -167,9 +202,18 @@ def reply_problem(text):
         return ("Muse báo tài khoản này không dùng được tính năng tạo video ở quốc gia/khu vực của tài khoản. "
                 "Đây là giới hạn của tài khoản, không phải do prompt; gửi lại cũng không được. Tài khoản đã tạm dừng — "
                 "dùng tài khoản Muse khác có tính năng tạo video.", "attention", False, True)
+    if QUOTA.search(text):
+        until = quota_reset(text)
+        when = time.strftime("%d/%m", time.localtime(until)) if until else ""
+        return (f"Tài khoản Muse hết hạn mức tạo video{f' (đặt lại {when})' if when else ''}. Tool chuyển prompt sang "
+                "tài khoản khác và tạm dừng tài khoản này tới khi hạn mức đặt lại.", "limited", False, False, False, "quota",
+                until)
     if any(t in text for t in VIDEO_REFUSAL) or REFUSAL.search(text):
         return ("Muse trả lời bằng chữ và không tạo video cho prompt này (xem câu trả lời trên Muse). "
-                "Tool không tự gửi lại; sửa prompt rồi tạo lại.", "ready")
+                "Tool không tự gửi lại; sửa prompt rồi tạo lại.", "ready", False, False, False, "refusal")
+    if SERVER_ERROR.search(text):
+        return ("Muse báo lỗi và không tạo video cho prompt này. Tool tự chạy lại (có thể bằng tài khoản khác).",
+                "ready", False, False, False, "server")
     return None
 
 
@@ -739,6 +783,21 @@ return false;
         raise MuseFailure(f"Muse chưa tải lên xong ảnh nhân vật ({max(added, 0)}/{len(files)} ảnh sau {timeout} giây"
                           f"{', vẫn đang tải' if state['busy'] else ''}). Chưa gửi prompt; có thể chạy lại.")
 
+    def quota_notice(self):
+        """Banner / hộp thoại / thông báo của Muse (ngoài cuộc trò chuyện) nói tài khoản hết hạn mức. None nếu không có."""
+        try:
+            text = self.driver.execute_script("""
+                return [...document.querySelectorAll('[role="alert"],[role="dialog"],[role="status"],[aria-live="assertive"]')]
+                  .filter(e=>!e.closest('[role="log"]')).map(e=>e.innerText||'').join(' ').slice(0,3000);""") or ""
+        except Exception:
+            return None
+        if QUOTA.search(text):
+            until = quota_reset(text)
+            when = time.strftime("%d/%m", time.localtime(until)) if until else ""
+            return MuseFailure(f"Tài khoản Muse hết hạn mức tạo video{f' (đặt lại {when})' if when else ''}. Tool chuyển prompt "
+                               "sang tài khoản khác.", "limited", kind="quota", until=until)
+        return None
+
     def reply_text(self, marker):
         """Chữ Muse trả lời sau prompt có mã tác vụ này (không đọc prompt của người dùng)."""
         try:
@@ -856,6 +915,10 @@ return before>0 ? 'scrolled' : 'top';
         from selenium.webdriver.common.keys import Keys
         from selenium.webdriver.common.action_chains import ActionChains
         self.guard()
+        notice = self.quota_notice()
+        if notice:  # hết hạn mức trước khi gửi: prompt chưa tới Muse
+            notice.unsent = True
+            raise notice
         if self.named("button", {"Dừng"}):
             self.wait_previous()
         box = self.composer()
@@ -958,6 +1021,9 @@ return !leaves.some(e => e!==mine && !e.innerText.includes(marker)
             problem = reply_problem(self.reply_text(marker))
             if problem:
                 raise MuseFailure(*problem)
+            notice = self.quota_notice()
+            if notice:
+                raise notice
             time.sleep(3)
         if not new_card:
             self.write_video_debug()

@@ -463,6 +463,10 @@ class StoreTests(unittest.TestCase):
                 job, claimed = self.store.claim(2)
                 engine.work(job, claimed, False, str(self.root / "output"), True)
                 row = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]][0]
+                self.assertEqual(row["status"], "waiting")  # quá lâu không có video: tự gửi lại một lần
+                job, claimed = self.store.claim(2)
+                engine.work(job, claimed, False, str(self.root / "output"), True)
+                row = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]][0]
                 self.assertEqual((row["status"], row["submitted"], row["source_url"]), ("error", 1, "https://muse.ai/c/abc123"))
                 self.assertEqual(self.store.account(account["id"])["state"], "ready")
                 calls["ready"] = True  # Muse làm xong sau khi tool đã thôi tự kiểm tra
@@ -471,7 +475,7 @@ class StoreTests(unittest.TestCase):
             row = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]][0]
             self.assertEqual(row["status"], "done")
             self.assertEqual(Path(row["output"]).name, "1.mp4")
-            self.assertEqual((calls["generate"], calls["fetch"]), (1, ["https://muse.ai/c/abc123"] * 3))  # không gửi lại
+            self.assertEqual((calls["generate"], calls["fetch"]), (2, ["https://muse.ai/c/abc123"] * 5))  # gửi lại đúng 1 lần
             with self.assertRaises(ValueError):
                 self.store.begin_fetch(job["id"], 2)  # đã xong: không lấy lại
         finally:
