@@ -765,6 +765,14 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model=""):
         if not any(n > after for n in more):
             break
         found.update(more)
+    skipped = [n for n in numbers if not (found.get(n) and content.is_english(found[n]))]
+    if skipped:  # AI bỏ sót prompt khi kiểm duyệt: hỏi lại riêng những prompt đó (1 lượt)
+        answer = session.ask(content.review_request(prompts, rules, skipped) + "\n\nCHỈ kiểm duyệt và viết lại các prompt trên "
+                             "(bạn đã bỏ sót chúng).", status, stop, email,
+                             label=f"{len(skipped)} prompt bị bỏ sót · {name} kiểm duyệt lại")
+        rounds += 1
+        found.update({n: t for n, t in content.parse_english(answer, total, skipped).items() if content.is_english(t)})
+        issues += [i for i in content.parse_issues(answer) if i not in issues]
     reviewed = [found.get(n) if found.get(n) and content.is_english(found[n]) else prompts[n - 1] for n in numbers]
     for attempt in range(REGENERATE_ROUNDS):  # prompt còn lỗi sau kiểm duyệt: tự tạo lại riêng prompt đó
         bad = [n for n in numbers if content.prompt_violations(reviewed[n - 1])]
@@ -790,7 +798,8 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model=""):
                                                              reviewed[n - 1], count=1) \
                 if camera_library.CAMERA_FIELD.search(reviewed[n - 1]) else reviewed[n - 1]
     final = [content.apply_lock(p, lock or content.DEFAULT_LOCK) for p in reviewed]
-    violations = {n: content.prompt_violations(final[n - 1]) for n in numbers}
+    violations = {n: content.prompt_violations(final[n - 1]) + ([] if found.get(n) else ["AI chưa kiểm duyệt prompt này — bấm Tạo lại"])
+                  for n in numbers}
     return {"english": final, "issues": issues, "violations": {n: v for n, v in violations.items() if v},
             "missing": [n for n in numbers if not found.get(n)], "total": total, "rounds": rounds, "reviewed": True}
 

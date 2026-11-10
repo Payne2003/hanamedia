@@ -1166,3 +1166,24 @@ class PromptReviewTests(unittest.TestCase):
         self.assertTrue(all(p.endswith("LOCK: no music, no logo.") for p in result["english"]))
         self.assertEqual(result["violations"], {})
         self.assertIn("Prompt 2 — removed music", " ".join(result["issues"]))
+
+
+class ReviewSkippedTests(unittest.TestCase):
+    def test_prompt_skipped_by_ai_is_asked_again_then_flagged(self):
+        from runner import gemini_web
+        good = PromptReviewTests.good
+
+        class Session:
+            sent = []
+            answers = [f"1. {good}\n{content.END_EN}", ""]  # bỏ sót prompt 2, hỏi lại cũng không trả lời
+            def new_chat(self): pass
+            def wait_ready(self, status, stop, email=""): pass
+            def choose_model(self, name): return name
+            def ask(self, text, status, stop, email="", label=""):
+                self.sent.append(text)
+                return self.answers.pop(0) if self.answers else ""
+
+        result = gemini_web.run_review(Session(), [good, good + " again"], "", "no music", lambda _: None, threading.Event())
+        self.assertIn("bỏ sót", Session.sent[1])
+        self.assertIn("AI chưa kiểm duyệt prompt này — bấm Tạo lại", result["violations"][2])
+        self.assertNotIn(1, result["violations"])
