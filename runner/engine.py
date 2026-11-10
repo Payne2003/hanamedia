@@ -484,6 +484,9 @@ class Engine:
             technical = self.log_failure(job, account, error) if known else self.log_error(job, account, error)
             message = str(error) if known else (
                 f"Bộ chạy gặp lỗi Chrome/trang Muse ({technical}). Chi tiết trong data/logs/runner.log; không tự gửi lại.")
+            if known and getattr(error, "unsent", False) and self.store.requeue_unsent(job["id"], str(error), "ready",
+                                                                                      count=False):
+                return
             if known and getattr(error, "region", False):
                 # Muse không tạo video cho tài khoản này ở khu vực của nó: chuyển prompt (và mọi prompt đang chờ) sang
                 # tài khoản khác; không giao prompt cho tài khoản này nữa.

@@ -15,9 +15,10 @@ MOD_KEY = "\ue03d" if sys.platform == "darwin" else "\ue009"
 
 
 class MuseFailure(Exception):
-    def __init__(self, message, state="ready", pending=False, region=False):
+    def __init__(self, message, state="ready", pending=False, region=False, unsent=False):
         super().__init__(message)
         self.state = state
+        self.unsent = unsent  # prompt CHƯA gửi: bộ chạy tự đưa lại hàng đợi
         self.region = region  # Muse chặn tính năng tạo video ở khu vực của tài khoản
         self.pending = pending  # đã gửi, Muse có thể vẫn đang tạo: lấy video sau bằng "Lấy video", không gửi lại
 
@@ -830,12 +831,33 @@ return before>0 ? 'scrolled' : 'top';
                 return source
         return ""
 
+    BUSY_WAIT = 1800  # tối đa 30 phút chờ video trước của tài khoản xong
+    BUSY_POLL = 5
+
+    def wait_previous(self):
+        """Muse chỉ nhận MỘT yêu cầu mỗi lúc trên một tài khoản (mọi prompt chung một cuộc trò chuyện): đang tạo video
+        của prompt trước (nút Dừng) thì CHỜ xong rồi mới gửi, không báo lỗi. Quá lâu thì đưa prompt lại hàng đợi."""
+        self.phase("Muse đang tạo video trước của tài khoản này · chờ xong rồi gửi prompt")
+        until, refreshed = time.monotonic() + self.BUSY_WAIT, time.monotonic()
+        while self.named("button", {"Dừng"}):
+            if time.monotonic() >= until:
+                raise MuseFailure("Muse vẫn đang tạo video trước của tài khoản này sau 30 phút; prompt chưa gửi, tool đưa lại "
+                                  "hàng đợi.", unsent=True)
+            time.sleep(self.BUSY_POLL)
+            if time.monotonic() - refreshed >= 60:  # tải lại trang để thấy trạng thái mới của cuộc trò chuyện
+                refreshed = time.monotonic()
+                try:
+                    self.new_chat()
+                except Exception:
+                    pass
+        self.phase("Chuẩn bị gửi prompt")
+
     def generate(self, prompt, job_id, before_submit, automatic=True, timeout=1800, images=None, spec=""):
         from selenium.webdriver.common.keys import Keys
         from selenium.webdriver.common.action_chains import ActionChains
         self.guard()
         if self.named("button", {"Dừng"}):
-            raise MuseFailure("Muse đang xử lý yêu cầu trước đó. Đợi hoàn tất rồi đăng nhập lại để tiếp tục.")
+            self.wait_previous()
         box = self.composer()
         if not box:
             raise MuseFailure("Phiên đăng nhập đã hết hạn hoặc ô prompt thay đổi.", state="attention")
