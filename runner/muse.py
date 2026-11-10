@@ -321,6 +321,17 @@ class MuseBrowser:
     def elements(self, selector):
         return self.driver.find_elements("css selector", selector)
 
+    def download_item(self):
+        """Mục tải trong menu khi Muse đổi chữ (vd "Tải xuống video", "Lưu video", "Download MP4")."""
+        for e in self.elements("[role='menuitem'],[role='menuitemradio'],[role='option']"):
+            try:
+                label = f"{e.accessible_name or ''} {e.text or ''}".lower()
+                if e.is_displayed() and re.search(r"tải xuống|tải về|tải video|lưu video|download", label):
+                    return e
+            except Exception:
+                continue
+        return None
+
     def named(self, selector, names):
         for e in self.elements(selector):
             try:
@@ -420,7 +431,10 @@ class MuseBrowser:
     def new_chat(self):
         """Mở cuộc trò chuyện Muse mới cho mỗi prompt: prompt sau không dùng ngữ cảnh/ảnh của prompt trước."""
         self.driver.get("https://muse.ai")
-        self.wait(lambda: self.composer(), 60, "Không mở được cuộc trò chuyện Muse mới. Kiểm tra phiên Muse.")
+        try:
+            self.wait(lambda: self.composer(), 60, "Không mở được cuộc trò chuyện Muse mới. Kiểm tra phiên Muse.")
+        except MuseFailure as error:  # prompt chưa gửi: bộ chạy tự đưa lại hàng đợi
+            raise MuseFailure(str(error), unsent=True) from None
 
     def session_ready(self):
         host = urlparse(self.driver.current_url).hostname or ""
@@ -940,14 +954,22 @@ return before>0 ? 'scrolled' : 'top';
     def type_and_send(self, box, request, prompt, marker, images, before_submit, automatic):
         from selenium.webdriver.common.keys import Keys
         from selenium.webdriver.common.action_chains import ActionChains
-        box.clear()
-        box.click()
-        for index, line in enumerate(request.split("\n")):
-            if index:
-                # Plain newlines in send_keys can trigger the chat's submit handler.
-                ActionChains(self.driver).key_down(Keys.SHIFT).send_keys(Keys.ENTER).key_up(Keys.SHIFT).perform()
-            if line:
-                box.send_keys(line)
+        def type_into(box):
+            box.clear()
+            box.click()
+            for index, line in enumerate(request.split("\n")):
+                if index:
+                    # Plain newlines in send_keys can trigger the chat's submit handler.
+                    ActionChains(self.driver).key_down(Keys.SHIFT).send_keys(Keys.ENTER).key_up(Keys.SHIFT).perform()
+                if line:
+                    box.send_keys(line)
+        try:
+            type_into(box)
+        except Exception as error:  # Muse vẽ lại ô nhập giữa lúc gõ (stale element): lấy lại ô nhập, gõ lại từ đầu (chưa gửi)
+            if "stale" not in f"{type(error).__name__} {error}".lower():
+                raise
+            box = self.wait(self.composer, 10, "Muse vẽ lại ô nhập khi đang gõ prompt. Chưa gửi yêu cầu.")
+            type_into(box)
         entered_text = self.driver.execute_script(
             "const e=arguments[0]; return [e.value,e.innerText,e.textContent].filter(Boolean).join('\\n')", box)
         flat = lambda text: re.sub(r"\s+", " ", str(text or "")).strip()  # ô nhập có thể đổi cách xuống dòng
@@ -1093,12 +1115,14 @@ return !leaves.some(e => e!==mine && !e.innerText.includes(marker)
                                           "hoặc bấm ⇩ Lấy video. Đã lưu data/logs/muse-video-debug.html để sửa tool.", pending=True)
                     menu.click()
                     download = self.wait(lambda: self.named("[role='menuitem'],[role='menuitemradio'],[role='option']",
-                                                            DOWNLOAD_LABELS), 15,
+                                                            DOWNLOAD_LABELS) or self.download_item(), 15,
                                          "Menu video không có Tải xuống; chưa thể tải tự động.")
                     download.click()
                     menu_error = None
                     break
-                except MuseFailure:
+                except MuseFailure as error:
+                    if "Menu video không có Tải xuống" in str(error):  # video đã có: để tool tự mở lại và tải sau
+                        raise MuseFailure(str(error) + " Tool sẽ tự mở lại cuộc trò chuyện để tải.", pending=True) from None
                     raise
                 except Exception as error:  # khung video bị vẽ lại giữa chừng: lấy lại khung rồi thử lại
                     menu_error = error
