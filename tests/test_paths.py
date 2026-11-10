@@ -27,12 +27,18 @@ class PathTests(unittest.TestCase):
 
     def test_installed_app_uses_localappdata_and_bundle(self):
         with patch.object(sys, "frozen", True, create=True), patch.object(sys, "_MEIPASS", str(self.root / "bundle"), create=True), \
-                patch.dict(os.environ, {"LOCALAPPDATA": str(self.root / "Local")}):
+                patch.object(sys, "platform", "win32"), patch.dict(os.environ, {"LOCALAPPDATA": str(self.root / "Local")}):
             os.environ.pop("HANAMEDIA_DATA", None)
             self.assertEqual(paths.data_root(), self.root / "Local" / "HanaMedia" / "data")
             self.assertEqual(paths.resource_root(), self.root / "bundle")
             with patch.dict(os.environ, {"HANAMEDIA_DATA": str(self.root / "custom")}):
                 self.assertEqual(paths.data_root(), (self.root / "custom").resolve())
+
+    def test_installed_mac_app_uses_application_support(self):
+        with patch.object(sys, "frozen", True, create=True), patch.object(sys, "platform", "darwin"), \
+                patch.object(paths.Path, "home", return_value=self.root):
+            os.environ.pop("HANAMEDIA_DATA", None)
+            self.assertEqual(paths.data_root(), self.root / "Library" / "Application Support" / "HanaMedia" / "data")
 
     def old_data(self):
         old = self.root / "Huy-Muse-Runner" / "data"

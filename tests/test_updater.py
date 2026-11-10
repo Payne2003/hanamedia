@@ -64,6 +64,7 @@ class UpdaterTests(unittest.TestCase):
                     opener=opener or self.opener, launcher=lambda path: self.launched.append(Path(path)),
                     sleep=lambda s: None, curl=curl or self.no_curl)
         u.state["supported"] = True
+        u.state["manual"] = False  # luồng Windows: tải bộ cài và tự cài (macOS kiểm tra riêng bên dưới)
         return u
 
     @staticmethod
@@ -138,6 +139,18 @@ class UpdaterTests(unittest.TestCase):
         u = Updater(self.root, repo=REPO, opener=self.opener)
         self.assertIn("Chưa có bản phát hành", u.check()["error"])
 
+
+    def test_mac_update_opens_download_page_instead_of_installing(self):
+        from unittest.mock import patch
+        self.publish()
+        u = self.make()
+        u.state["manual"] = True
+        u.check()
+        with patch("webbrowser.open") as opened:
+            status = u.start_install()
+        opened.assert_called_once_with(f"https://github.com/{REPO}/releases/latest")
+        self.assertEqual(status["phase"], "idle")
+        self.assertEqual(self.launched, [])  # không tải/chạy bộ cài Windows trên Mac
 
     # ---- VPN / đổi mạng --------------------------------------------------------------------------------------------
     def test_network_drop_during_check_is_retried(self):

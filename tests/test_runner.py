@@ -749,6 +749,7 @@ class StoreTests(unittest.TestCase):
         ids = [self.account(str(i))["id"] for i in range(7)]
         self.store.set_account(ids[0], "ready")
         engine = Engine(self.store, self.root / "engine-data")
+        engine.max_parallel = 4  # không phụ thuộc RAM của máy chạy test (máy Mac CI chỉ đủ cho 1 Chrome)
         FakeBrowser = self.session_browser()
         peak, open_now, guard = [0], [0], __import__("threading").Lock()
         original_init, original_close = FakeBrowser.__init__, FakeBrowser.close
