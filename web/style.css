@@ -728,3 +728,44 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 .content-page .card,.production-board .card,.media-page .card,.license-page .card,.workspace>.card{border-radius:var(--radius-lg);transition:border-color .15s,box-shadow .15s}
 .content-page .card:hover,.license-page .card:hover{border-color:var(--c-accent-soft);box-shadow:0 12px 30px #0002}
 .stepper{border-radius:var(--radius-lg)!important}
+/* ==== HANA design refresh — dùng chung cho mọi trang (tối & sáng) ==== */
+:root{--hana-glow:color-mix(in srgb,var(--c-accent) 32%,transparent);--hana-card:linear-gradient(180deg,var(--c-surface-2),var(--c-surface))}
+/* Thanh bên */
+.sidebar{border-right:1px solid var(--c-border)}
+.sidebar .primary-nav button{height:42px;padding:0 14px;border-radius:12px;font-size:var(--fs-sm);font-weight:500;display:flex;align-items:center;gap:10px;transition:background .15s,color .15s,transform .15s}
+.sidebar .primary-nav button:hover:not(.active){background:color-mix(in srgb,var(--c-accent) 12%,transparent);color:var(--c-text);transform:translateX(2px)}
+.sidebar .primary-nav button.active{background:linear-gradient(110deg,var(--c-accent),var(--c-accent-strong));color:#fff;box-shadow:0 8px 22px var(--hana-glow)}
+.sidebar .primary-nav button i{width:20px;text-align:center;font-style:normal;opacity:.9}
+/* Nút */
+button,.button-link{border-radius:12px;transition:background .15s,border-color .15s,color .15s,box-shadow .15s,transform .1s}
+button:active:not(:disabled){transform:translateY(1px)}
+.primary,button.primary{background:linear-gradient(110deg,var(--c-accent),var(--c-accent-strong));border-color:transparent;color:#fff;box-shadow:0 8px 20px var(--hana-glow)}
+.primary:hover:not(:disabled){background:linear-gradient(110deg,var(--c-accent-strong),var(--c-accent));box-shadow:0 10px 26px var(--hana-glow)}
+/* Ô nhập */
+input,select,textarea{border-radius:12px;transition:border-color .15s,box-shadow .15s}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--c-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--c-accent) 22%,transparent)}
+/* Thẻ */
+.card{background:var(--hana-card);border-radius:var(--radius-lg);box-shadow:0 10px 30px #0000001f}
+.card-heading h2{font-size:var(--fs-xl);letter-spacing:-.3px}
+.tabs button.active{background:linear-gradient(110deg,var(--c-accent),var(--c-accent-strong));color:#fff;border-color:transparent}
+/* Thanh bước Content Studio */
+.stepper{padding:14px 20px!important;background:var(--hana-card)!important;border:1px solid var(--c-border)}
+.stepper button span{box-shadow:0 0 0 4px color-mix(in srgb,var(--c-accent) 14%,transparent)}
+.stepper button.active span{background:linear-gradient(135deg,var(--c-accent),var(--c-accent-strong))!important;color:#fff!important}
+/* Hộp thoại (tài khoản Muse…) */
+dialog{border-radius:20px;background:var(--hana-card)}
+.account-row{border-radius:14px;background:var(--c-surface-2);transition:border-color .15s}
+.account-row:hover{border-color:var(--c-accent-soft)}
+.account-top strong{font-size:var(--fs-md)}
+/* Huy hiệu trạng thái */
+.badge{padding:3px 10px;font-weight:600}
+.badge.done{background:color-mix(in srgb,var(--green) 18%,transparent)}
+.badge.error{background:color-mix(in srgb,var(--c-danger) 16%,transparent)}
+/* Khung tạo video bên phải Studio */
+.workspace .composer{position:sticky;top:16px}
+.composer .card-heading h2::before{content:"✦ ";color:var(--c-accent)}
+/* Thư viện */
+.media-page .media-card,.media-grid>*{border-radius:16px;transition:transform .15s,box-shadow .15s}
+.media-grid>*:hover{transform:translateY(-2px);box-shadow:0 14px 30px #0003}
+/* Cuộn mượt và thanh cuộn mảnh */
+*{scrollbar-width:thin;scrollbar-color:var(--c-border-strong) transparent}
