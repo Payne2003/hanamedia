@@ -329,7 +329,12 @@
           <section class="content-step first"><h3><span>1</span>Đầu vào · Gemini Pro</h3>
             <label for="contentBrief">Prompt · yêu cầu cho Gemini</label>
             <textarea id="contentBrief" rows="6" maxlength="20000"></textarea>
-            <label>Link video gốc <small>(YouTube · có thể bỏ trống)</small><input id="contentVideo" type="url" placeholder="https://www.youtube.com/watch?v=..."></label>
+            <label>Link video gốc <small>(YouTube, TikTok, Facebook… · có thể bỏ trống)</small><input id="contentVideo" type="url" placeholder="https://www.youtube.com/watch?v=..."></label>
+            <div class="content-video-file">
+              <div class="content-video-actions"><button id="contentDownload" type="button">⬇ Tải video từ link</button><button id="contentPickVideo" type="button">📎 Chọn file video</button><button id="contentClearVideo" type="button" class="danger-outline" hidden>✕ Bỏ file</button></div>
+              <progress id="contentDownloadProgress" max="100" hidden></progress>
+              <p class="detail" id="contentVideoFile"></p>
+            </div>
             <label>Ngôn ngữ kịch bản<select id="contentLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
             <div>
               <p class="detail account-line" id="geminiAccountLine"></p>

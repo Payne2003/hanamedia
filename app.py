@@ -925,10 +925,22 @@ class Handler(BaseHTTPRequestHandler):
                 store.save_setting("gemini_web_model", str(body.get("model") or "").strip()[:40])
             elif path == "/api/content/web-run":
                 kind = "review" if body.get("kind") == "review" else "generate"
+                from runner.gemini_web import VIDEO_LIMIT, VIDEO_TYPES
+                video_file = str(body.get("video_file") or "").strip()
+                if video_file:
+                    source = Path(video_file)
+                    if not source.is_file():
+                        raise ValueError("Không thấy file video đã chọn (có thể đã bị xóa hoặc chuyển chỗ). Chọn lại file.")
+                    if source.suffix.lower() not in VIDEO_TYPES:
+                        raise ValueError("Gemini chỉ nhận file video " + ", ".join(VIDEO_TYPES) + ". Hãy dùng file .mp4.")
+                    if source.stat().st_size > VIDEO_LIMIT:
+                        raise ValueError("File video lớn hơn 2 GB, Gemini không nhận. Dùng bản nhẹ hơn (720p/1080p).")
                 prompt = content.web_prompt(kind, body.get("brief", ""), body.get("video_url", ""),
-                                            body.get("language", "vi"), body.get("scenes"))
+                                            body.get("language", "vi"), body.get("scenes"), attached=bool(video_file))
                 job = self.server.gemini_web.start(kind, prompt, store.setting("gemini_web_email") or "",
-                                                   store.setting("gemini_web_model") or "")
+                                                   store.setting("gemini_web_model") or "",
+                                                   {"video": str(Path(video_file).resolve()), "measure": body.get("measure") is not False}
+                                                   if video_file else None)
                 return self.reply({"ok": True, "id": job})
             elif path == "/api/content/chatgpt-settings":
                 store.save_setting("chatgpt_web_model", str(body.get("model") or "").strip()[:40])

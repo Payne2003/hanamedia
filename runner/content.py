@@ -12,7 +12,7 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "content-19"
+VERSION = "content-20"
 MAX_SCENES = 200
 FIELD_LIMIT = 2000
 FIELDS = ("setting", "camera", "behavior", "action")
@@ -56,7 +56,7 @@ def youtube_url(value):
             video_id = match.group(1) if match else ""
     if url.scheme not in ("http", "https") or not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
         raise ValueError("Gemini chỉ đọc trực tiếp link YouTube công khai (youtube.com/watch, youtu.be, /shorts). "
-                         "Với TikTok/Facebook, hãy đăng video lên YouTube ở chế độ công khai hoặc không công khai rồi dán link.")
+                         "Với TikTok/Facebook…, bấm “⬇ Tải video từ link” để tool tải về và đính kèm file cho Gemini.")
     return "https://www.youtube.com/watch?v=" + video_id
 
 
@@ -114,10 +114,37 @@ Bối cảnh 2: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành
 (mỗi cảnh đúng một dòng, đánh số liên tục, viết đủ tất cả cảnh, không tóm tắt, không bỏ dòng nào)"""
 
 
-def web_prompt(kind, brief, video_url="", language="vi", scenes=None):
-    """Yêu cầu để dán vào ứng dụng Gemini trên web."""
+# Gemini có thể nhớ các cuộc trò chuyện trước: mỗi yêu cầu nói rõ là độc lập để không lẫn kịch bản/cảnh cũ.
+ISOLATION = ("ĐÂY LÀ YÊU CẦU MỚI, ĐỘC LẬP. Chỉ dùng video gốc và nội dung trong tin nhắn này. KHÔNG dùng nhân vật, cảnh, "
+             "kịch bản hay prompt từ bất kỳ cuộc trò chuyện, dự án hoặc video nào trước đó.")
+
+
+def shot_section(shots, duration=0):
+    """Bảng điểm cắt do tool đo trên file video: Gemini phải viết đúng 1 cảnh cho mỗi shot (không bỏ sót)."""
+    shots = list(shots or [])[:MAX_SCENES]
+    if not shots:
+        return ""
+    clock = lambda s: f"{int(s // 60):02d}:{s % 60:05.2f}"
+    rows = "\n".join(f"Shot {i}: {clock(s['start'])} – {clock(s['end'])} ({s['end'] - s['start']:.1f} giây)"
+                      for i, s in enumerate(shots, 1))
+    return (f"BẢNG ĐIỂM CẮT (tool đo trên từng khung hình của file video{f', dài {clock(duration)}' if duration else ''}): "
+            f"video có {len(shots)} shot.\n{rows}\n"
+            f"Viết ĐÚNG {len(shots)} cảnh: Bối cảnh 1 = Shot 1, Bối cảnh 2 = Shot 2 … Bối cảnh {len(shots)} = Shot {len(shots)}. "
+            "Mỗi shot đúng một dòng cảnh, đúng thứ tự thời gian; không gộp shot, không bỏ shot nào kể cả shot rất ngắn. "
+            "Mô tả đúng những gì thấy trong khoảng thời gian của shot đó.")
+
+
+def web_prompt(kind, brief, video_url="", language="vi", scenes=None, attached=False):
+    """Yêu cầu để dán vào ứng dụng Gemini trên web. attached=True: file video gốc được đính kèm vào tin nhắn."""
     language = LANGUAGES.get(language, LANGUAGES["vi"])
-    video_url = youtube_url(video_url)
+    if attached:
+        try:
+            video_url = youtube_url(video_url)
+        except ValueError:
+            video_url = ""  # link TikTok/Facebook… đã được tải về và đính kèm file: không cần link nữa
+    else:
+        video_url = youtube_url(video_url)
+    has_video = attached or bool(video_url)
     brief = str(brief or "").strip()[:20000]
     if kind == "review":
         scenes = clean_scenes(scenes or [])
@@ -125,7 +152,7 @@ def web_prompt(kind, brief, video_url="", language="vi", scenes=None):
             raise ValueError("Chưa có cảnh để kiểm tra.")
         task = ("Bạn là người kiểm duyệt kịch bản cho video tạo bằng AI. "
                 + ("Xem lại video gốc và so sánh với danh sách cảnh bên dưới: tìm đoạn bị bỏ sót, cảnh sai thứ tự, mô tả sai. "
-                   if video_url else "So sánh danh sách cảnh với yêu cầu: tìm phần còn thiếu hoặc mạch truyện bị đứt. ")
+                   if has_video else "So sánh danh sách cảnh với yêu cầu: tìm phần còn thiếu hoặc mạch truyện bị đứt. ")
                 + "Đồng thời sửa cảnh mà AI video khó hoặc không tạo được (trường trống, quá nhiều hành động, người nổi tiếng, "
                 "logo, chữ trên màn hình, nội dung dễ bị từ chối). Thêm cảnh còn thiếu vào đúng vị trí.")
         body = (f"{task}\n\nYêu cầu gốc:\n{brief or '(không có)'}\n\nDanh sách cảnh hiện tại:\n"
@@ -135,11 +162,15 @@ def web_prompt(kind, brief, video_url="", language="vi", scenes=None):
     else:
         if not brief:
             raise ValueError("Nhập yêu cầu (prompt) cho Gemini.")
-        source = ("Xem kỹ video gốc từ đầu đến cuối, viết lại kịch bản video gốc và chia toàn bộ video thành các cảnh."
+        source = ("Xem kỹ FILE VIDEO GỐC ĐÍNH KÈM trong tin nhắn này từ giây đầu tiên đến giây cuối cùng, viết lại kịch bản "
+                  "video gốc và chia toàn bộ video thành các cảnh." if attached else
+                  "Xem kỹ video gốc từ đầu đến cuối, viết lại kịch bản video gốc và chia toàn bộ video thành các cảnh."
                   if video_url else "Không có video gốc. Tự viết kịch bản theo yêu cầu rồi chia thành các cảnh.")
         body = f"Bạn là biên kịch và đạo diễn hình ảnh cho video tạo bằng AI. {source}\n\nYêu cầu:\n{brief}"
-    parts = [body]
-    if video_url:
+    parts = [ISOLATION, body]
+    if attached:
+        parts.append("Video gốc: file video đính kèm trong tin nhắn này.")
+    elif video_url:
         parts.append(f"Video gốc: {video_url}")
     parts += [SCENE_RULES.replace('Trường "setting"', "Bối cảnh").replace('Trường "camera"', "Góc quay")
               .replace('Trường "behavior"', "Hành vi nhân vật").replace('Trường "action"', "Nội dung hành động nhân vật"),

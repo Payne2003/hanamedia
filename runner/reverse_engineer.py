@@ -87,6 +87,14 @@ def frame_differences(path, stop=None, timeout=1800):
     return scores, times
 
 
+def quick_shots(path, stop=None):
+    """Đo điểm cắt nhanh (không giải mã kiểm tra toàn bộ như verify_source): dùng cho Gemini viết kịch bản đủ cảnh."""
+    info = video.probe(path)
+    text = video.run([video.ffmpeg(), "-hide_banner", "-i", str(path)], 60).stderr
+    match = re.search(r"(\d+(?:\.\d+)?) fps", text)
+    return detect_shots(path, info["duration"], float(match.group(1)) if match else 0.0, stop), info["duration"]
+
+
 def detect_shots(path, duration, fps, stop=None):
     """GIAI ĐOẠN 3: ứng viên điểm cắt = khung hình sai khác mạnh so với cả tuyệt đối lẫn xung quanh.
     Trả về danh sách shot liên tục phủ toàn bộ thời lượng, kèm điểm số và mức tin cậy của điểm cắt đầu shot."""
