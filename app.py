@@ -27,6 +27,11 @@ from runner.characters import NeedsConfirm
 from runner.media import MediaError, MediaInUse
 from runner import license as licensing
 from runner.store import DEFAULT_BUDGET, Store
+
+
+def camera_count(custom=None):
+    from runner import camera_library
+    return len(camera_library.LIBRARY) + (len(camera_library.custom_angles(custom)) if custom else 0)
 from runner.instance import InstanceLock
 from runner.paths import data_root, frozen, resource_root
 from runner.version import APP_VERSION
@@ -447,7 +452,9 @@ class Handler(BaseHTTPRequestHandler):
                                "chatgpt": dict(self.server.chatgpt_web.snapshot(),
                                                model=self.server.store.setting("chatgpt_web_model") or ""),
                                "review": {"rules": self.server.store.setting("review_rules") or content.DEFAULT_REVIEW_RULES,
-                                          "lock": self.server.store.setting("review_lock") or content.DEFAULT_LOCK}}
+                                          "lock": self.server.store.setting("review_lock") or content.DEFAULT_LOCK,
+                                          "camera_custom": self.server.store.setting("camera_custom") or "",
+                                          "camera_count": camera_count(self.server.store.setting("camera_custom") or "")}}
             return self.reply(data)
         job_match = re.fullmatch(r"/api/job/([a-f0-9]{32})", path)
         if job_match:
@@ -968,6 +975,9 @@ class Handler(BaseHTTPRequestHandler):
                                    store.setting("chatgpt_web_model" if chatgpt else "gemini_web_model") or "",
                                    {"prompts": prompts, "rules": rules, "lock": lock})
                 return self.reply({"ok": True, "id": job, "total": len(prompts), "engine": "chatgpt" if chatgpt else "gemini"})
+            elif path == "/api/content/camera-custom":
+                store.save_setting("camera_custom", str(body.get("text") or "")[:20000])
+                return self.reply({"ok": True, "count": camera_count(store.setting("camera_custom") or "")})
             elif path == "/api/content/review-rules":
                 store.save_setting("review_rules", str(body.get("rules") or "").strip()[:6000])
                 store.save_setting("review_lock", str(body.get("lock") or "").strip()[:2000])
@@ -984,7 +994,9 @@ class Handler(BaseHTTPRequestHandler):
                                                     body.get("structured") is not False,
                                                     body.get("seconds") if body.get("seconds") in content.SECONDS_CHOICES
                                                     else content.DEFAULT_SECONDS,
-                                                    body.get("angles") if body.get("angles") in content.ANGLE_CHOICES else 0))
+                                                    body.get("angles") if body.get("angles") in content.ANGLE_CHOICES else 0,
+                                                    body.get("library") is True,
+                                                    str(store.setting("camera_custom") or "")[:20000]))
                 return self.reply({"ok": True, "id": job, "total": len(lines), "engine": "chatgpt" if chatgpt else "gemini"})
             elif path == "/api/projects/create":
                 registry = store.characters

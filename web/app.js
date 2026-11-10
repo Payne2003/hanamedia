@@ -276,7 +276,7 @@ function showView(view){
   if(isLicense)loadLicense();
   if(isSettings){applyAutoSettings(true);renderSettings(true);}
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
-  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;renderVideoFile();$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles||0);renderEnglishEngine();openCharacters();}
+  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;renderVideoFile();$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles??'lib');renderEnglishEngine();openCharacters();}
   const hash=isProduction?'#production':isContent?'#content':isSettings?'#settings':isMedia?'#media':isCommunity?'#community':isLicense?'#license':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);markSidebar();
 }
@@ -436,8 +436,8 @@ $('englishInput').oninput=()=>{content.englishInput=$('englishInput').value;save
 $('englishStyle').oninput=()=>{content.englishStyle=$('englishStyle').value;saveContent();};
 $('englishAspect').onchange=()=>{content.englishAspect=$('englishAspect').value;saveContent();};
 $('englishSeconds').onchange=()=>{content.englishSeconds=Number($('englishSeconds').value);saveContent();};
-$('englishAngles').onchange=()=>{content.englishAngles=Number($('englishAngles').value);try{localStorage.setItem('hana-english-angles',String(content.englishAngles));}catch{}};
-try{content.englishAngles=Number(localStorage.getItem('hana-english-angles')||0)||0;}catch{}
+$('englishAngles').onchange=()=>{content.englishAngles=$('englishAngles').value;try{localStorage.setItem('hana-english-angles',String(content.englishAngles));}catch{}};
+try{const saved=localStorage.getItem('hana-english-angles');content.englishAngles=['lib','0','3'].includes(saved)?saved:'lib';}catch{content.englishAngles='lib';}
 $('englishStructured').onchange=()=>{content.englishStructured=$('englishStructured').checked;saveContent();};
 $('englishOutput').oninput=()=>{content[englishKey(content.englishEngine)[0]]=$('englishOutput').value;saveContent();renderEnglish();};
 $('chatgptModel').onchange=()=>api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()}).then(refresh).catch(error=>toast(error.message,true));
@@ -452,7 +452,7 @@ async function startEnglish(silent){
   try{
     if(engine==='gemini')await saveAutoSettings();
     else await api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()});
-    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked,angles:Number($('englishAngles').value),seconds:Number($('englishSeconds').value)});
+    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked,angles:$('englishAngles').value==='lib'?0:Number($('englishAngles').value),library:$('englishAngles').value==='lib',seconds:Number($('englishSeconds').value)});
     lastJobError='';
     if(engine==='gemini'){autoJob={id,kind:'english'};renderAuto();}else{chatJob={id};renderEnglishRun();}
     refresh();toast(`Đã gửi ${total} cảnh cho ${engineNames[engine]}.`);return true;
@@ -460,7 +460,8 @@ async function startEnglish(silent){
 }
 // ---- Kiểm duyệt prompt: quy tắc + khóa (lưu trên máy, người dùng cập nhật dần) ----
 let reviewLoaded=false,reviewTimer=null;
-function loadReviewRules(){const r=state?.content?.review;if(!r||reviewLoaded)return;reviewLoaded=true;$('reviewRules').value=r.rules||'';$('reviewLock').value=r.lock||'';renderReviewIssues();}
+function loadReviewRules(){const r=state?.content?.review;if(!r)return;$('cameraCount').textContent=Number(r.camera_count||0).toLocaleString('vi-VN');if(reviewLoaded)return;reviewLoaded=true;$('reviewRules').value=r.rules||'';$('reviewLock').value=r.lock||'';$('cameraCustom').value=r.camera_custom||'';renderReviewIssues();}
+let cameraTimer=null;$('cameraCustom').oninput=()=>{clearTimeout(cameraTimer);cameraTimer=setTimeout(()=>api('/api/content/camera-custom',{text:$('cameraCustom').value}).then(r=>{$('cameraCount').textContent=Number(r.count).toLocaleString('vi-VN');}).catch(error=>toast(error.message,true)),700);};
 function saveReviewRules(){clearTimeout(reviewTimer);reviewTimer=setTimeout(()=>api('/api/content/review-rules',{rules:$('reviewRules').value,lock:$('reviewLock').value}).catch(error=>toast(error.message,true)),600);}
 $('reviewRules').oninput=saveReviewRules;$('reviewLock').oninput=saveReviewRules;
 $('resetReview').onclick=()=>{if(!confirm('Khôi phục bộ quy tắc và khóa mặc định?'))return;$('reviewRules').value='';$('reviewLock').value='';api('/api/content/review-rules',{rules:'',lock:''}).then(async()=>{reviewLoaded=false;await refresh();loadReviewRules();toast('Đã khôi phục mặc định.');}).catch(error=>toast(error.message,true));};

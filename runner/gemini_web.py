@@ -763,6 +763,13 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model=""):
             break
         found.update(more)
     reviewed = [found.get(n) if found.get(n) and content.is_english(found[n]) else prompts[n - 1] for n in numbers]
+    from . import camera_library
+    for n in numbers:  # góc quay đã chọn từ thư viện (3 mốc giây) giữ nguyên, AI không được đổi
+        original = camera_library.CAMERA_FIELD.search(content.strip_lock(prompts[n - 1]))
+        if original and len(content.SCENE_SEGMENT.findall(original.group(2))) >= 3 and reviewed[n - 1] != prompts[n - 1]:
+            reviewed[n - 1] = camera_library.CAMERA_FIELD.sub(lambda m: m.group(1) + original.group(2).strip(),
+                                                             reviewed[n - 1], count=1) \
+                if camera_library.CAMERA_FIELD.search(reviewed[n - 1]) else reviewed[n - 1]
     bad = [n for n in numbers if content.prompt_violations(reviewed[n - 1])]
     if bad:
         answer = session.ask(content.review_request(reviewed, rules, bad) + "\n\nCHỈ viết lại các prompt trên; prompt còn lỗi: "
@@ -864,7 +871,7 @@ def run_characters(session, script, scenes, status, stop, email="", model=""):
 
 
 def run_english(session, lines, status, stop, email="", model="", style="", aspect="16:9", structured=True,
-                seconds=content.DEFAULT_SECONDS, angles=0):
+                seconds=content.DEFAULT_SECONDS, angles=0, library=False, custom_angles=""):
     """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
     total = len(lines)
     name = getattr(session, "NAME", "Gemini")
@@ -919,6 +926,11 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
     missing = content.missing_english(found, total, structured, seconds, angles)
     if structured:  # dựng lại đúng cấu trúc MASTER PROMPT 08, STYLE/DURATION/ASPECT RATIO chuẩn
         found = {number: content.muse_prompt(prompt, seconds, aspect, style) for number, prompt in found.items()}
+    if library:  # thư viện góc quay: mỗi cảnh đúng 3 góc, chọn theo hành động, không lặp góc cảnh trước
+        from . import camera_library
+        plans = camera_library.plans([f"{lines[n - 1]} {found.get(n, '')}" for n in range(1, total + 1)], seconds,
+                                     custom_angles)
+        found = {number: camera_library.apply(prompt, plans[number - 1], seconds) for number, prompt in found.items() if prompt}
     return {"english": [found.get(number, "") for number in range(1, total + 1)], "missing": missing, "lines": lines,
             "issues": issues,
             "structured": structured,
@@ -1073,11 +1085,11 @@ class GeminiWebRunner:
                              status=f"Đã kiểm duyệt {result['total']} prompt" + (f" · còn {left} prompt cần xem lại" if left else ""))
                     continue
                 if kind == "english":
-                    defaults = ("", "16:9", True, content.DEFAULT_SECONDS, 0)
+                    defaults = ("", "16:9", True, content.DEFAULT_SECONDS, 0, False, "")
                     options = tuple(style) if isinstance(style, tuple) else (style,)
-                    style, aspect, structured, seconds, angles = options + defaults[len(options):]
+                    style, aspect, structured, seconds, angles, library, custom = options + defaults[len(options):]
                     result = run_english(self.session, lines, status, self.stop, email, model, style, aspect, structured, seconds,
-                                         angles)
+                                         angles, library, custom)
                     done = result["total"] - len(result["missing"])
                     self.set(busy=False, result=result,
                              status=f"Xong: {done}/{result['total']} prompt tiếng Anh sau {result['rounds']} lượt"

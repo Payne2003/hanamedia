@@ -692,3 +692,4 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 .jc-pending.error .detail{max-height:60px;overflow:auto}
 .jc-actions{display:flex;flex-wrap:wrap;gap:6px}.jc-actions button,.jc-actions a{flex:1 1 auto;text-align:center;font-size:var(--fs-xs);padding:7px 9px;border-radius:var(--radius);border:1px solid var(--c-border);background:var(--c-surface-3);color:var(--c-text)}
 .jc-actions a:hover{text-decoration:none;border-color:var(--c-accent-soft)}
+.camera-library{margin-top:14px;border:1px solid var(--c-border);border-radius:var(--radius);padding:10px 14px;background:var(--c-surface-2)}.camera-library summary{cursor:pointer;font-size:var(--fs-sm)}
