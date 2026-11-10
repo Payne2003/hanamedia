@@ -733,6 +733,9 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
 VERIFY_ROUNDS = 2
 
 
+REGENERATE_ROUNDS = 2
+
+
 def run_review(session, prompts, rules, lock, status, stop, email="", model=""):
     """Kiểm duyệt prompt: AI đối chiếu từng prompt với bộ quy tắc của người dùng và viết lại cho đạt; tool kiểm tra máy
     (từ cấm, đủ 2–3 góc quay), hỏi lại riêng prompt còn vi phạm (1 lượt), rồi gắn KHÓA chung vào cuối mọi prompt.
@@ -763,6 +766,22 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model=""):
             break
         found.update(more)
     reviewed = [found.get(n) if found.get(n) and content.is_english(found[n]) else prompts[n - 1] for n in numbers]
+    for attempt in range(REGENERATE_ROUNDS):  # prompt còn lỗi sau kiểm duyệt: tự tạo lại riêng prompt đó
+        bad = [n for n in numbers if content.prompt_violations(reviewed[n - 1])]
+        if not bad:
+            break
+        answer = session.ask(content.review_request(reviewed, rules, bad) + "\n\nCHỈ viết lại các prompt trên; prompt còn lỗi: "
+                             + "; ".join(f"{n}: {', '.join(content.prompt_violations(reviewed[n - 1]))}" for n in bad),
+                             status, stop, email, label=f"{len(bad)} prompt còn lỗi · {name} tạo lại (lần {attempt + 1})")
+        rounds += 1
+        improved = 0
+        for n, text in content.parse_english(answer, total, bad).items():
+            if content.is_english(text) and len(content.prompt_violations(text)) < len(content.prompt_violations(reviewed[n - 1])):
+                reviewed[n - 1] = text
+                improved += 1
+        if not improved:
+            break
+        issues += [i for i in content.parse_issues(answer) if i not in issues]
     from . import camera_library
     for n in numbers:  # góc quay đã chọn từ thư viện (3 mốc giây) giữ nguyên, AI không được đổi
         original = camera_library.CAMERA_FIELD.search(content.strip_lock(prompts[n - 1]))
@@ -770,16 +789,6 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model=""):
             reviewed[n - 1] = camera_library.CAMERA_FIELD.sub(lambda m: m.group(1) + original.group(2).strip(),
                                                              reviewed[n - 1], count=1) \
                 if camera_library.CAMERA_FIELD.search(reviewed[n - 1]) else reviewed[n - 1]
-    bad = [n for n in numbers if content.prompt_violations(reviewed[n - 1])]
-    if bad:
-        answer = session.ask(content.review_request(reviewed, rules, bad) + "\n\nCHỈ viết lại các prompt trên; prompt còn lỗi: "
-                             + "; ".join(f"{n}: {', '.join(content.prompt_violations(reviewed[n - 1]))}" for n in bad),
-                             status, stop, email, label=f"{len(bad)} prompt còn vi phạm · {name} sửa lại")
-        rounds += 1
-        for n, text in content.parse_english(answer, total, bad).items():
-            if content.is_english(text) and len(content.prompt_violations(text)) < len(content.prompt_violations(reviewed[n - 1])):
-                reviewed[n - 1] = text
-        issues += [i for i in content.parse_issues(answer) if i not in issues]
     final = [content.apply_lock(p, lock or content.DEFAULT_LOCK) for p in reviewed]
     violations = {n: content.prompt_violations(final[n - 1]) for n in numbers}
     return {"english": final, "issues": issues, "violations": {n: v for n, v in violations.items() if v},

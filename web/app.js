@@ -238,7 +238,7 @@ const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior'
 const defaultBrief='Phân tích video gốc và chia thành từng cảnh 10 giây theo đúng thứ tự thời gian. Mỗi cảnh liệt kê từng góc máy theo mốc giây (cỡ cảnh, góc máy, chuyển động máy), mô tả bối cảnh, hành vi và hành động nhân vật đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
 const oldBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 15 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
 let content={brief:defaultBrief,video:'',videoFile:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',englishAspect:'16:9',englishStructured:true,englishSeconds:10,windows:[],englishAngles:0,englishIssues:[],english:'',englishMissing:[],englishEngine:'chatgpt',englishChatgpt:'',englishChatgptMissing:[]};
-try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,brief:saved.brief&&saved.brief!==oldBrief?saved.brief:content.brief,windows:Array.isArray(saved.windows)?saved.windows:[],video:saved.video||'',videoFile:typeof saved.videoFile==='string'?saved.videoFile:'',videoFrom:typeof saved.videoFrom==='string'?saved.videoFrom:'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,englishSeconds:[5,8,10].includes(Number(saved.englishSeconds))?Number(saved.englishSeconds):10,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:'chatgpt',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
+try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,reviewed:saved.reviewed===true,reviewViolations:saved.reviewViolations&&typeof saved.reviewViolations==='object'?saved.reviewViolations:{},reviewIssues:Array.isArray(saved.reviewIssues)?saved.reviewIssues:[],brief:saved.brief&&saved.brief!==oldBrief?saved.brief:content.brief,windows:Array.isArray(saved.windows)?saved.windows:[],video:saved.video||'',videoFile:typeof saved.videoFile==='string'?saved.videoFile:'',videoFrom:typeof saved.videoFrom==='string'?saved.videoFrom:'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,englishSeconds:[5,8,10].includes(Number(saved.englishSeconds))?Number(saved.englishSeconds):10,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:'chatgpt',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
 // Bản nháp còn đúng câu mẫu cũ (8 giây) thì đổi sang câu mẫu mới (15 giây).
 if(content.brief==='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.')content.brief=defaultBrief;
 const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
@@ -344,7 +344,7 @@ function pollAuto(){
   if(web.id!==autoJob.id||web.busy){renderAuto();return;}
   const job=autoJob;autoJob=null;renderAuto();
   if(job.kind==='characters')return finishCharacters('gemini',job.id,web);
-  if(web.error){lastJobError=web.error;return toast(web.error,true);}
+  if(web.error){lastJobError=web.error;if(typeof reviewOne!=='undefined')reviewOne=null;return toast(web.error,true);}
   const result=web.result;if(!result){lastJobError='Không có kết quả.';return;}
   if(job.kind==='english')return finishEnglish('gemini',result);
   if(job.kind==='promptreview')return finishReview('gemini',result);
@@ -424,7 +424,7 @@ function pollChat(){
   if(!chatJob||!web||web.id!==chatJob.id||web.busy){renderEnglishRun();return;}
   const job=chatJob;chatJob=null;renderEnglishRun();
   if(job.kind==='characters')return finishCharacters('chatgpt',job.id,web);
-  if(web.error){lastJobError=web.error;return toast(web.error,true);}
+  if(web.error){lastJobError=web.error;if(typeof reviewOne!=='undefined')reviewOne=null;return toast(web.error,true);}
   if(!web.result){lastJobError='Không có kết quả.';return;}
   if(job.kind==='promptreview')return finishReview('chatgpt',web.result);
   finishEnglish('chatgpt',web.result);
@@ -439,7 +439,7 @@ $('englishSeconds').onchange=()=>{content.englishSeconds=Number($('englishSecond
 $('englishAngles').onchange=()=>{content.englishAngles=$('englishAngles').value;try{localStorage.setItem('hana-english-angles',String(content.englishAngles));}catch{}};
 try{const saved=localStorage.getItem('hana-english-angles');content.englishAngles=['lib','0','3'].includes(saved)?saved:'lib';}catch{content.englishAngles='lib';}
 $('englishStructured').onchange=()=>{content.englishStructured=$('englishStructured').checked;saveContent();};
-$('englishOutput').oninput=()=>{content[englishKey(content.englishEngine)[0]]=$('englishOutput').value;saveContent();renderEnglish();};
+$('englishOutput').oninput=()=>{content[englishKey(content.englishEngine)[0]]=$('englishOutput').value;saveContent();renderEnglish();renderReviewList();};
 $('chatgptModel').onchange=()=>api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()}).then(refresh).catch(error=>toast(error.message,true));
 $('loginChatgpt').onclick=async()=>{try{await api('/api/content/web-login',{engine:'chatgpt'});await refresh();toast('Đã mở Chrome. Đăng nhập ChatGPT, thấy ô nhắn tin thì đóng hẳn cửa sổ đó rồi bấm Viết prompt.');}catch(error){toast(error.message,true);}};
 $('runEnglish').onclick=()=>startEnglish(false);
@@ -465,29 +465,49 @@ let cameraTimer=null;$('cameraCustom').oninput=()=>{clearTimeout(cameraTimer);ca
 function saveReviewRules(){clearTimeout(reviewTimer);reviewTimer=setTimeout(()=>api('/api/content/review-rules',{rules:$('reviewRules').value,lock:$('reviewLock').value}).catch(error=>toast(error.message,true)),600);}
 $('reviewRules').oninput=saveReviewRules;$('reviewLock').oninput=saveReviewRules;
 $('resetReview').onclick=()=>{if(!confirm('Khôi phục bộ quy tắc và khóa mặc định?'))return;$('reviewRules').value='';$('reviewLock').value='';api('/api/content/review-rules',{rules:'',lock:''}).then(async()=>{reviewLoaded=false;await refresh();loadReviewRules();toast('Đã khôi phục mặc định.');}).catch(error=>toast(error.message,true));};
-async function startReview(){
+let reviewOne=null;  // số dòng đang tạo lại riêng (null = kiểm duyệt cả danh sách)
+async function startReview(line=null){
   const engine=content.englishEngine;
   if(engine==='gemini'?autoJob:chatJob)return false;
-  const text=$('englishOutput').value.trim();
+  const lines=$('englishOutput').value.split('\n'),text=line===null?$('englishOutput').value.trim():(lines[line-1]||'').trim();
   if(!text){toast('Chưa có prompt tiếng Anh để kiểm duyệt.',true);return false;}
+  reviewOne=line;
   try{
     const {id,total}=await api('/api/content/review-prompts',{engine,text,rules:$('reviewRules').value,lock:$('reviewLock').value});
     lastJobError='';
     if(engine==='gemini'){autoJob={id,kind:'promptreview'};renderAuto();}else{chatJob={id,kind:'promptreview'};renderEnglishRun();}
-    $('reviewStatus').textContent=`${engineNames[engine]} đang kiểm duyệt ${total} prompt…`;refresh();return true;
+    $('reviewStatus').textContent=`${engineNames[engine]} đang kiểm duyệt ${total} prompt…`;renderReviewList();refresh();return true;
   }catch(error){toast(error.message,true);return false;}
 }
 $('runReview').onclick=()=>startReview();
 function finishReview(engine,result){
   const [textKey]=englishKey(engine);
-  content[textKey]=result.english.join('\n');content.reviewIssues=result.issues||[];content.reviewViolations=result.violations||{};saveContent();
+  if(reviewOne!==null){  // tạo lại riêng một prompt: chỉ thay đúng dòng đó
+    const line=reviewOne,lines=(content[textKey]||'').split('\n');reviewOne=null;
+    lines[line-1]=result.english[0]||lines[line-1];content[textKey]=lines.join('\n');
+    content.reviewViolations={...(content.reviewViolations||{})};
+    if(result.violations&&result.violations[1])content.reviewViolations[line]=result.violations[1];else delete content.reviewViolations[line];
+    saveContent();if(content.englishEngine===engine)renderEnglishEngine();renderReviewIssues();
+    const left=content.reviewViolations[line];
+    $('reviewStatus').textContent=left?`Prompt ${line} vẫn còn lỗi: ${left.join(', ')}`:`Đã tạo lại prompt ${line} · đạt quy tắc`;
+    return toast(left?`Prompt ${line} vẫn còn lỗi, thử tạo lại lần nữa hoặc sửa tay.`:`Đã tạo lại prompt ${line}.`,Boolean(left));
+  }
+  content[textKey]=result.english.join('\n');content.reviewIssues=result.issues||[];content.reviewViolations=result.violations||{};content.reviewed=true;saveContent();
   if(content.englishEngine===engine)renderEnglishEngine();
   renderReviewIssues();
   const left=Object.keys(result.violations||{}).length;
   $('reviewStatus').textContent=`Đã kiểm duyệt ${result.total} prompt${left?` · ${left} prompt cần xem lại`:' · đạt hết quy tắc'} · đã gắn khóa`;
   toast(left?`Kiểm duyệt xong: ${left} prompt còn vi phạm, xem danh sách bên dưới.`:`Kiểm duyệt xong ${result.total} prompt, đã gắn khóa.`,Boolean(left));
 }
+function renderReviewList(){
+  const lines=$('englishOutput').value.split('\n').filter(l=>l.trim()),violations=content.reviewViolations||{},busy=Boolean(autoJob||chatJob);
+  $('reviewList').hidden=!content.reviewed||!lines.length;
+  if($('reviewList').hidden)return;
+  $('reviewList').innerHTML=lines.map((line,i)=>{const n=i+1,bad=violations[n];return `<div class="review-item ${bad?'bad':'ok'}"><div class="review-item-head"><b>Prompt ${n}</b><span>${bad?`⚠ ${esc(bad.join(', '))}`:'✓ Đạt quy tắc'}</span><button type="button" data-regen="${n}" ${busy?'disabled':''} title="Tạo lại riêng prompt này theo quy tắc kiểm duyệt">↻ Tạo lại</button></div><p>${esc(line.length>260?line.slice(0,260)+'…':line)}</p></div>`;}).join('');
+}
+$('reviewList').addEventListener('click',e=>{const b=e.target.closest('[data-regen]');if(!b)return;const n=Number(b.dataset.regen);startReview(n).then(ok=>{if(ok)$('reviewStatus').textContent=`Đang tạo lại prompt ${n}…`;});});
 function renderReviewIssues(){
+  renderReviewList();
   const issues=content.reviewIssues||[],violations=Object.entries(content.reviewViolations||{});
   $('reviewIssues').hidden=!issues.length&&!violations.length;
   $('reviewIssues').innerHTML=(violations.length?`<b>Còn vi phạm (tool kiểm tra)</b><ul>${violations.map(([n,v])=>`<li>Prompt ${esc(n)}: ${esc(v.join(', '))}</li>`).join('')}</ul>`:'')+

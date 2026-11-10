@@ -694,3 +694,8 @@ tbody tr:hover td{background:rgba(155,107,255,.04)}
 .jc-actions a:hover{text-decoration:none;border-color:var(--c-accent-soft)}
 .camera-library{margin-top:14px;border:1px solid var(--c-border);border-radius:var(--radius);padding:10px 14px;background:var(--c-surface-2)}.camera-library summary{cursor:pointer;font-size:var(--fs-sm)}
 .auto-start{display:flex;margin:4px 0 10px;font-size:var(--fs-sm)}
+.review-list{display:grid;gap:8px;margin-top:12px}
+.review-item{border:1px solid var(--c-border);border-left:3px solid var(--green);border-radius:var(--radius);padding:8px 12px;background:var(--c-surface-2)}
+.review-item.bad{border-left-color:var(--c-danger)}.review-item p{margin:6px 0 0;font-size:var(--fs-xs);color:var(--c-text-2);overflow-wrap:anywhere}
+.review-item-head{display:flex;align-items:center;gap:10px;font-size:var(--fs-sm)}.review-item-head span{flex:1;font-size:var(--fs-xs);color:var(--green)}
+.review-item.bad .review-item-head span{color:var(--c-danger)}.review-item-head button{font-size:var(--fs-xs);padding:4px 10px}
