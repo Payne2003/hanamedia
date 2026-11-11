@@ -54,6 +54,27 @@ DATA = data_root()      # mã nguồn: data/ cạnh app.py; bản cài đặt: %
 class AppServer(ThreadingHTTPServer):
     daemon_threads = True
 
+    def gemini_api_public(self):
+        from runner import gemini_api
+        try:
+            key, source = self.key_vault.credential("gemini")
+            model = self.store.setting("gemini_api_model") or gemini_api.DEFAULT_MODEL
+        except Exception:
+            key, source, model = "", "missing", gemini_api.DEFAULT_MODEL
+        return {"configured": bool(key), "source": source if key else "missing", "model": model,
+                "thinking": self.store.setting("gemini_api_thinking") or "",
+                "mode": "api" if key and self.store.setting("gemini_mode", "api") == "api" else "web",
+                "key_page": gemini_api.KEY_PAGE}
+
+    def gemini_api_session(self):
+        """Phiên Gemini API cho yêu cầu kế tiếp, hoặc None nếu đang dùng Gemini trên Chrome."""
+        from runner import gemini_api
+        info = self.gemini_api_public()
+        if info["mode"] != "api":
+            return None
+        key, _ = self.key_vault.credential("gemini")
+        return gemini_api.GeminiAPISession(key, info["model"], info["thinking"])
+
     def __init__(self, port, store, engine):
         super().__init__(("127.0.0.1", port), Handler)
         self.store, self.engine = store, engine
@@ -73,6 +94,10 @@ class AppServer(ThreadingHTTPServer):
         self.updater = Updater(self.data_dir, busy=self.jobs_running, exit_app=self.exit_for_update)
         threading.Thread(target=self.license_watch, name="license-check", daemon=True).start()
         self.gemini_web = GeminiWebRunner(self.data_dir / "profiles" / "gemini-web")
+        # Gemini API: khóa lưu mã hóa trong kho khóa của máy (không lưu dạng chữ thường, không trả về giao diện).
+        from runner.ai_api import KeyVault
+        self.key_vault = KeyVault(self.data_dir)
+        self.gemini_web.api_session = self.gemini_api_session
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
         self.claude_web = claude_runner(self.data_dir / "profiles" / "claude-web")
         # Tài khoản chung: Gemini, ChatGPT, Flow dùng một hồ sơ Chrome (đăng nhập Google một lần).
@@ -446,6 +471,7 @@ class Handler(BaseHTTPRequestHandler):
             data["shared_account"] = {"enabled": shared.enabled, "profile": str(shared.dir), "login_open": shared.login_open(),
                                       "profile_used": (shared.dir / "Local State").exists()}
             data["content"] = {"version": content.VERSION,
+                               "api": self.server.gemini_api_public(),
                                "web": dict(self.server.gemini_web.snapshot(),
                                            email=self.server.store.setting("gemini_web_email") or "",
                                            model=self.server.store.setting("gemini_web_model") or ""),
@@ -1068,6 +1094,40 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.gemini_web.open_login(store.setting("gemini_web_email") or "")
             elif path == "/api/content/web-take":
                 (self.server.chatgpt_web if body.get("engine") == "chatgpt" else self.server.gemini_web).take_now()
+            elif path == "/api/gemini-api/settings":
+                from runner import gemini_api
+                vault = self.server.key_vault
+                if body.get("remove"):
+                    vault.save("gemini", remove=True)
+                key = str(body.get("key") or "").strip()
+                if key:
+                    if not re.fullmatch(r"[A-Za-z0-9._-]{20,200}", key):
+                        raise ValueError("API key không hợp lệ (dán đúng chuỗi khóa lấy ở Google AI Studio).")
+                    vault.save("gemini", key=key)
+                    store.save_setting("gemini_mode", "api")  # vừa nhập khóa: dùng API ngay
+                if "model" in body:
+                    model = str(body.get("model") or "").strip().removeprefix("models/")
+                    if model and not gemini_api.MODEL_NAME.fullmatch(model):
+                        raise ValueError("Tên model không hợp lệ.")
+                    store.save_setting("gemini_api_model", model)
+                if "thinking" in body:
+                    thinking = str(body.get("thinking") or "")
+                    store.save_setting("gemini_api_thinking", thinking if thinking in gemini_api.THINKING else "")
+                if body.get("mode") in ("api", "web"):
+                    store.save_setting("gemini_mode", body["mode"])
+                return self.reply(self.server.gemini_api_public())
+            elif path == "/api/gemini-api/key-page":
+                from runner import gemini_api
+                webbrowser.open(gemini_api.KEY_PAGE)  # trang lấy khóa cố định của Google AI Studio
+            elif path == "/api/gemini-api/models":
+                from runner import gemini_api
+                key, _ = self.server.key_vault.credential("gemini")
+                return self.reply({"models": gemini_api.list_models(key)})
+            elif path == "/api/gemini-api/test":
+                from runner import gemini_api
+                key, _ = self.server.key_vault.credential("gemini")
+                info = self.server.gemini_api_public()
+                return self.reply(gemini_api.test_key(key, info["model"], info["thinking"]))
             elif path == "/api/content/web-stop":
                 (self.server.chatgpt_web if body.get("engine") == "chatgpt" else self.server.gemini_web).cancel()
             elif path == "/api/open-folder":
