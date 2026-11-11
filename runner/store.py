@@ -379,9 +379,12 @@ class Store:
             return {field: match.group(field).strip() for field in self.DETAIL_FIELDS}
         return {}
 
-    def enqueue(self, prompts, cost, batch, images=None, mode="text", sources=None, scene_ids=None, options=None):
+    def enqueue(self, prompts, cost, batch, images=None, mode="text", sources=None, scene_ids=None, options=None,
+                append=None, more=False):
         """sources: (không bắt buộc) dòng cảnh tiếng Việt gốc của từng prompt, để Prompt Studio hiện đủ các trường.
-        scene_ids: (không bắt buộc) Scene ID của từng prompt (cảnh trong dự án Content Studio)."""
+        scene_ids: (không bắt buộc) Scene ID của từng prompt (cảnh trong dự án Content Studio).
+        append: số thứ tự (ordinal) của prompt đầu tiên khi đưa tiếp từng nhóm vào CÙNG một lượt (viết prompt xong nhóm
+        nào đưa vào Studio nhóm đó). Gửi lại đúng nhóm đã có thì bỏ qua. more=True: còn nhóm sau, chưa tự ghép video."""
         if not isinstance(prompts, list) or not 1 <= len(prompts) <= 200:
             raise ValueError("Mỗi lần thêm từ 1 đến 200 prompt.")
         if not isinstance(batch, str) or not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", batch):
@@ -429,8 +432,18 @@ class Store:
             account = options["account_id"]
             if account and not db.execute("SELECT 1 FROM accounts WHERE id=?", (account,)).fetchone():
                 raise ValueError("Nick Muse đã chọn không còn trong danh sách.")
-            previous = db.execute("SELECT prompt,cost,images,generation_mode FROM jobs WHERE batch=? ORDER BY ordinal",
-                                  (batch,)).fetchall()
+            start = 0
+            if append is not None:
+                if not isinstance(append, int) or isinstance(append, bool) or not 0 <= append <= 10000:
+                    raise ValueError("Vị trí nhóm prompt không hợp lệ.")
+                start = append
+                previous = db.execute("SELECT prompt,cost,images,generation_mode FROM jobs WHERE batch=? AND ordinal>=? "
+                                      "AND ordinal<? ORDER BY ordinal", (batch, start, start + len(prompts))).fetchall()
+                if previous and len(previous) != len(prompts):
+                    raise ValueError("Nhóm prompt này đã được đưa vào một phần.")
+            else:
+                previous = db.execute("SELECT prompt,cost,images,generation_mode FROM jobs WHERE batch=? ORDER BY ordinal",
+                                      (batch,)).fetchall()
             if previous:
                 previous_images = [
                     [self._image_digest(token) for token in json.loads(row["images"] or "[]")]
@@ -440,6 +453,9 @@ class Store:
                 if ([(r["prompt"], r["cost"], r["generation_mode"]) for r in previous] !=
                         [(p.strip(), cost, mode) for p in prompts] or previous_images != current_images):
                     raise ValueError("Mã yêu cầu đã được dùng cho nội dung khác.")
+                if append is not None:  # gửi lại nhóm đã có (vd nhóm cuối không còn prompt mới): chỉ cập nhật cờ ghép
+                    db.execute("UPDATE batch_options SET stitch_status=? WHERE batch=? AND stitch_status IN ('','hold')",
+                               ("hold" if more else "", batch))
                 return
             if db.execute("SELECT count(*) FROM jobs").fetchone()[0] + len(prompts) > 10000:
                 raise ValueError("Đã đạt giới hạn 10.000 tác vụ trong dữ liệu này.")
@@ -450,13 +466,36 @@ class Store:
             db.executemany("""INSERT INTO jobs(id,prompt,cost,created,updated,batch,ordinal,images,generation_mode,details,
                               scene_id,aspect,duration,resolution,assigned_account_id,assigned_manual,folder)
                               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                           [(uuid.uuid4().hex, p.strip(), cost, now, now, batch, n, json.dumps(images[n]), mode,
+                           [(uuid.uuid4().hex, p.strip(), cost, now, now, batch, start + n, json.dumps(images[n]), mode,
                              json.dumps(details[n], ensure_ascii=False), scene_ids[n], options["aspect"],
                              options["duration"], options["resolution"], account, int(bool(account)), options["folder"])
                             for n, p in enumerate(prompts)])
             db.execute("INSERT OR IGNORE INTO batch_options(batch,stitch,created) VALUES(?,?,?)",
                        (batch, int(options["stitch"]), now))
+            if append is not None:  # còn nhóm sau: giữ, chưa tự ghép; nhóm cuối: cho ghép như thường
+                db.execute("UPDATE batch_options SET stitch_status=? WHERE batch=? AND stitch_status IN ('','hold')",
+                           ("hold" if more else "", batch))
         self.plan_waiting()
+
+    def reprompt(self, batch, ordinal, prompt):
+        """Kiểm duyệt sửa lại prompt sau khi đã đưa vào Studio: thay chữ của prompt còn Chờ (giữ ảnh, tài khoản, cài đặt).
+        Trả về True nếu đã thay; prompt đã chạy/xong thì để nguyên."""
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20000:
+            raise ValueError("Prompt trống hoặc dài quá 20.000 ký tự.")
+        if not isinstance(batch, str) or not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", batch):
+            raise ValueError("Mã yêu cầu không hợp lệ.")
+        if not isinstance(ordinal, int) or isinstance(ordinal, bool) or not 0 <= ordinal <= 10000:
+            raise ValueError("Vị trí prompt không hợp lệ.")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT id,details FROM jobs WHERE batch=? AND ordinal=? AND status='waiting'",
+                             (batch, ordinal)).fetchone()
+            if not row:
+                return False
+            details = self.prompt_details(prompt) or json.loads(row["details"] or "{}")
+            db.execute("UPDATE jobs SET prompt=?,details=?,updated=? WHERE id=?",
+                       (prompt.strip(), json.dumps(details, ensure_ascii=False), time.time(), row["id"]))
+        return True
 
     @staticmethod
     def image_type(data):

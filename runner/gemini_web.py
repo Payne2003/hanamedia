@@ -22,7 +22,8 @@ from . import content
 
 GEMINI_URL = "https://gemini.google.com/app"
 END_MARK = "HẾT DANH SÁCH"
-MAX_CONTINUE = 12
+MAX_CONTINUE = 30  # video dài gửi một lần: Gemini viết tiếp nhiều lượt đến đủ mọi cảnh FFmpeg cắt được
+EMPTY_RETRIES = 2  # lượt viết tiếp không ra cảnh mới: nhắc lại tối đa 2 lần (khi còn thiếu cảnh) rồi mới dừng
 
 # Trả về ô nhập prompt đang hiển thị, hoặc null.
 JS_FIND_INPUT = r"""
@@ -729,6 +730,7 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
         where = session.dump("Không đọc được cảnh nào trong câu trả lời đầu tiên", answers[0]) if hasattr(session, "dump") else ""
         raise GeminiWebError("Tool không đọc được cảnh nào trong câu trả lời của Gemini nên đã dừng (không gửi lại). "
                              + (f"Gửi file chẩn đoán {where} cho người hỗ trợ." if where else ""))
+    empty = 0
     for round_number in range(MAX_CONTINUE):
         count = len(result["scenes"])
         if END_MARK.lower() in answers[-1].lower() and (not shots or count >= len(shots)):
@@ -742,11 +744,17 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
         try:
             extra = content.parse_answer(more)
         except ValueError:
-            break  # Gemini không viết thêm cảnh nào: coi như đã hết.
+            extra = {"scenes": [], "issues": []}
         known = {tuple(scene.values()) for scene in result["scenes"]}
         new = [scene for scene in extra["scenes"] if tuple(scene.values()) not in known]
         if not new:
-            break
+            # Không ra cảnh mới. Còn thiếu cảnh so với điểm cắt FFmpeg thì nhắc lại (đủ cảnh mới thôi); không biết số
+            # cảnh thì coi như đã hết.
+            empty += 1
+            if not shots or empty > EMPTY_RETRIES:
+                break
+            continue
+        empty = 0
         result["scenes"] += new
         result["issues"] += extra["issues"]
     result["scenes"] = result["scenes"][:content.MAX_SCENES]
@@ -1458,7 +1466,9 @@ class GeminiWebRunner:
                                     + (f" · còn thiếu {len(result['missing'])}" if result["missing"] else ""))
                     continue
                 files, windows, shots = prepared
-                if api is not None and windows and files:  # Gemini API: gửi lần lượt từng đoạn, lấy kết quả lần lượt
+                # Gemini API: gửi cả video trong một cuộc trò chuyện (nhanh hơn chia đoạn 1 phút); run_conversation tự
+                # nhắn viết tiếp đến khi đủ mọi cảnh FFmpeg cắt được. run_chunked giữ lại cho video quá dài (> 200 cảnh).
+                if api is not None and windows and files and len(windows) > content.MAX_SCENES:
                     result = run_chunked(self.session, base, files[0], windows, status, self.stop, email, model,
                                          kind == "review", self.profile.parent / "gemini-uploads" / "doan")
                     result["prompts"] = content.format_prompts(result["scenes"])

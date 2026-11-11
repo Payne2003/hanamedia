@@ -384,7 +384,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({"error": "Không ghi được file vào thư mục dữ liệu. Kiểm tra dung lượng ổ đĩa và quyền ghi."}, 500)
 
     # Bản quyền: chạy video / tải media cần quyền tương ứng còn hạn. Xem dữ liệu, cài đặt, kích hoạt luôn được phép.
-    JOB_PATHS = {"/api/jobs", "/api/start", "/api/jobs/update", "/api/jobs/rerun", "/api/retry", "/api/jobs/fetch", "/api/batch/stitch",
+    JOB_PATHS = {"/api/jobs", "/api/jobs/reprompt", "/api/start", "/api/jobs/update", "/api/jobs/rerun", "/api/retry", "/api/jobs/fetch", "/api/batch/stitch",
                  "/api/jobs/characters", "/api/jobs/attach-characters", "/api/login", "/api/accounts/login-all",
                  "/api/review", "/api/accounts/check", "/api/accounts/check-all",
                  "/api/production/agent/run", "/api/production/agent/approve", "/api/production/agent/api-test",
@@ -875,13 +875,17 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     store.enqueue(body["prompts"], body["cost"], body["batch"],
                                   body.get("images"), body.get("mode", "text"), body.get("sources"),
-                                  body.get("scene_ids"), body.get("options"))
+                                  body.get("scene_ids"), body.get("options"), body.get("append"), body.get("more") is True)
                 except Exception:
                     self.server.license.refund_jobs(reserved, count)
                     raise
                 if len(store.snapshot()["jobs"]) == before:  # gửi lại cùng mã yêu cầu: không tính quota lần nữa
                     self.server.license.refund_jobs(reserved, count)
                 engine.changed.set()
+            elif path == "/api/jobs/reprompt":
+                changed = store.reprompt(body.get("batch"), body.get("ordinal"), body.get("prompt"))
+                engine.changed.set()
+                return self.reply({"ok": True, "changed": changed})
             elif path == "/api/batch/stitch":
                 if not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", str(body.get("batch", ""))):
                     raise ValueError("Lượt chạy không hợp lệ.")
