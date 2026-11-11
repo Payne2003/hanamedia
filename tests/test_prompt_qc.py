@@ -186,3 +186,53 @@ class BatchAndFallbackTests(unittest.TestCase):
             self.assertEqual(session.ask("Continue", notes.append, threading.Event()), "gemini answer")
         self.assertEqual([a[0] for a in asked], ["Write prompts", "Continue"])
         self.assertIn("chuyển sang Gemini", " ".join(notes))
+
+
+class ChatGPTPlusLimitTests(unittest.TestCase):
+    def test_thinking_limit_switches_to_auto_and_resends_once(self):
+        from runner import chatgpt_web
+        picked, sent = [], []
+        answers = ["You've reached your GPT-5 Thinking limit. Responses will use another model until it resets.", "1. prompt"]
+
+        class Driver:
+            def execute_script(self, script, *args):
+                return answers[0] if script == chatgpt_web.JS_PAGE_TAIL and len(sent) == 1 else ""
+        session = chatgpt_web.ChatGPTWebSession.__new__(chatgpt_web.ChatGPTWebSession)
+        session.driver = Driver()
+        with mock.patch.object(chatgpt_web.GeminiWebSession, "choose_model", lambda self, name: picked.append(name) or name), \
+                mock.patch.object(chatgpt_web.GeminiWebSession, "ask",
+                                  lambda self, text, *a, **k: sent.append(text) or answers[len(sent) - 1]):
+            self.assertEqual(session.choose_model("Thinking"), "Thinking")
+            notes = []
+            self.assertEqual(session.ask("Viết prompt", notes.append, threading.Event()), "1. prompt")
+        self.assertEqual(picked, ["Thinking", "Auto"])
+        self.assertEqual(sent, ["Viết prompt", "Viết prompt"])
+        self.assertIn("chuyển sang Auto", " ".join(notes))
+
+    def test_normal_answer_is_not_resent(self):
+        from runner import chatgpt_web
+        session = chatgpt_web.ChatGPTWebSession.__new__(chatgpt_web.ChatGPTWebSession)
+        session.driver = type("D", (), {"execute_script": lambda self, *a: ""})()
+        session.wanted_model = "Thinking"
+        with mock.patch.object(chatgpt_web.GeminiWebSession, "ask", lambda self, *a, **k: "1. a long normal answer"):
+            self.assertEqual(session.ask("x", lambda t: None, threading.Event()), "1. a long normal answer")
+
+
+class WebBatchTests(unittest.TestCase):
+    def test_chrome_session_also_writes_in_batches_and_reports_each(self):
+        sent, partials = [], []
+
+        class Session:  # phiên Chrome (không có thuộc tính api)
+            def new_chat(self): pass
+            def wait_ready(self, *a, **k): pass
+            def choose_model(self, name): return name
+            def ask(self, text, *a, **k):
+                sent.append(text)
+                return "\n".join(f"{n}. {GOOD}" for n in range(1, 11)) + f"\n{content.END_EN}"
+
+        lines = [f"Cảnh {n}: hổ chạy" for n in range(1, 24)]
+        result = gemini_web.run_english(Session(), lines, lambda t: None, threading.Event(), seconds=10,
+                                        on_batch=lambda p: partials.append(p["done"]))
+        self.assertEqual(len(result["english"]), 23)
+        self.assertEqual(partials, [10, 20, 23])  # giao diện nhận kết quả từng nhóm
+        self.assertEqual(len([t for t in sent if "MASTER PROMPT 08" in t]), 3)

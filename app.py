@@ -89,17 +89,13 @@ class AppServer(ThreadingHTTPServer):
     def api_session(self, engine):
         """Phiên API cho yêu cầu kế tiếp, hoặc None nếu đang dùng trang web trên Chrome."""
         info = self.api_public(engine)
-        if engine == "chatgpt" and info["provider"] == "gemini":
-            return self.gemini_writer()  # viết prompt bằng khóa Gemini miễn phí
+        if engine == "chatgpt":
+            # Không dùng OpenAI API: viết prompt bằng khóa Gemini (miễn phí) hoặc ChatGPT Plus trên Chrome (None).
+            return self.gemini_writer() if info["provider"] == "gemini" else None
         if info["mode"] != "api":
             return None
-        module = self.API_ENGINES[engine][0]
         key, _ = self.key_vault.credential(engine)
-        session = module.GeminiAPISession if engine == "gemini" else module.OpenAIAPISession
-        session = session(key, info["model"], info["thinking"], rpm=info["rpm"])
-        if engine == "chatgpt" and self.api_public("gemini")["configured"]:
-            session.fallback = self.gemini_writer  # OpenAI hết tiền/hạn mức: tự chuyển sang Gemini chạy tiếp
-        return session
+        return gemini_api.GeminiAPISession(key, info["model"], info["thinking"], rpm=info["rpm"])
 
     def gemini_writer(self):
         """Phiên Gemini API dùng cho bước viết/kiểm duyệt prompt (model, cấp độ tư duy, giới hạn/phút của thẻ Gemini)."""
@@ -512,7 +508,7 @@ class Handler(BaseHTTPRequestHandler):
                                            email=self.server.store.setting("gemini_web_email") or "",
                                            model=self.server.store.setting("gemini_web_model") or ""),
                                "chatgpt": dict(self.server.chatgpt_web.snapshot(),
-                                               model=self.server.store.setting("chatgpt_web_model") or ""),
+                                               model=self.server.store.setting("chatgpt_web_model", "Thinking")),
                                "review": {"rules": self.server.store.setting("review_rules") or content.DEFAULT_REVIEW_RULES,
                                           "lock": self.server.store.setting("review_lock") or content.DEFAULT_LOCK,
                                           "camera_custom": self.server.store.setting("camera_custom") or "",
@@ -1035,7 +1031,7 @@ class Handler(BaseHTTPRequestHandler):
                 chatgpt = body.get("engine") == "chatgpt"
                 runner = self.server.chatgpt_web if chatgpt else self.server.gemini_web
                 job = runner.start("promptreview", "", "" if chatgpt else (store.setting("gemini_web_email") or ""),
-                                   store.setting("chatgpt_web_model" if chatgpt else "gemini_web_model") or "",
+                                   (store.setting("chatgpt_web_model", "Thinking") if chatgpt else store.setting("gemini_web_model") or ""),
                                    {"prompts": prompts, "rules": rules, "lock": lock,
                                     # chia cảnh theo góc quay: thời lượng riêng từng prompt; không thì một số cho tất cả
                                     "seconds": [int(d) if isinstance(d, int) and 1 <= d <= 60 else None
@@ -1051,16 +1047,18 @@ class Handler(BaseHTTPRequestHandler):
                 store.save_setting("review_rules", str(body.get("rules") or "").strip()[:6000])
                 store.save_setting("review_lock", str(body.get("lock") or "").strip()[:2000])
             elif path == "/api/content/chatgpt-settings":
-                store.save_setting("chatgpt_web_model", str(body.get("model") or "").strip()[:40])
+                store.save_setting("chatgpt_web_model", str(body.get("model") if body.get("model") is not None else "Thinking").strip()[:40])
             elif path == "/api/content/english-run":
                 lines = content.split_scene_lines(body.get("text", ""))
                 chatgpt = body.get("engine") == "chatgpt"
                 runner = self.server.chatgpt_web if chatgpt else self.server.gemini_web
                 job = runner.start("english", "", "" if chatgpt else (store.setting("gemini_web_email") or ""),
-                                   store.setting("chatgpt_web_model" if chatgpt else "gemini_web_model") or "", lines,
+                                   (store.setting("chatgpt_web_model", "Thinking") if chatgpt else store.setting("gemini_web_model") or ""), lines,
                                                    (str(body.get("style") or ""),
                                                     body.get("aspect") if body.get("aspect") in content.ASPECTS else "16:9",
-                                                    body.get("structured") is not False,
+                                                    # kiểu prompt: chi tiết theo mẫu (mặc định, gửi từng cảnh) hoặc gọn có nhãn
+                                                    (body.get("structured") is not False) if body.get("format") == "labels"
+                                                    else "detailed",
                                                     body.get("seconds") if body.get("seconds") in content.SECONDS_CHOICES
                                                     else content.DEFAULT_SECONDS,
                                                     body.get("angles") if body.get("angles") in content.ANGLE_CHOICES else 0,
@@ -1090,7 +1088,7 @@ class Handler(BaseHTTPRequestHandler):
                 chatgpt = body.get("engine") == "chatgpt"
                 runner = self.server.chatgpt_web if chatgpt else self.server.gemini_web
                 job = runner.start("characters", project["script"], "" if chatgpt else (store.setting("gemini_web_email") or ""),
-                                   store.setting("chatgpt_web_model" if chatgpt else "gemini_web_model") or "", scenes)
+                                   (store.setting("chatgpt_web_model", "Thinking") if chatgpt else store.setting("gemini_web_model") or ""), scenes)
                 # Ghi nhớ Scene ID theo đúng thứ tự gửi cho AI: C1 = cảnh đầu tiên lúc gửi, kể cả nếu sau đó sắp xếp lại.
                 self.server.character_jobs[job] = (project["id"], scene_ids)
                 return self.reply({"ok": True, "id": job, "engine": "chatgpt" if chatgpt else "gemini", "total": len(scenes)})

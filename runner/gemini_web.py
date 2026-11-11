@@ -848,21 +848,22 @@ VERIFY_ROUNDS = 2
 REGENERATE_ROUNDS = 3  # mỗi prompt còn lỗi được AI tạo lại tối đa 3 lần; vẫn sai thì vào danh sách "Cần kiểm tra"
 
 
-def run_review(session, prompts, rules, lock, status, stop, email="", model="", seconds=None):
-    """Kiểm duyệt. Chạy bằng API thì lần lượt từng nhóm PROMPT_BATCH prompt (Character Master tính trên toàn bộ prompt
+def run_review(session, prompts, rules, lock, status, stop, email="", model="", seconds=None, on_batch=None):
+    """Kiểm duyệt lần lượt từng nhóm PROMPT_BATCH prompt (Character Master tính trên toàn bộ prompt
     để mọi nhóm giữ cùng nhân vật), ghép kết quả theo thứ tự."""
     total = len(prompts)
-    if not getattr(session, "api", False) or total <= PROMPT_BATCH:
+    if total <= (2 if total and sum(len(str(p or "")) for p in prompts) / total > 1500 else PROMPT_BATCH):
         return review_once(session, prompts, rules, lock, status, stop, email, model, seconds)
     secs = list(seconds) if isinstance(seconds, (list, tuple)) else [seconds] * total
     master = content.character_master([str(p or "") for p in prompts])
+    batch = 2 if sum(len(str(p or "")) for p in prompts) / total > 1500 else PROMPT_BATCH  # prompt chi tiết dài: 2 mỗi lần
     merged = {"english": [], "issues": [], "violations": {}, "needs_check": [], "attempts": {}, "missing": [],
               "total": total, "rounds": 0, "reviewed": True}
-    for first in range(0, total, PROMPT_BATCH):
+    for first in range(0, total, batch):
         if stop.is_set():
             raise GeminiWebError("Đã dừng.")
-        part = prompts[first:first + PROMPT_BATCH]
-        status(f"Nhóm {first // PROMPT_BATCH + 1}/{-(-total // PROMPT_BATCH)}: kiểm duyệt prompt {first + 1}–{first + len(part)}…")
+        part = prompts[first:first + batch]
+        status(f"Nhóm {first // batch + 1}/{-(-total // batch)}: kiểm duyệt prompt {first + 1}–{first + len(part)}…")
         result = review_once(session, part, rules, lock, status, stop, email, model, secs[first:first + len(part)], master)
         merged["english"] += result["english"]
         merged["issues"] += [re.sub(r"Prompt\s+(\d+)", lambda m: f"Prompt {first + int(m.group(1))}", i) for i in result["issues"]]
@@ -872,6 +873,8 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model="", 
         merged["missing"] += [first + n for n in result["missing"]]
         merged["rounds"] += result["rounds"]
         status(f"Đã kiểm duyệt {len(merged['english'])}/{total} prompt")
+        if on_batch:
+            on_batch(dict(merged, english=list(merged["english"]), done=len(merged["english"])))
     return merged
 
 
@@ -1045,16 +1048,82 @@ def run_characters(session, script, scenes, status, stop, email="", model=""):
     return result
 
 
-PROMPT_BATCH = 10  # API: viết / kiểm duyệt lần lượt từng nhóm 10 prompt, lấy kết quả từng nhóm
+DETAILED_FIXES = 2  # prompt chi tiết của một cảnh còn lỗi: nhờ AI viết lại tối đa 2 lần trong cùng cuộc trò chuyện
+
+
+def english_detailed(session, lines, status, stop, email="", model="", style="", aspect="16:9",
+                     seconds=content.DEFAULT_SECONDS, windows=None, on_batch=None):
+    """Prompt chi tiết: gửi LẦN LƯỢT TỪNG CẢNH (mỗi cảnh một cuộc trò chuyện mới, kèm prompt cảnh trước để nối tiếp),
+    kiểm tra máy từng prompt (câu Generate đúng số giây, đủ mục, tiếng Anh, không từ cấm) và nhờ viết lại nếu lỗi;
+    mỗi prompt gộp thành một dòng; cảnh nào xong hiện ngay."""
+    total = len(lines)
+    name = getattr(session, "NAME", "Gemini")
+    windows = list(windows) if windows and len(windows) == total else None
+    shot_mode = bool(windows) and all(w.get("shot") for w in windows)
+    english, missing, issues, durations, rounds = [], [], [], [], 0
+    for number, line in enumerate(lines, 1):
+        if stop.is_set():
+            raise GeminiWebError("Đã dừng.")
+        window = windows[number - 1] if windows else None
+        length = content.scene_seconds(window) if shot_mode else seconds
+        spans = ([(0, length)] if shot_mode else
+                 [(float(a), float(b)) for a, b in window["angles"]] if window and len(window.get("angles") or []) > 1 else None)
+        previous = next((p for p in reversed(english) if p), "")
+        try:
+            start_fresh(session, status, stop, email)
+            if model:
+                session.choose_model(model)
+            answer = session.ask(content.detailed_request(line, number, total, length, spans, previous, aspect, style),
+                                 status, stop, email, label=f"{name} đang viết prompt cảnh {number}/{total}")
+            rounds += 1
+            prompt = content.tidy_prompt(content.flatten_prompt(answer), length)
+            for attempt in range(DETAILED_FIXES):
+                problems = content.detailed_problems(prompt, length)
+                if not problems:
+                    break
+                answer = session.ask("Rewrite the WHOLE prompt for this scene, same structure, fixing: " + "; ".join(problems)
+                                     + ". Write only the prompt, starting with \"Generate\".", status, stop, email,
+                                     label=f"Prompt cảnh {number} còn lỗi · {name} viết lại (lần {attempt + 1})")
+                rounds += 1
+                fixed = content.tidy_prompt(content.flatten_prompt(answer), length)
+                if len(content.detailed_problems(fixed, length)) <= len(problems):
+                    prompt = fixed
+            left = content.detailed_problems(prompt, length)
+            if left:
+                issues.append(f"Scene {number} — {'; '.join(left)}")
+        except GeminiWebError:
+            raise
+        except Exception as error:  # vd hết hạn mức giữa chừng: giữ các cảnh đã xong
+            if stop.is_set() or not english:
+                raise
+            issues.append(f"Dừng ở cảnh {number}/{total}: {error} Các prompt trước đã giữ lại; chạy lại để viết phần còn thiếu.")
+            missing += list(range(number, total + 1))
+            english += [""] * (total - number + 1)
+            durations += [None] * (total - number + 1)
+            break
+        english.append(prompt)
+        durations.append(length)
+        if not prompt:
+            missing.append(number)
+        status(f"Đã xong {number}/{total} prompt")
+        if on_batch:
+            on_batch({"english": list(english), "done": number, "total": total, "missing": list(missing)})
+    return {"english": english, "missing": missing, "lines": lines, "issues": issues, "structured": "detailed",
+            "total": total, "rounds": rounds, "durations": durations if shot_mode else None}
+
+
+PROMPT_BATCH = 10  # viết / kiểm duyệt lần lượt từng nhóm 10 prompt, lấy kết quả từng nhóm (giao diện hiện ngay)
 
 
 def run_english(session, lines, status, stop, email="", model="", style="", aspect="16:9", structured=True,
-                seconds=content.DEFAULT_SECONDS, angles=0, library=False, custom_angles="", windows=None):
-    """Viết prompt tiếng Anh. Chạy bằng API thì gửi lần lượt từng nhóm PROMPT_BATCH cảnh (mỗi nhóm một cuộc trò chuyện
+                seconds=content.DEFAULT_SECONDS, angles=0, library=False, custom_angles="", windows=None, on_batch=None):
+    """Viết prompt tiếng Anh: gửi lần lượt từng nhóm PROMPT_BATCH cảnh (API hay Chrome đều vậy; mỗi nhóm một cuộc trò chuyện
     mới, ít token, ít chạm hạn mức) và ghép kết quả theo thứ tự; nhóm sau được biết prompt cuối của nhóm trước để
     nối tiếp nhân vật, bối cảnh, hướng di chuyển."""
     total = len(lines)
-    if not getattr(session, "api", False) or total <= PROMPT_BATCH:
+    if structured == "detailed":  # prompt chi tiết theo mẫu: gửi lần lượt từng cảnh
+        return english_detailed(session, lines, status, stop, email, model, style, aspect, seconds, windows, on_batch)
+    if total <= PROMPT_BATCH:
         return english_once(session, lines, status, stop, email, model, style, aspect, structured, seconds, angles,
                             library, custom_angles, windows)
     merged = {"english": [], "missing": [], "lines": [], "issues": [], "structured": structured, "total": total,
@@ -1078,6 +1147,8 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         merged["rounds"] += result["rounds"]
         merged["durations"] += result.get("durations") or []
         status(f"Đã xong {len(merged['english'])}/{total} prompt")
+        if on_batch:
+            on_batch(dict(merged, english=list(merged["english"]), done=len(merged["english"])))  # giao diện hiện ngay nhóm vừa xong
     merged["durations"] = merged["durations"] if len(merged["durations"]) == total else None
     return merged
 
@@ -1211,7 +1282,7 @@ class GeminiWebRunner:
             if self.job["busy"]:
                 raise ValueError(f"{self.name} đang chạy một yêu cầu khác. Đợi xong hoặc bấm Dừng.")
             job_id = uuid.uuid4().hex
-            self.job = {"id": job_id, "kind": kind, "busy": True, "status": f"Đang mở {self.name}…", "result": None, "error": "", "phase": ""}
+            self.job = {"id": job_id, "kind": kind, "busy": True, "status": f"Đang mở {self.name}…", "result": None, "error": "", "phase": "", "partial": None}
         self.stop.clear()
         self.requests.put((job_id, kind, prompt, email.strip(), model.strip(), lines, style))
         return job_id
@@ -1351,7 +1422,8 @@ class GeminiWebRunner:
                     continue
                 if kind == "promptreview":
                     result = run_review(self.session, lines["prompts"], lines.get("rules", ""), lines.get("lock", ""), status,
-                                        self.stop, email, model, lines.get("seconds"))
+                                        self.stop, email, model, lines.get("seconds"),
+                                        on_batch=lambda partial: self.set(partial=partial))
                     left = sum(1 for v in result["violations"].values() if v)
                     self.set(busy=False, result=result,
                              status=f"Đã kiểm duyệt {result['total']} prompt" + (f" · còn {left} prompt cần xem lại" if left else ""))
@@ -1361,7 +1433,7 @@ class GeminiWebRunner:
                     options = tuple(style) if isinstance(style, tuple) else (style,)
                     style, aspect, structured, seconds, angles, library, custom, windows = options + defaults[len(options):]
                     result = run_english(self.session, lines, status, self.stop, email, model, style, aspect, structured, seconds,
-                                         angles, library, custom, windows)
+                                         angles, library, custom, windows, on_batch=lambda partial: self.set(partial=partial))
                     done = result["total"] - len(result["missing"])
                     self.set(busy=False, result=result,
                              status=f"Xong: {done}/{result['total']} prompt tiếng Anh sau {result['rounds']} lượt"

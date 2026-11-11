@@ -836,7 +836,7 @@ def strip_lock(prompt):
     return re.split(r";?\s*LOCK\s*:", str(prompt or ""), maxsplit=1)[0]
 
 
-def prompt_violations(prompt):
+def prompt_violations(prompt, angles=True):
     """Kiểm tra máy (không cần AI) trên phần prompt trước dòng LOCK: từ cấm (trừ khi đi sau "no/without…"), thiếu góc quay."""
     text = strip_lock(prompt)
     found = []
@@ -847,9 +847,101 @@ def prompt_violations(prompt):
                 break
     camera = parse_structured(text).get("camera") or text
     shots = sum(1 for pattern in SHOT_TYPES if re.search(pattern, camera, re.IGNORECASE))
-    if shots < 2:
+    if angles and shots < 2:
         found.append("chưa đủ 2–3 góc quay (cận / trung / toàn cảnh…)")
     return found
+
+
+# ---------- Prompt chi tiết: gửi từng cảnh một, viết theo mẫu (Generate… / CONTINUITY / MAIN ACTION / CAMERA …) ----------
+DETAILED_SECTIONS = (("CONTINUITY", r"\bCONTINUITY\s*:"), ("MAIN ACTION", r"\bMAIN ACTION\s*:"),
+                     ("CAMERA SEQUENCE", r"\bCAMERA(?: SEQUENCE)?\s*:"), ("MOTION", r"\bMOTION\s*:"),
+                     ("STYLE", r"\bSTYLE\s*:"), ("STRICT NEGATIVE CONSTRAINTS", r"\bNEGATIVE CONSTRAINTS\s*:"))
+DETAILED_OPENING = re.compile(r"^\s*Generate an?\s+(\d+(?:[.,]\d+)?)[- ]second", re.IGNORECASE)
+
+
+def article(seconds):
+    """"an" trước số đọc bắt đầu bằng nguyên âm (8, 11, 18, 80…), còn lại "a"."""
+    return "an" if re.match(r"(8|11|18)(\D|$)", f"{float(seconds):g}") else "a"
+
+
+def is_detailed(prompt):
+    text = str(prompt or "")
+    return bool(DETAILED_OPENING.search(text)) and bool(re.search(r"\bMAIN ACTION\s*:", text))
+
+
+def detailed_request(line, number, total, seconds, spans=None, previous="", aspect="16:9", style=""):
+    """Yêu cầu viết prompt chi tiết cho MỘT cảnh (gửi lần lượt từng cảnh)."""
+    from .prompt_example import DETAILED_EXAMPLE
+    fmt = lambda value: f"{float(value):g}"
+    seconds = int(seconds) if float(seconds).is_integer() else seconds
+    if spans and len(spans) == 1:
+        camera = (f"CAMERA SEQUENCE has exactly ONE segment \"0–{fmt(seconds)} SECONDS — <shot type>\": the scene is a single "
+                  "camera angle of the source video, so describe that one angle in detail (shot size, lens, angle, camera "
+                  "position, what is visible, allowed camera movement) and do not cut to another angle.")
+    elif spans:
+        camera = ("CAMERA SEQUENCE has exactly these segments, in this order, each with its own detailed block: "
+                  + ", ".join(f"\"{fmt(a)}–{fmt(b)} SECONDS — <shot type>\"" for a, b in spans) + ".")
+    else:
+        camera = (f"CAMERA SEQUENCE: 1 to 3 consecutive segments covering 0–{fmt(seconds)} seconds exactly, each written as "
+                  "\"A–B SECONDS — <SHOT TYPE>:\" followed by its detailed block.")
+    continuity = ("PREVIOUS SCENE PROMPT (keep exactly the same animals — species, count, look — the same environment, light "
+                  "and screen direction; the new scene continues directly from it):\n" + previous + "\n\n") if previous else ""
+    return (
+        f"You are a prompt engineer for Muse AI video. Write the English video prompt for SCENE {number} of {total} of a "
+        "realistic wildlife documentary reconstruction.\n\n"
+        f"SCENE {number} DESCRIPTION (Vietnamese analysis of the source video — the only source of facts):\n{line}\n\n"
+        + continuity +
+        "Write ONE prompt with exactly this structure and section order, in English, as detailed and physical as the example:\n"
+        f"1. First line: \"Generate {article(seconds)} {fmt(seconds)}-second "
+        "ultra-realistic wildlife documentary video <place, time, light>.\"\n"
+        "2. CONTINUITY: \"Use exactly the same <animal>:\" + its exact look as a list (coat, marks, face, eyes, body, paws, "
+        "tail…), \"Keep exactly the same environment:\" + list, then \"Do NOT …\" lines that forbid changing them.\n"
+        "3. MAIN ACTION: what happens in this scene only, step by step, body-part by body-part, rhythm, how far/fast, "
+        "what must NEVER happen.\n"
+        f"4. {camera}\n"
+        "5. Optional body-part block (e.g. TAIL:) if it matters.\n"
+        "6. MOTION: true real-time 1.0x speed, where the speed comes from.\n"
+        f"7. STYLE: authentic BBC Earth wildlife-documentary realism, natural light and colors, "
+        f"{ASPECTS.get(aspect, ASPECTS['16:9'])}" + (f", {style}" if style else "") + ".\n"
+        "8. STRICT NEGATIVE CONSTRAINTS: \"No …\" lines (no slow motion, no music, no text, no extra animals, "
+        "no environment change, plus scene-specific ones).\n\n"
+        "Rules: use only facts from the scene description (and the previous prompt for continuity); never invent other "
+        "animals, places or events; keep predator/prey roles and directions. Write ONLY the prompt — no title, no "
+        "numbering, no markdown, no comments — starting with \"Generate\".\n\n"
+        "EXAMPLE OF THE REQUIRED STRUCTURE AND LEVEL OF DETAIL (a different scene — do NOT copy its animal, place or "
+        "action):\n" + DETAILED_EXAMPLE)
+
+
+def flatten_prompt(text):
+    """Prompt chi tiết nhiều dòng → một dòng (mỗi dòng của ô kết quả là một prompt)."""
+    text = str(text or "").replace("\r", "")
+    text = re.sub(r"```[a-z]*", "", text)
+    start = re.search(r"Generate an?\s+\d", text, re.IGNORECASE)
+    if start:
+        text = text[start.start():]
+    text = text.split(END_EN)[0]
+    text = re.sub(r"[─━—–=_*#]{4,}", " ", text)
+    text = re.sub(r"[*#`]+", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def detailed_problems(prompt, seconds=None):
+    """Lỗi của prompt chi tiết (rỗng = đạt): trống, còn tiếng Việt, thiếu mục, sai số giây, từ cấm."""
+    text = strip_lock(prompt).strip()
+    if len(text) < 200:
+        return ["Prompt trống hoặc quá ngắn"]
+    problems = []
+    if not is_english(text):
+        problems.append("Còn tiếng Việt — viết lại hoàn toàn bằng tiếng Anh")
+    opening = DETAILED_OPENING.search(text)
+    if not opening:
+        problems.append('Thiếu câu mở đầu "Generate a N-second ultra-realistic wildlife documentary video …"')
+    elif seconds and abs(float(opening.group(1).replace(",", ".")) - float(seconds)) > 0.01:
+        problems.append(f"Sai thời lượng — phải là {float(seconds):g}-second")
+    missing = [name for name, pattern in DETAILED_SECTIONS if not re.search(pattern, text, re.IGNORECASE)]
+    if missing:
+        problems.append("Thiếu mục " + ", ".join(missing))
+    return problems + prompt_violations(prompt, angles=False)
 
 
 # ---------- Quality Control: kiểm tra máy từng prompt (không cần AI) ----------
@@ -859,6 +951,11 @@ MERGED = re.compile(r"(?:^|[\s;.])(?:scene|prompt|shot\s+list|cảnh)\s*#?\d+\s*
 
 def tidy_prompt(prompt, seconds=None):
     """Tự sửa lỗi định dạng không cần AI: bỏ markdown, gộp xuống dòng thành một dòng, sửa thời lượng theo cấu hình."""
+    if is_detailed(prompt):  # prompt chi tiết: một dòng, sửa số giây ở câu mở đầu theo cấu hình
+        text = flatten_prompt(prompt)
+        if seconds:
+            text = DETAILED_OPENING.sub(lambda m: f"Generate {article(seconds)} {float(seconds):g}-second", text, count=1)
+        return text
     text = re.sub(r"[*_`#>]+", "", str(prompt or ""))
     text = re.sub(r"^\s*(?:prompt|scene|cảnh)\s*\d+\s*[:.)-]\s*", "", text.strip(), flags=re.IGNORECASE)
     text = re.sub(r"\s*\n+\s*", " ", text).strip()
@@ -869,6 +966,8 @@ def tidy_prompt(prompt, seconds=None):
 
 def qc_problems(prompt, seconds=None, structured=None):
     """Danh sách lỗi của một prompt (rỗng = đạt). structured: True/False bắt buộc có/không các trường; None: tự nhận."""
+    if is_detailed(prompt):
+        return detailed_problems(prompt, seconds)
     text = strip_lock(prompt).strip()
     if len(re.sub(r"\W+", "", text)) < 15:
         return ["Prompt trống"]
@@ -921,8 +1020,12 @@ def review_request(prompts, rules, numbers=None, master=""):
             "shot, low angle, tracking…), make the action decisive and continuous, and keep screen direction consistent "
             "(a chaser always behind what it chases). Do not mention music, slow motion, logos or text except to forbid them.\n"
             "First write one line per problem you fixed: \"ISSUE: Prompt N — …\". Then write every prompt again, one "
-            f"line each, starting with its number (\"N. …\"), in English, no markdown. After the last one write {END_EN}.\n\n"
-            + master + rows)
+            f"line each, starting with its number (\"N. …\"), in English, no markdown. After the last one write {END_EN}.\n"
+            + ("These are DETAILED prompts: keep each prompt's full structure and level of detail (\"Generate a N-second …\", "
+               "CONTINUITY, MAIN ACTION, CAMERA SEQUENCE with its time segments, MOTION, STYLE, STRICT NEGATIVE CONSTRAINTS) "
+               "and keep its N-second duration; do not shorten it; write it on ONE single line.\n"
+               if any(is_detailed(prompts[n - 1]) for n in numbers) else "")
+            + "\n" + master + rows)
 
 
 def continue_review(after, numbers):

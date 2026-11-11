@@ -2,8 +2,7 @@ import { initProduction, loadProduction } from '/production.js';
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const apiModels={},apiChoice={};  // Cài đặt → API key (Gemini, ChatGPT)
-const API_CARDS={gemini:{p:'geminiApi',state:'api',badge:'geminiBadge',label:'Gemini API',web:'Gemini trên Chrome',use:'Phân tích video'},
-                 chatgpt:{p:'chatgptApi',state:'chatgpt_api',badge:'chatgptBadge',label:'ChatGPT API',web:'ChatGPT trên Chrome',use:'Viết và kiểm duyệt prompt'}};
+const API_CARDS={gemini:{p:'geminiApi',state:'api',badge:'geminiBadge',label:'Gemini API',web:'Gemini trên Chrome',use:'Phân tích video'}};
 let state=null,key='',filter='all',busy=false,pendingBatch=null,toastTimer,visibleJobs=[],mode='text',libraryImages=[];
 const selectedJobs=new Set(),promptImages=new Map();
 let licenseData=null,licenseEditing=null,licensePlan='1y';
@@ -249,7 +248,7 @@ const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior'
 const defaultBrief='Phân tích video gốc và chia thành từng cảnh 10 giây theo đúng thứ tự thời gian. Mỗi cảnh liệt kê từng góc máy theo mốc giây (cỡ cảnh, góc máy, chuyển động máy), mô tả bối cảnh, hành vi và hành động nhân vật đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
 const oldBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 15 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
 let content={brief:defaultBrief,video:'',videoFile:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',englishAspect:'16:9',englishStructured:true,englishSeconds:10,windows:[],englishAngles:0,englishIssues:[],english:'',englishMissing:[],englishEngine:'chatgpt',englishChatgpt:'',englishChatgptMissing:[]};
-try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,reviewed:saved.reviewed===true,reviewViolations:saved.reviewViolations&&typeof saved.reviewViolations==='object'?saved.reviewViolations:{},reviewIssues:Array.isArray(saved.reviewIssues)?saved.reviewIssues:[],brief:saved.brief&&saved.brief!==oldBrief?saved.brief:content.brief,windows:Array.isArray(saved.windows)?saved.windows:[],video:saved.video||'',videoFile:typeof saved.videoFile==='string'?saved.videoFile:'',videoFrom:typeof saved.videoFrom==='string'?saved.videoFrom:'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,englishSeconds:[5,8,10].includes(Number(saved.englishSeconds))?Number(saved.englishSeconds):10,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:'chatgpt',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
+try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,reviewed:saved.reviewed===true,reviewViolations:saved.reviewViolations&&typeof saved.reviewViolations==='object'?saved.reviewViolations:{},reviewIssues:Array.isArray(saved.reviewIssues)?saved.reviewIssues:[],brief:saved.brief&&saved.brief!==oldBrief?saved.brief:content.brief,windows:Array.isArray(saved.windows)?saved.windows:[],video:saved.video||'',videoFile:typeof saved.videoFile==='string'?saved.videoFile:'',videoFrom:typeof saved.videoFrom==='string'?saved.videoFrom:'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,englishFormat:saved.englishFormat==='labels'?'labels':'detailed',englishSeconds:[5,8,10].includes(Number(saved.englishSeconds))?Number(saved.englishSeconds):10,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:'chatgpt',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
 // Bản nháp còn đúng câu mẫu cũ (8 giây) thì đổi sang câu mẫu mới (15 giây).
 if(content.brief==='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.')content.brief=defaultBrief;
 const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
@@ -353,6 +352,7 @@ function renderAuto(){
 function pollAuto(){
   const web=state?.content?.web;applyAutoSettings();renderRunnerVersion();loadReviewRules();
   if(!autoJob||!web){renderAuto();return;}
+  if(web.id===autoJob.id&&web.busy)applyPartial('gemini',autoJob,web);
   if(web.id!==autoJob.id||web.busy){renderAuto();return;}
   const job=autoJob;autoJob=null;renderAuto();
   if(job.kind==='characters')return finishCharacters('gemini',job.id,web);
@@ -424,6 +424,22 @@ function renderEnglishEngine(){
   if(document.activeElement!==$('chatgptModel'))$('chatgptModel').value=state?.content?.chatgpt?.model||'';
   renderEnglish();renderEnglishRun();
 }
+// Viết / kiểm duyệt lần lượt từng nhóm 10: nhóm nào xong thì hiện ngay vào ô kết quả (dừng giữa chừng vẫn giữ phần đã có).
+function applyPartial(engine,job,web){
+  const p=web.partial;if(!p||!Array.isArray(p.english)||p.done===job.partialDone)return;
+  job.partialDone=p.done;
+  const [textKey]=englishKey(engine);
+  if(job.kind==='english'){
+    content[textKey]=p.english.join('\n');saveContent();
+    if(content.englishEngine===engine)$('englishOutput').value=content[textKey];
+    renderEnglish();
+  }else if(job.kind==='promptreview'&&reviewOne===null){
+    const lines=(content[textKey]||'').split('\n');p.english.forEach((line,i)=>{if(line)lines[i]=line;});
+    content[textKey]=lines.join('\n');saveContent();
+    if(content.englishEngine===engine)$('englishOutput').value=content[textKey];
+  }else return;
+  $(job.kind==='english'?'englishStatus':'reviewStatus')&&($(job.kind==='english'?'englishStatus':'reviewStatus').textContent=`Đã có ${p.done}/${p.total} prompt · đang làm nhóm tiếp theo…`);
+}
 function finishEnglish(engine,result){
   const [textKey,missingKey]=englishKey(engine);
   content[textKey]=result.english.join('\n');content[missingKey]=result.missing;content[textKey+'Issues']=result.issues||[];content[textKey+'Sources']=result.lines||splitSceneLines(content.englishInput);saveContent();
@@ -433,6 +449,7 @@ function finishEnglish(engine,result){
 }
 function pollChat(){
   const web=state?.content?.chatgpt;
+  if(chatJob&&web&&web.id===chatJob.id&&web.busy)applyPartial('chatgpt',chatJob,web);
   if(!chatJob||!web||web.id!==chatJob.id||web.busy){renderEnglishRun();return;}
   const job=chatJob;chatJob=null;renderEnglishRun();
   if(job.kind==='characters')return finishCharacters('chatgpt',job.id,web);
@@ -451,6 +468,8 @@ $('englishSeconds').onchange=()=>{content.englishSeconds=Number($('englishSecond
 $('englishAngles').onchange=()=>{content.englishAngles=$('englishAngles').value;try{localStorage.setItem('hana-english-angles',String(content.englishAngles));}catch{}};
 try{const saved=localStorage.getItem('hana-english-angles');content.englishAngles=['lib','0','3'].includes(saved)?saved:'lib';}catch{content.englishAngles='lib';}
 $('englishStructured').onchange=()=>{content.englishStructured=$('englishStructured').checked;saveContent();};
+$('englishFormat').value=content.englishFormat||'detailed';
+$('englishFormat').onchange=()=>{content.englishFormat=$('englishFormat').value;saveContent();};
 $('englishOutput').oninput=()=>{content[englishKey(content.englishEngine)[0]]=$('englishOutput').value;saveContent();renderEnglish();renderReviewList();};
 $('chatgptModel').onchange=()=>api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()}).then(refresh).catch(error=>toast(error.message,true));
 $('loginChatgpt').onclick=async()=>{try{await api('/api/content/web-login',{engine:'chatgpt'});await refresh();toast('Đã mở Chrome. Đăng nhập ChatGPT, thấy ô nhắn tin thì đóng hẳn cửa sổ đó rồi bấm Viết prompt.');}catch(error){toast(error.message,true);}};
@@ -464,7 +483,7 @@ async function startEnglish(silent){
   try{
     if(engine==='gemini')await saveAutoSettings();
     else await api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()});
-    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked,angles:$('englishAngles').value==='lib'?0:Number($('englishAngles').value),library:$('englishAngles').value==='lib',seconds:Number($('englishSeconds').value),windows:(content.windows||[]).length?content.windows:undefined});
+    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked,format:$('englishFormat').value,angles:$('englishAngles').value==='lib'?0:Number($('englishAngles').value),library:$('englishAngles').value==='lib',seconds:Number($('englishSeconds').value),windows:(content.windows||[]).length?content.windows:undefined});
     lastJobError='';
     if(engine==='gemini'){autoJob={id,kind:'english'};renderAuto();}else{chatJob={id};renderEnglishRun();}
     refresh();toast(`Đã gửi ${total} cảnh cho ${engineNames[engine]}.`);return true;
