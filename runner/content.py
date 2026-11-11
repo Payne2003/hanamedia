@@ -925,6 +925,90 @@ def flatten_prompt(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+STANDARD_SECTIONS = {
+    "MOTION": "MOTION: True real-time 1.0x speed. All movement is natural and physically believable; speed comes from the "
+              "animal's own movement, not artificial video acceleration.",
+    "STYLE": "STYLE: Authentic BBC Earth wildlife-documentary realism. Natural light. Natural colors. Realistic fur and "
+             "body movement. Natural gravity. No cinematic slow motion.",
+    "STRICT NEGATIVE CONSTRAINTS": "STRICT NEGATIVE CONSTRAINTS: No slow motion. No speed ramp. No floating. No music. No "
+                                   "text, logo or watermark. No camera shake. No environment change. No extra animals.",
+}
+
+
+def complete_detailed(prompt):
+    """Mục chuẩn còn thiếu (MOTION, STYLE, STRICT NEGATIVE CONSTRAINTS) thì tool tự thêm, không cần nhờ AI viết lại."""
+    text = str(prompt or "").strip()
+    if not is_detailed(text):
+        return text
+    for name, pattern in DETAILED_SECTIONS:
+        if name in STANDARD_SECTIONS and not re.search(pattern, text, re.IGNORECASE):
+            text = text.rstrip(" .") + ". " + STANDARD_SECTIONS[name]
+    return text
+
+
+def detailed_batch_request(items, total, previous="", aspect="16:9", style=""):
+    """Một yêu cầu cho NHIỀU cảnh liền nhau (nhanh hơn gửi từng cảnh). items: [(số cảnh, mô tả, số giây, spans)]."""
+    from .prompt_example import DETAILED_EXAMPLE
+    fmt = lambda value: f"{float(value):g}"
+    scenes = []
+    for number, line, seconds, spans in items:
+        camera = (f"ONE camera angle for the whole 0–{fmt(seconds)} s (a single source shot: describe it, no cut)"
+                  if spans and len(spans) == 1 else
+                  "camera segments " + ", ".join(f"{fmt(a)}–{fmt(b)} SECONDS" for a, b in spans) if spans else
+                  f"1–3 consecutive camera segments covering 0–{fmt(seconds)} SECONDS")
+        scenes.append(f"SCENE {number} — {fmt(seconds)} seconds — {camera}:\n{line}")
+    continuity = ("PREVIOUS SCENE PROMPT (the first scene below continues directly from it — keep exactly the same animals, "
+                  "environment, light and screen direction):\n" + previous + "\n\n") if previous else ""
+    return (
+        f"You are a prompt engineer for Muse AI video. Write the English video prompts for SCENES {items[0][0]}–{items[-1][0]} "
+        f"of {total} of a realistic wildlife documentary reconstruction.\n\n"
+        "SCENE DESCRIPTIONS (Vietnamese analysis of the source video — the only source of facts):\n\n"
+        + "\n\n".join(scenes) + "\n\n" + continuity +
+        "Write ONE prompt PER SCENE; each scene continues from the one before it (same animals, environment, light, "
+        "direction). Every prompt has exactly this structure and section order, as detailed and physical as the example:\n"
+        "1. First line: \"Generate a/an <that scene's seconds>-second ultra-realistic wildlife documentary video <place, "
+        "time, light>.\"\n"
+        "2. CONTINUITY: \"Use exactly the same <animal>:\" + its exact look as a list, \"Keep exactly the same environment:\" "
+        "+ list, then \"Do NOT …\" lines.\n"
+        "3. MAIN ACTION: what happens in that scene only, step by step, body-part by body-part, rhythm, how far/fast, what "
+        "must NEVER happen.\n"
+        "4. CAMERA SEQUENCE: exactly the camera segments given for that scene, each as \"A–B SECONDS — <SHOT TYPE>:\" + a "
+        "detailed block (shot size, lens, angle, position, what is visible, allowed camera movement).\n"
+        "5. Optional body-part block (e.g. TAIL:).\n"
+        "6. MOTION: true real-time 1.0x speed, where the speed comes from.\n"
+        f"7. STYLE: authentic BBC Earth wildlife-documentary realism, natural light and colors, "
+        f"{ASPECTS.get(aspect, ASPECTS['16:9'])}" + (f", {style}" if style else "") + ".\n"
+        "8. STRICT NEGATIVE CONSTRAINTS: \"No …\" lines (no slow motion, no music, no text, no extra animals, no environment "
+        "change, plus scene-specific ones).\n\n"
+        "Rules: use only facts from the scene descriptions; never invent other animals, places or events; keep predator/prey "
+        "roles and directions. Start each prompt with a line \"SCENE N:\" (its number), then the prompt starting with "
+        f"\"Generate\". No markdown, no comments. After the last prompt write exactly: {END_EN}\n\n"
+        "EXAMPLE OF THE REQUIRED STRUCTURE AND LEVEL OF DETAIL FOR ONE SCENE (a different scene — do NOT copy its animal, "
+        "place or action):\n" + DETAILED_EXAMPLE)
+
+
+SCENE_HEADER = re.compile(r"^[\s*#>_]*SCENE\s+(\d+)\s*[:.\-—–)]*[\s*]*$|^[\s*#>_]*SCENE\s+(\d+)\s*[:—–-]\s*(?=Generate)",
+                          re.IGNORECASE | re.MULTILINE)
+
+
+def parse_detailed(answer, numbers):
+    """{số cảnh: prompt một dòng} từ câu trả lời nhiều cảnh ("SCENE N:" rồi prompt Generate…)."""
+    text = str(answer or "").split(END_EN)[0]
+    marks = list(SCENE_HEADER.finditer(text))
+    found = {}
+    for index, mark in enumerate(marks):
+        number = int(mark.group(1) or mark.group(2))
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
+        prompt = flatten_prompt(text[mark.end():end])
+        if number in numbers and prompt and number not in found:
+            found[number] = prompt
+    if not marks and len(numbers) == 1:  # chỉ một cảnh, AI không ghi "SCENE N:"
+        prompt = flatten_prompt(text)
+        if prompt:
+            found[numbers[0]] = prompt
+    return found
+
+
 def detailed_problems(prompt, seconds=None):
     """Lỗi của prompt chi tiết (rỗng = đạt): trống, còn tiếng Việt, thiếu mục, sai số giây, từ cấm."""
     text = strip_lock(prompt).strip()

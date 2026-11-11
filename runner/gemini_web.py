@@ -1048,68 +1048,86 @@ def run_characters(session, script, scenes, status, stop, email="", model=""):
     return result
 
 
-DETAILED_FIXES = 2  # prompt chi tiết của một cảnh còn lỗi: nhờ AI viết lại tối đa 2 lần trong cùng cuộc trò chuyện
+DETAILED_FIXES = 1  # prompt còn lỗi tool không tự sửa được (thiếu CONTINUITY/MAIN ACTION/CAMERA, còn tiếng Việt…): nhờ viết lại 1 lần
+DETAILED_BATCH = 3  # số cảnh mỗi lần gửi: ít lượt hỏi hơn nhiều so với từng cảnh, mỗi câu trả lời vẫn vừa sức
 
 
 def english_detailed(session, lines, status, stop, email="", model="", style="", aspect="16:9",
                      seconds=content.DEFAULT_SECONDS, windows=None, on_batch=None):
-    """Prompt chi tiết: gửi LẦN LƯỢT TỪNG CẢNH (mỗi cảnh một cuộc trò chuyện mới, kèm prompt cảnh trước để nối tiếp),
-    kiểm tra máy từng prompt (câu Generate đúng số giây, đủ mục, tiếng Anh, không từ cấm) và nhờ viết lại nếu lỗi;
-    mỗi prompt gộp thành một dòng; cảnh nào xong hiện ngay."""
+    """Prompt chi tiết theo mẫu: gửi lần lượt từng nhóm DETAILED_BATCH cảnh (mỗi nhóm một cuộc trò chuyện mới, kèm prompt
+    cuối của nhóm trước để nối tiếp). Tool tự sửa số giây và tự thêm mục chuẩn còn thiếu (MOTION/STYLE/NEGATIVE); chỉ
+    nhờ AI viết lại (1 lần, gộp cả nhóm) khi còn lỗi tool không tự sửa được. Nhóm nào xong hiện ngay."""
     total = len(lines)
     name = getattr(session, "NAME", "Gemini")
     windows = list(windows) if windows and len(windows) == total else None
     shot_mode = bool(windows) and all(w.get("shot") for w in windows)
-    english, missing, issues, durations, rounds = [], [], [], [], 0
+    items = []
     for number, line in enumerate(lines, 1):
-        if stop.is_set():
-            raise GeminiWebError("Đã dừng.")
         window = windows[number - 1] if windows else None
         length = content.scene_seconds(window) if shot_mode else seconds
         spans = ([(0, length)] if shot_mode else
                  [(float(a), float(b)) for a, b in window["angles"]] if window and len(window.get("angles") or []) > 1 else None)
-        previous = next((p for p in reversed(english) if p), "")
+        items.append((number, line, length, spans))
+    found, issues, rounds = {}, [], 0
+    clean = lambda text, length: content.complete_detailed(content.tidy_prompt(text, length))
+    for first in range(0, total, DETAILED_BATCH):
+        group = items[first:first + DETAILED_BATCH]
+        numbers = [item[0] for item in group]
+        lengths = {item[0]: item[2] for item in group}
+        if stop.is_set():
+            raise GeminiWebError("Đã dừng.")
+        previous = found.get(first) or next((found[n] for n in range(first, 0, -1) if found.get(n)), "")
+        label = f"cảnh {numbers[0]}–{numbers[-1]}/{total}" if len(numbers) > 1 else f"cảnh {numbers[0]}/{total}"
         try:
             start_fresh(session, status, stop, email)
             if model:
                 session.choose_model(model)
-            answer = session.ask(content.detailed_request(line, number, total, length, spans, previous, aspect, style),
-                                 status, stop, email, label=f"{name} đang viết prompt cảnh {number}/{total}")
+            answer = session.ask(content.detailed_batch_request(group, total, previous, aspect, style), status, stop, email,
+                                 label=f"{name} đang viết prompt {label}")
             rounds += 1
-            prompt = content.tidy_prompt(content.flatten_prompt(answer), length)
-            for attempt in range(DETAILED_FIXES):
-                problems = content.detailed_problems(prompt, length)
-                if not problems:
-                    break
-                answer = session.ask("Rewrite the WHOLE prompt for this scene, same structure, fixing: " + "; ".join(problems)
-                                     + ". Write only the prompt, starting with \"Generate\".", status, stop, email,
-                                     label=f"Prompt cảnh {number} còn lỗi · {name} viết lại (lần {attempt + 1})")
+            got = {n: clean(p, lengths[n]) for n, p in content.parse_detailed(answer, numbers).items()}
+            missing = [n for n in numbers if n not in got]
+            if missing:  # AI bỏ sót cảnh trong nhóm: hỏi lại đúng những cảnh đó (1 lần)
+                answer = session.ask("You skipped " + ", ".join(f"SCENE {n}" for n in missing) + ". Write them now, same "
+                                     f"structure, each starting with \"SCENE N:\". Then write {content.END_EN}.", status, stop,
+                                     email, label=f"{name} viết bổ sung cảnh {', '.join(map(str, missing))}")
                 rounds += 1
-                fixed = content.tidy_prompt(content.flatten_prompt(answer), length)
-                if len(content.detailed_problems(fixed, length)) <= len(problems):
-                    prompt = fixed
-            left = content.detailed_problems(prompt, length)
-            if left:
-                issues.append(f"Scene {number} — {'; '.join(left)}")
+                got.update({n: clean(p, lengths[n]) for n, p in content.parse_detailed(answer, missing).items()})
+            for attempt in range(DETAILED_FIXES):
+                bad = {n: content.detailed_problems(got[n], lengths[n]) for n in numbers if n in got}
+                bad = {n: v for n, v in bad.items() if v}
+                if not bad:
+                    break
+                answer = session.ask("Rewrite these prompts completely, same structure, each starting with \"SCENE N:\", "
+                                     "fixing: " + "; ".join(f"SCENE {n}: {', '.join(v)}" for n, v in bad.items())
+                                     + f". Then write {content.END_EN}.", status, stop, email,
+                                     label=f"{len(bad)} prompt còn lỗi · {name} viết lại")
+                rounds += 1
+                for n, text in content.parse_detailed(answer, list(bad)).items():
+                    text = clean(text, lengths[n])
+                    if len(content.detailed_problems(text, lengths[n])) < len(bad[n]):
+                        got[n] = text
         except GeminiWebError:
             raise
         except Exception as error:  # vd hết hạn mức giữa chừng: giữ các cảnh đã xong
-            if stop.is_set() or not english:
+            if stop.is_set() or not found:
                 raise
-            issues.append(f"Dừng ở cảnh {number}/{total}: {error} Các prompt trước đã giữ lại; chạy lại để viết phần còn thiếu.")
-            missing += list(range(number, total + 1))
-            english += [""] * (total - number + 1)
-            durations += [None] * (total - number + 1)
+            issues.append(f"Dừng ở cảnh {numbers[0]}/{total}: {error} Các prompt trước đã giữ lại; chạy lại để viết phần còn thiếu.")
             break
-        english.append(prompt)
-        durations.append(length)
-        if not prompt:
-            missing.append(number)
-        status(f"Đã xong {number}/{total} prompt")
+        found.update(got)
+        for n in numbers:
+            left = content.detailed_problems(got[n], lengths[n]) if n in got else ["AI không viết cảnh này"]
+            if left:
+                issues.append(f"Scene {n} — {'; '.join(left)}")
+        done = numbers[-1]
+        status(f"Đã xong {done}/{total} prompt")
         if on_batch:
-            on_batch({"english": list(english), "done": number, "total": total, "missing": list(missing)})
-    return {"english": english, "missing": missing, "lines": lines, "issues": issues, "structured": "detailed",
-            "total": total, "rounds": rounds, "durations": durations if shot_mode else None}
+            on_batch({"english": [found.get(n, "") for n in range(1, done + 1)], "done": done, "total": total,
+                      "missing": [n for n in range(1, done + 1) if not found.get(n)]})
+    english = [found.get(n, "") for n in range(1, total + 1)]
+    return {"english": english, "missing": [n for n in range(1, total + 1) if not english[n - 1]], "lines": lines,
+            "issues": issues, "structured": "detailed", "total": total, "rounds": rounds,
+            "durations": [item[2] for item in items] if shot_mode else None}
 
 
 PROMPT_BATCH = 10  # viết / kiểm duyệt lần lượt từng nhóm 10 prompt, lấy kết quả từng nhóm (giao diện hiện ngay)

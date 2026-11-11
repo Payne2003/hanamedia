@@ -30,10 +30,15 @@ class DetailedFormatTests(unittest.TestCase):
         self.assertIn("STRICT NEGATIVE CONSTRAINTS", req)
 
 
-class SceneBySceneTests(unittest.TestCase):
-    def test_each_scene_sent_alone_fixed_when_wrong_and_reported(self):
+class BatchOfScenesTests(unittest.TestCase):
+    def test_three_scenes_per_request_auto_complete_fix_and_report(self):
         sent, partials = [], []
-        replies = [sample(10), sample(8).replace("MAIN ACTION:", "WHAT HAPPENS"), sample(3)]  # cảnh 2: sai giây (tool tự sửa) + thiếu mục (nhờ viết lại)
+        no_style = sample(10).split("STYLE:")[0]  # thiếu STYLE/NEGATIVE: tool tự thêm, không nhờ viết lại
+        no_action = sample(3).replace("MAIN ACTION:", "WHAT HAPPENS")  # thiếu MAIN ACTION: phải nhờ AI viết lại
+        replies = [f"SCENE 1:\n{no_style}\n\nSCENE 2:\n{no_action}\n{content.END_EN}",  # bỏ sót cảnh 3
+                   f"SCENE 3:\n{sample(3)}\n{content.END_EN}",
+                   f"SCENE 2:\n{sample(3)}\n{content.END_EN}",
+                   sample(3)]  # nhóm 2 chỉ một cảnh, không ghi "SCENE 4:"
 
         class Session:
             def new_chat(self): pass
@@ -43,19 +48,21 @@ class SceneBySceneTests(unittest.TestCase):
                 sent.append(text)
                 return replies.pop(0)
 
-        windows = content.shot_windows([dict(start=0, end=10), dict(start=10, end=13)], 13)
-        result = gemini_web.run_english(Session(), ["Cảnh 1", "Cảnh 2"], lambda t: None, threading.Event(),
+        windows = content.shot_windows([dict(start=0, end=10), dict(start=10, end=13), dict(start=13, end=16),
+                                        dict(start=16, end=19)], 19)
+        result = gemini_web.run_english(Session(), ["C1", "C2", "C3", "C4"], lambda t: None, threading.Event(),
                                         structured="detailed", windows=windows, on_batch=lambda p: partials.append(p["done"]))
-        self.assertEqual(len(sent), 3)
-        self.assertIn("SCENE 1 of 2", sent[0])
-        self.assertIn("PREVIOUS SCENE PROMPT", sent[1])
-        self.assertIn("Thiếu mục MAIN ACTION", sent[2])
+        self.assertEqual(len(sent), 4)
+        self.assertIn("SCENES 1–3 of 4", sent[0])
+        self.assertIn("You skipped SCENE 3", sent[1])
+        self.assertIn("SCENE 2: Thiếu mục MAIN ACTION", sent[2])
+        self.assertIn("PREVIOUS SCENE PROMPT", sent[3])
         self.assertTrue(result["english"][0].startswith("Generate a 10-second"))
-        self.assertTrue(result["english"][1].startswith("Generate a 3-second"))
+        self.assertIn("STYLE:", result["english"][0])  # tool tự thêm mục chuẩn
+        self.assertEqual([content.detailed_problems(p, d) for p, d in zip(result["english"], [10, 3, 3, 3])], [[]] * 4)
         self.assertTrue(all("\n" not in p for p in result["english"]))
-        self.assertEqual(partials, [1, 2])
-        self.assertEqual(result["durations"], [10, 3])
-        self.assertEqual(content.qc_problems(result["english"][1], 3), [])
+        self.assertEqual(partials, [3, 4])
+        self.assertEqual(result["durations"], [10, 3, 3, 3])
 
 
 if __name__ == "__main__":
