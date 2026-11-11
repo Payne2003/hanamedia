@@ -106,3 +106,19 @@ class OpenAIAPITests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PacerTests(unittest.TestCase):
+    def test_requests_are_spaced_by_rpm_and_cool_down_after_429(self):
+        import time
+        from runner.ai_api import Pacer
+        stop, notes = threading.Event(), []
+        start = time.monotonic()
+        for _ in range(3):
+            Pacer.wait("test-pace", 600, notes.append, stop)  # 600/phút = 0,1 giây một yêu cầu
+        self.assertGreaterEqual(time.monotonic() - start, 0.19)
+        Pacer.cool_down("test-pace", 0.3)
+        before = time.monotonic()
+        Pacer.wait("test-pace", 600, notes.append, stop)
+        self.assertGreaterEqual(time.monotonic() - before, 0.25)
+        Pacer.wait("other-key", 0, notes.append, stop)  # 0 = không giới hạn, khóa khác không bị ảnh hưởng

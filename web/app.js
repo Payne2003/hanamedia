@@ -1451,6 +1451,7 @@ function renderApiCard(engine,force){
   if(select.dataset.html!==html){select.innerHTML=html;select.dataset.html=html;}
   if(force||document.activeElement!==select)select.value=info.model;
   if(force||document.activeElement!==$(p+'Thinking'))$(p+'Thinking').value=info.thinking||'';
+  if(force||document.activeElement!==$(p+'Rpm'))$(p+'Rpm').value=info.rpm??'';
   if(info.mode==='api'){$(c.badge).textContent=`✓ ${c.label} · ${info.model}`;$(c.badge).className='status-chip approved';}
   else if(apiMode){$(c.badge).textContent='Chưa có API key';$(c.badge).className='status-chip error';}
 }
@@ -1473,6 +1474,7 @@ for(const [engine,c] of Object.entries(API_CARDS)){
   });
   $(p+'Model').onchange=e=>saveApi(engine,{model:e.target.value},'Đã chọn model '+e.target.value);
   $(p+'Thinking').onchange=e=>saveApi(engine,{thinking:e.target.value},'Đã lưu mức suy nghĩ.');
+  $(p+'Rpm').onchange=e=>{const v=Math.round(Number(e.target.value));if(!Number.isFinite(v)||v<0||v>1000)return toast('Nhập số từ 0 đến 1000.',true);saveApi(engine,{rpm:v},v?`Tool sẽ gửi tối đa ${v} yêu cầu mỗi phút.`:'Không giới hạn số yêu cầu mỗi phút.');};
   $(p+'KeyPage').onclick=()=>api(`/api/${engine}-api/key-page`,{}).then(()=>toast('Đã mở trang lấy API key trong trình duyệt. Tạo khóa rồi dán vào đây.')).catch(error=>toast(error.message,true));
   $(p+'Save').onclick=async()=>{
     const value=$(p+'Key').value.trim();if(!value)return toast('Dán API key vào ô trước.',true);

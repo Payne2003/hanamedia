@@ -234,3 +234,34 @@ class APIClients:
     def test(self,provider):
         result=self.complete(provider,'Return only JSON: {"ok":true}.')
         return dict(ok=True,model=result['model'],usage=result['usage'])
+
+
+class Pacer:
+    """Giãn cách yêu cầu API để không vượt giới hạn yêu cầu/phút của khóa (dùng chung cho mọi phiên cùng một khóa).
+    rpm = số yêu cầu tối đa mỗi phút người dùng đặt (0 = không giới hạn). Sau khi API báo 429 theo phút thì nghỉ
+    thêm đúng thời gian API gợi ý trước khi gửi yêu cầu kế tiếp."""
+    _lock = threading.Lock()
+    _next = {}
+
+    @classmethod
+    def wait(cls, name, rpm, status, stop):
+        import time
+        gap = 60.0 / rpm if rpm and rpm > 0 else 0.0
+        while True:
+            with cls._lock:
+                now = time.monotonic()
+                ready = cls._next.get(name, 0.0)
+                if now >= ready:
+                    cls._next[name] = now + gap
+                    return
+                left = ready - now
+            if left >= 2:
+                status(f"Đợi {left:.0f} giây trước yêu cầu kế tiếp (giới hạn {rpm or '?'} yêu cầu/phút của API key)…")
+            if stop.wait(min(left, 5)):
+                raise APIError("Đã dừng.")
+
+    @classmethod
+    def cool_down(cls, name, seconds):
+        import time
+        with cls._lock:
+            cls._next[name] = max(cls._next.get(name, 0.0), time.monotonic() + max(0.0, seconds))

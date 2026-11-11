@@ -69,8 +69,20 @@ class AppServer(ThreadingHTTPServer):
         return {"configured": bool(key), "source": source if key else "missing",
                 "model": self.store.setting(prefix + "_model") or module.DEFAULT_MODEL,
                 "thinking": self.store.setting(prefix + "_thinking") or "",
+                "rpm": self.api_rpm(engine),
                 "mode": "api" if key and self.store.setting(mode_key, "api") == "api" else "web",
                 "key_page": module.KEY_PAGE}
+
+    # Mặc định yêu cầu/phút: khóa Gemini miễn phí chỉ cho vài yêu cầu mỗi phút (Pro ít nhất); OpenAI cao hơn nhiều.
+    DEFAULT_RPM = {"gemini": 5, "chatgpt": 30}
+
+    def api_rpm(self, engine):
+        try:
+            saved = self.store.setting(self.API_ENGINES[engine][1] + "_rpm")
+            value = self.DEFAULT_RPM[engine] if saved in (None, "") else int(saved)
+        except ValueError:
+            value = self.DEFAULT_RPM[engine]
+        return max(0, min(1000, value))
 
     def api_session(self, engine):
         """Phiên API cho yêu cầu kế tiếp, hoặc None nếu đang dùng trang web trên Chrome."""
@@ -80,7 +92,7 @@ class AppServer(ThreadingHTTPServer):
         module = self.API_ENGINES[engine][0]
         key, _ = self.key_vault.credential(engine)
         session = module.GeminiAPISession if engine == "gemini" else module.OpenAIAPISession
-        return session(key, info["model"], info["thinking"])
+        return session(key, info["model"], info["thinking"], rpm=info["rpm"])
 
     def __init__(self, port, store, engine):
         super().__init__(("127.0.0.1", port), Handler)
@@ -1143,6 +1155,11 @@ class Handler(BaseHTTPRequestHandler):
                     store.save_setting(prefix + "_thinking", level if level in ("low", "medium", "high") else "")
                 if body.get("mode") in ("api", "web"):
                     store.save_setting(mode_key, body["mode"])
+                if "rpm" in body:
+                    rpm = body.get("rpm")
+                    if type(rpm) is not int or not 0 <= rpm <= 1000:
+                        raise ValueError("Số yêu cầu mỗi phút từ 0 đến 1000 (0 = không giới hạn).")
+                    store.save_setting(prefix + "_rpm", str(rpm))
                 return self.reply(self.server.api_public(engine))
             elif path == "/api/content/web-stop":
                 (self.server.chatgpt_web if body.get("engine") == "chatgpt" else self.server.gemini_web).cancel()

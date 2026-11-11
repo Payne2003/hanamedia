@@ -9,6 +9,7 @@ chỉ khác là gọi thẳng API: không phụ thuộc giao diện web, không 
 - Hội thoại nhiều lượt: giữ lịch sử (kể cả chữ ký suy nghĩ của model) để "viết tiếp", hỏi lại cảnh thiếu.
 - Khóa API chỉ gửi tới generativelanguage.googleapis.com; không ghi vào log, không trả về giao diện.
 """
+import hashlib
 import json
 import mimetypes
 import re
@@ -19,7 +20,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from .ai_api import APIError, NoRedirect
+from .ai_api import APIError, NoRedirect, Pacer
 
 BASE = "https://generativelanguage.googleapis.com"
 KEY_PAGE = "https://aistudio.google.com/apikey"
@@ -121,12 +122,13 @@ class GeminiAPISession:
     """Phiên "giả trình duyệt" chạy bằng Gemini API (cùng giao diện với GeminiWebSession)."""
     api = True
 
-    def __init__(self, key, model=DEFAULT_MODEL, thinking="", max_output=65536):
+    def __init__(self, key, model=DEFAULT_MODEL, thinking="", max_output=65536, rpm=0):
         if not key:
             raise GeminiAPIError("Chưa nhập API key Gemini trong Cài đặt.")
         if not MODEL_NAME.fullmatch(model or ""):
             raise GeminiAPIError("Tên model Gemini API không hợp lệ.")
         self.key, self.model, self.thinking, self.max_output = key, model.removeprefix("models/"), thinking, max_output
+        self.rpm = int(rpm or 0)  # giới hạn yêu cầu/phút người dùng đặt (0 = không giãn cách)
         self.history, self.pending, self.uploaded = [], [], []
         self.debug_path = None
         self.take_now = None
@@ -197,6 +199,8 @@ class GeminiAPISession:
         while True:
             if stop.is_set():
                 raise GeminiAPIError("Đã dừng.")
+            pace = "gemini:" + hashlib.sha256(self.key.encode()).hexdigest()[:12] + ":" + self.model
+            Pacer.wait(pace, self.rpm, status, stop)  # giãn cách để không vượt giới hạn yêu cầu/phút
             try:
                 return self.call(url, {"contents": contents, "generationConfig": self.config(thinking)}, timeout, stop)
             except HTTPFailure as error:
@@ -224,6 +228,7 @@ class GeminiAPISession:
                                                                                if error.quota else RETRY_WAIT[attempt])
                     attempt += 1
                     status(f"{error} Gửi lại sau {wait} giây (lần {attempt}/{len(RETRY_WAIT)})…")
+                    Pacer.cool_down(pace, wait)  # yêu cầu kế tiếp (kể cả của phiên khác) cũng đợi
                     if stop.wait(wait):
                         raise GeminiAPIError("Đã dừng.") from None
                     continue

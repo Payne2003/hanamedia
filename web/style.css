@@ -813,3 +813,5 @@ dialog{border-radius:20px;background:var(--hana-card)}
 .settings-card .gemini-api-box .content-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important}
 .gemini-api-box .content-grid label{display:grid;gap:5px;font-size:var(--fs-xs);color:var(--muted)}
 @media (max-width:640px){.gemini-mode,.gemini-api-box .content-grid{grid-template-columns:1fr}}
+.gemini-api-box .api-rpm{display:grid;gap:5px;margin:8px 0;font-size:var(--fs-xs);color:var(--muted)}
+.gemini-api-box .api-rpm input{max-width:140px}
