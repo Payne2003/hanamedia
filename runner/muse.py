@@ -304,6 +304,7 @@ class MuseBrowser:
                                   f"Kiểm tra Chrome rồi khởi động lại app. Chi tiết: {short_error(error)}") from None
 
     def close(self):
+        self.closed = True  # ô của cửa sổ này trên lưới màn hình trống lại
         try:
             self.driver.quit()
         except Exception:
