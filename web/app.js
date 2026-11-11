@@ -445,6 +445,7 @@ function finishEnglish(engine,result){
   content[textKey]=result.english.join('\n');content[missingKey]=result.missing;content[textKey+'Issues']=result.issues||[];content[textKey+'Sources']=result.lines||splitSceneLines(content.englishInput);saveContent();
   if(content.englishEngine===engine)renderEnglishEngine();
   const name=engineNames[engine];
+  if(!pipeline&&result.english.some(line=>String(line||'').trim()))setTimeout(()=>sendEnglishToStudio(true),1500);
   toast(result.missing.length?`${name} viết ${result.total-result.missing.length}/${result.total} prompt; còn thiếu cảnh ${result.missing.join(', ')}. Bấm chạy lại hoặc tự sửa.`:`${name}: đủ ${result.total} prompt tiếng Anh (${result.rounds} lượt trả lời).`,Boolean(result.missing.length));
 }
 function pollChat(){
@@ -592,7 +593,7 @@ async function runPipelineFlow(){
     if(!await startReview())throw Error('Không chạy được bước kiểm duyệt.');
     await waitJobs();
     pipeStep('review','done');setStep(4);
-    toast('Xong: đã có prompt hoàn chỉnh đã kiểm duyệt và gắn khóa. Bấm “→ Đưa vào Studio” để tạo video.');
+    await sendEnglishToStudio(true);
   }catch(error){pipeStep(current,'failed');toast(`Dừng ở bước “${document.querySelector(`#pipelineSteps [data-pipe="${current}"]`).textContent}”: ${error.message}`,true);}
   finally{pipeline=null;renderAuto();}
 }
@@ -624,7 +625,10 @@ function splitSceneLines(text){
 let promptSources={},promptScenes={};
 try{promptSources=JSON.parse(localStorage.getItem('hana-prompt-sources')||'{}')||{};promptScenes=JSON.parse(localStorage.getItem('hana-prompt-scenes')||'{}')||{};}catch{}
 function rememberSources(pairs){promptSources={};promptScenes={};for(const [prompt,source,scene] of pairs){if(source)promptSources[prompt]=source;if(scene)promptScenes[prompt]=scene;}try{localStorage.setItem('hana-prompt-sources',JSON.stringify(promptSources));localStorage.setItem('hana-prompt-scenes',JSON.stringify(promptScenes));}catch{}}
-$('useEnglish').onclick=async()=>{
+$('useEnglish').onclick=()=>sendEnglishToStudio(false);
+// Viết prompt xong là tự đưa vào hàng đợi Studio (auto); bấm nút thì đưa lại theo ý người dùng.
+// Không đưa trùng: bộ prompt đã đưa tự động rồi thì lần tự động sau bỏ qua.
+async function sendEnglishToStudio(auto){
   const [textKey]=englishKey(content.englishEngine);
   const sources=content[textKey+'Sources']||splitSceneLines(content.englishInput);
   const lines=englishLines(),sceneIds=project&&project.scenes.length===lines.filter(l=>l.trim()).length?project.scenes.map(x=>x.id):[];
@@ -632,6 +636,8 @@ $('useEnglish').onclick=async()=>{
   const prompts=pairs.map(([line])=>line);if(!prompts.length)return toast('Chưa có prompt tiếng Anh.',true);
   if(prompts.length>200)return toast('Mỗi lần đưa tối đa 200 prompt; chia làm nhiều lần.',true);
   const tooLong=prompts.findIndex(p=>p.length>20000);if(tooLong>=0)return toast(`Prompt số ${tooLong+1} dài quá 20.000 ký tự.`,true);
+  const signature=prompts.join('\n');
+  if(auto&&content.sentToStudio===signature)return;
   rememberSources(pairs);
   // Đưa thẳng từng prompt vào hàng đợi Studio (không qua khung nhập), kèm ảnh nhân vật đã chọn và độ phân giải.
   // Thời lượng để trống: mỗi prompt đã ghi đúng số giây của cảnh (Generate a N-second…), không ép một số chung.
@@ -640,11 +646,12 @@ $('useEnglish').onclick=async()=>{
   try{
     await api('/api/jobs',{prompts,cost,mode:'text',batch:crypto.randomUUID(),images:prompts.map(()=>[]),
       sources:pairs.map(([,source])=>source),scene_ids:pairs.map(([,,scene])=>scene||null),options});
+    content.sentToStudio=signature;saveContent();
     await refresh();showView('studio');
-    toast(`Đã thêm ${prompts.length} prompt vào hàng đợi Studio${fixedCharacters.length?` · kèm ${fixedCharacters.length} ảnh nhân vật`:''} · ${options.resolution||'độ phân giải của Muse'}. Bấm ▶ Chạy để tạo video.`);
-  }catch(error){toast(error.message,true);}
+    toast(`${auto?'Viết prompt xong · đã tự ':'Đã '}thêm ${prompts.length} prompt vào hàng đợi Studio${fixedCharacters.length?` · kèm ${fixedCharacters.length} ảnh nhân vật`:''} · ${options.resolution||'độ phân giải của Muse'}. Bấm ▶ Chạy để tạo video.`);
+  }catch(error){toast((auto?'Chưa tự đưa được vào Studio: ':'')+error.message,true);}
   finally{button.disabled=false;}
-};
+}
 $('copyEnglish').onclick=()=>navigator.clipboard.writeText($('englishOutput').value).then(()=>toast('Đã chép prompt tiếng Anh.')).catch(()=>toast('Không chép được. Chọn và sao chép trong ô kết quả.',true));
 $('downloadEnglish').onclick=()=>{const blob=new Blob([$('englishOutput').value],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`prompt-tieng-anh-${content.englishEngine}.txt`;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};
 
