@@ -21,7 +21,9 @@ import unicodedata
 ZALO = "0983105651"
 ZALO_LINK = f"https://zalo.me/{ZALO}"
 DAILY_LIMIT = 20
-MODELS = ("gemini-flash-latest", "gemini-flash-lite-latest")  # Flash-Lite có hạn mức miễn phí cao hơn: dự phòng
+MODELS = ("gemini-flash-lite-latest", "gemini-flash-latest")  # Flash-Lite trả lời nhanh nhất, hạn mức miễn phí cao: thử trước
+TIMEOUT = 20  # giây chờ mỗi model; quá thì thử model khác / chuyển Zalo, không để khách chờ lâu
+GREETING = re.compile(r"^(xin chao|chao|hello|hi|hey|alo|a lo|helo|chao ban|chao shop|cam on|thanks|thank you|ok|oke)\b[\s!.?]*\w{0,12}[\s!.?]*$")
 MAX_MESSAGE = 1000
 SALT = b"hanamedia-support-v1"
 
@@ -163,6 +165,11 @@ class SupportChat:
             raise ValueError("Nhập câu hỏi trước.")
         if len(message) > MAX_MESSAGE:
             raise ValueError(f"Câu hỏi tối đa {MAX_MESSAGE} ký tự.")
+        if GREETING.match(plain(message)):  # chào / cảm ơn: trả lời ngay, không gọi AI
+            text = ("Không có gì ạ! Bạn cần hỏi thêm gì về HANA MEDIA cứ nhắn nhé." if plain(message).startswith(("cam on", "thank"))
+                    else "Chào bạn! Bạn đang cần giúp phần nào: cài đặt API key, viết content, tài khoản Muse hay tạo video "
+                         "hàng loạt? Cứ mô tả vấn đề, mình hướng dẫn ngay.")
+            return {"answer": text, "source": "faq", **self.status()}
         answer = faq_answer(message)
         if answer:  # FAQ trả lời miễn phí, không tính lượt
             return {"answer": answer, "source": "faq", **self.status()}
@@ -176,32 +183,59 @@ class SupportChat:
                 return self.zalo(f"Bạn đã dùng hết {DAILY_LIMIT} lượt hỏi trợ lý AI hôm nay. " + ZALO_TEXT)
             text = self.generate(key, message, history)
             if text is None:
-                return self.zalo("Trợ lý AI đang quá tải hoặc hết lượt chung. " + ZALO_TEXT)
+                import logging
+                logging.getLogger("hanamedia.support").warning("Chatbot hỗ trợ: Gemini lỗi — %s", self.last_error)
+                code = re.search(r"HTTP (\d+)", self.last_error or "")
+                reason = {"400": "yêu cầu không hợp lệ", "401": "API key không hợp lệ", "403": "API key không có quyền",
+                          "404": "không tìm thấy model", "429": "hết lượt chung", "500": "máy chủ Google lỗi",
+                          "503": "Google quá tải"}.get(code.group(1) if code else "", "không kết nối được")
+                return self.zalo(f"Trợ lý AI tạm thời không trả lời được ({reason}"
+                                 + (f", mã {code.group(1)}" if code else "") + "). " + ZALO_TEXT)
             self.store.save_setting("support_chat_usage", {"day": self.today(), "count": self.used() + 1})
         return {"answer": text, "source": "ai", **self.status()}
 
     def generate(self, key, message, history):
-        """Gọi Gemini; lỗi/hết hạn mức thì trả None (giao diện chuyển khách sang Zalo, không tính lượt)."""
+        """Gọi Gemini; lỗi/hết hạn mức thì trả None (giao diện chuyển khách sang Zalo, không tính lượt).
+        self.last_error giữ mã lỗi ngắn để hiện cho khách và ghi nhật ký (không bao giờ chứa khóa)."""
         from . import gemini_api
+        self.last_error = ""
         contents = []
         for turn in list(history or [])[-6:]:
             if isinstance(turn, dict) and turn.get("role") in ("user", "model") and isinstance(turn.get("text"), str):
                 contents.append({"role": turn["role"], "parts": [{"text": turn["text"][:2000]}]})
         contents.append({"role": "user", "parts": [{"text": message}]})
-        body = {"system_instruction": {"parts": [{"text": KNOWLEDGE.format(zalo=ZALO)}]}, "contents": contents,
-                "generationConfig": {"maxOutputTokens": 800, "temperature": 0.3}}
+        base = {"system_instruction": {"parts": [{"text": KNOWLEDGE.format(zalo=ZALO)}]}, "contents": contents}
+        quick = {"maxOutputTokens": 800, "temperature": 0.3, "thinkingConfig": {"thinkingBudget": 0}}  # không "suy nghĩ": nhanh
+        normal = {"maxOutputTokens": 800, "temperature": 0.3}
+        bearer = False  # khóa dạng mới không nhận qua x-goog-api-key: thử gửi dạng Bearer một lần
         for model in MODELS:
-            try:
-                result = gemini_api.http("POST", f"{gemini_api.BASE}/v1beta/models/{model}:generateContent", key,
-                                         payload=body, timeout=60)
-            except gemini_api.HTTPFailure as error:
-                if error.code in (429, 404, 500, 503):
-                    continue  # hết hạn mức / quá tải model này: thử model dự phòng
-                return None
-            except Exception:
-                return None
+            config, result = quick, None
+            for _ in range(4):
+                url = f"{gemini_api.BASE}/v1beta/models/{model}:generateContent"
+                try:
+                    if bearer:
+                        result = gemini_api.http("POST", url, "", payload=dict(base, generationConfig=config), timeout=TIMEOUT,
+                                                 headers={"Authorization": "Bearer " + key})
+                    else:
+                        result = gemini_api.http("POST", url, key, payload=dict(base, generationConfig=config), timeout=TIMEOUT)
+                    break
+                except gemini_api.HTTPFailure as error:
+                    self.last_error = f"HTTP {error.code}: {error.detail[:160]}"
+                    if error.code == 400 and config is quick:
+                        config = normal  # model không nhận tắt suy nghĩ: hỏi lại cấu hình thường
+                        continue
+                    if error.code in (401, 403) and not bearer:
+                        bearer = True
+                        continue
+                    break  # 429 / 404 / 5xx…: thử model dự phòng
+                except Exception as error:
+                    self.last_error = type(error).__name__ + (": " + str(error)[:120] if str(error) else "")
+                    break  # quá thời gian / mạng: thử model kế tiếp
+            if result is None:
+                continue
             parts = ((result.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
             text = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
             if text:
                 return text[:4000]
+            self.last_error = "Gemini không trả nội dung"
         return None

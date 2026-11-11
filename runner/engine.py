@@ -54,7 +54,6 @@ class Engine:
         self.threads = set()
         self.review_stops = {}
         self.browsers = {}
-        self.tiles = {}  # mã tài khoản -> (Chrome, ô trên lưới màn hình): xếp cửa sổ thành lưới 3×2
         self.account_locks = {}
         from .power import KeepAwake
         self.awake = KeepAwake()  # máy không tự ngủ khi đang tạo video (chỉ gọi từ luồng supervise)
@@ -340,18 +339,6 @@ class Engine:
         with self.lock:
             return self.account_locks.setdefault(account_id, threading.Lock())
 
-    def tile(self, account_id, browser):
-        """Đặt cửa sổ Chrome mới của tài khoản vào ô trống đầu tiên của lưới 3 cột × 2 hàng trên màn hình."""
-        from . import window_grid
-        with self.lock:
-            self.tiles = {aid: (b, slot) for aid, (b, slot) in self.tiles.items()
-                          if not getattr(b, "closed", False) and aid != account_id}
-            slot = window_grid.free_slot(slot for _, slot in self.tiles.values())
-            self.tiles[account_id] = (browser, slot)
-        driver = getattr(browser, "driver", None)
-        if driver is not None:
-            window_grid.place(driver, slot)
-
     def session(self, job, account, headless, target):
         """Phiên Muse cho tác vụ. Một tài khoản chỉ có một Chrome; tài khoản chạy nhiều luồng thì mỗi tác vụ một TAB riêng
         trong Chrome đó (TabRouter). Mở Chrome / đăng nhập / mở tab của cùng tài khoản lần lượt từng luồng."""
@@ -444,8 +431,6 @@ class Engine:
             self.attach_router(browser)  # Chrome mở từ nút Đăng nhập / Kiểm tra: gắn bộ chia tab trước khi chạy
         if browser is None:
             browser = MuseBrowser(self.data / "profiles" / account["id"], target, headless, phase)
-            if not headless:
-                self.tile(account["id"], browser)
             if self.attach_router(browser):
                 browser.router.acquire()  # tab đầu tiên: đăng nhập trên tab này
             with self.lock:
@@ -835,7 +820,6 @@ class Engine:
         try:
             browser = MuseBrowser(self.data / "profiles" / account["id"], self.data / "login-downloads" / account["id"], False,
                                   lambda p: self.store.set_account(account["id"], "authenticating", p))
-            self.tile(account["id"], browser)
             browser.login(account)
             state, detail = "ready", "Đã xác minh phiên đăng nhập; giữ Chrome mở cho tác vụ tiếp theo"
             if stop:
