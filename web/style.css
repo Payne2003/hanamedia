@@ -836,3 +836,7 @@ dialog{border-radius:20px;background:var(--hana-card)}
 .support-form button{padding:8px 12px}
 .support-zalo{margin:0 12px 12px;border-radius:10px;font-size:var(--fs-xs);background:#0068ff;color:#fff;border:0;padding:8px}
 .support-zalo.inline{margin:2px 0 0;padding:5px 10px}
+.content-to-studio{border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin:10px 0;background:var(--c-surface-2,transparent);display:grid;gap:8px}
+.content-to-studio .cts-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.content-to-studio .cts-row small{color:var(--muted);font-size:var(--fs-xs);flex:1}
+.content-to-studio label{display:flex;align-items:center;gap:8px;margin:0}

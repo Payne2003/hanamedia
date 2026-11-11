@@ -624,17 +624,26 @@ function splitSceneLines(text){
 let promptSources={},promptScenes={};
 try{promptSources=JSON.parse(localStorage.getItem('hana-prompt-sources')||'{}')||{};promptScenes=JSON.parse(localStorage.getItem('hana-prompt-scenes')||'{}')||{};}catch{}
 function rememberSources(pairs){promptSources={};promptScenes={};for(const [prompt,source,scene] of pairs){if(source)promptSources[prompt]=source;if(scene)promptScenes[prompt]=scene;}try{localStorage.setItem('hana-prompt-sources',JSON.stringify(promptSources));localStorage.setItem('hana-prompt-scenes',JSON.stringify(promptScenes));}catch{}}
-$('useEnglish').onclick=()=>{
+$('useEnglish').onclick=async()=>{
   const [textKey]=englishKey(content.englishEngine);
   const sources=content[textKey+'Sources']||splitSceneLines(content.englishInput);
   const lines=englishLines(),sceneIds=project&&project.scenes.length===lines.filter(l=>l.trim()).length?project.scenes.map(x=>x.id):[];
   let n=0;const pairs=lines.map((line,index)=>[line.trim(),sources[index]||'',line.trim()?sceneIds[n++]||'':'']).filter(([line])=>line);
   const prompts=pairs.map(([line])=>line);if(!prompts.length)return toast('Chưa có prompt tiếng Anh.',true);
-  if($('prompts').value.trim()&&!confirm('Thay nội dung đang có trong khung prompt bằng các prompt tiếng Anh?'))return;
+  if(prompts.length>200)return toast('Mỗi lần đưa tối đa 200 prompt; chia làm nhiều lần.',true);
+  const tooLong=prompts.findIndex(p=>p.length>20000);if(tooLong>=0)return toast(`Prompt số ${tooLong+1} dài quá 20.000 ký tự.`,true);
   rememberSources(pairs);
-  mode='text';$('separator').value='line';$('prompts').value=prompts.join('\n');renderMode();showView('studio');$('prompts').focus();
-  const linked=pairs.filter(([,source])=>source).length;
-  toast(`Đã đưa ${prompts.length} prompt tiếng Anh (${engineNames[content.englishEngine]}) vào Studio; ${linked} prompt kèm đủ Bối cảnh, Góc quay, Hành vi, Hành động (lấy từ khung chuẩn trong prompt, hoặc từ dòng cảnh tiếng Việt).`);
+  // Đưa thẳng từng prompt vào hàng đợi Studio (không qua khung nhập), kèm ảnh nhân vật đã chọn và độ phân giải.
+  // Thời lượng để trống: mỗi prompt đã ghi đúng số giây của cảnh (Generate a N-second…), không ép một số chung.
+  const options={...videoOptions(),duration:0,resolution:$('contentResolution').value,aspect:content.englishAspect||$('vAspect').value};
+  const cost=Number($('cost').value)||1,button=$('useEnglish');button.disabled=true;
+  try{
+    await api('/api/jobs',{prompts,cost,mode:'text',batch:crypto.randomUUID(),images:prompts.map(()=>[]),
+      sources:pairs.map(([,source])=>source),scene_ids:pairs.map(([,,scene])=>scene||null),options});
+    await refresh();showView('studio');
+    toast(`Đã thêm ${prompts.length} prompt vào hàng đợi Studio${fixedCharacters.length?` · kèm ${fixedCharacters.length} ảnh nhân vật`:''} · ${options.resolution||'độ phân giải của Muse'}. Bấm ▶ Chạy để tạo video.`);
+  }catch(error){toast(error.message,true);}
+  finally{button.disabled=false;}
 };
 $('copyEnglish').onclick=()=>navigator.clipboard.writeText($('englishOutput').value).then(()=>toast('Đã chép prompt tiếng Anh.')).catch(()=>toast('Không chép được. Chọn và sao chép trong ô kết quả.',true));
 $('downloadEnglish').onclick=()=>{const blob=new Blob([$('englishOutput').value],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`prompt-tieng-anh-${content.englishEngine}.txt`;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};
@@ -1189,7 +1198,12 @@ function loadVideoSettings(){
     fixedCharacters=Array.isArray(v.fixed)?v.fixed.filter(c=>/^[a-f0-9]{32}$/.test(c.token||'')).slice(0,10):[];
   }catch{}
 }
+function renderContentCharacters(){
+  const box=$('contentCharacterChips');if(!box)return;
+  box.innerHTML=fixedCharacters.map((c,i)=>`<span class="image-chip" title="${esc(c.name)}"><img src="/api/library/image/${c.token}" alt=""><span>${esc(c.name)}</span><button type="button" data-remove-fixed="${i}" aria-label="Bỏ ${esc(c.name)}">×</button></span>`).join('')||'<small class="detail">Chưa chọn ảnh nhân vật (không bắt buộc).</small>';
+}
 function renderFixedCharacters(){
+  renderContentCharacters();
   $('vCharacterChips').innerHTML=fixedCharacters.map((c,i)=>`<span class="image-chip" title="${esc(c.name)}"><img src="/api/library/image/${c.token}" alt=""><span>${esc(c.name)}</span><button type="button" data-remove-fixed="${i}" aria-label="Bỏ ${esc(c.name)}">×</button></span>`).join('')||'<span class="detail">Chưa chọn — bấm “+ Nhân vật” để lấy ảnh từ Thư viện.</span>';
   $('vClearCharacters').hidden=!fixedCharacters.length;
 }
@@ -1216,8 +1230,10 @@ document.addEventListener('click',e=>{if(e.target.closest('#hideStitch')){stitch
 for(const id of ['vAspect','vDuration','vResolution','vStitch','vAccount'])$(id).addEventListener('change',saveVideoSettings);
 $('vStitch').addEventListener('change',()=>{if($('vStitch').checked&&stitchHidden){stitchHidden=false;try{localStorage.removeItem('hana-hide-stitch');}catch{}if(state)renderStitchPanel();}});
 $('vCharacters').onclick=()=>openPicker('characters');
+$('contentCharacters').onclick=()=>openPicker('characters');
 $('vClearCharacters').onclick=()=>{fixedCharacters=[];saveVideoSettings();renderFixedCharacters();};
-$('vCharacterChips').onclick=e=>{const b=e.target.closest('[data-remove-fixed]');if(!b)return;fixedCharacters.splice(Number(b.dataset.removeFixed),1);saveVideoSettings();renderFixedCharacters();};
+$('vCharacterChips').onclick=e=>{const b=e.target.closest('[data-remove-fixed]');if(!b)return;fixedCharacters.splice(Number(b.dataset.removeFixed),1);saveVideoSettings();renderFixedCharacters();}
+$('contentCharacterChips').onclick=$('vCharacterChips').onclick;;
 loadVideoSettings();renderFixedCharacters();if(state){renderNickOptions();renderStitchPanel();}
 
 // ===== Thanh hỗ trợ trên cùng (lời nhắn, SĐT, ảnh QR do người dùng tải lên; không có popup) =====
