@@ -2,8 +2,7 @@ import { initProduction, loadProduction } from '/production.js';
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const apiModels={},apiChoice={};  // Cài đặt → API key (Gemini, ChatGPT)
-const API_CARDS={gemini:{p:'geminiApi',state:'api',badge:'geminiBadge',label:'Gemini API',web:'Gemini trên Chrome',use:'Phân tích video'},
-                 chatgpt:{p:'chatgptApi',state:'chatgpt_api',badge:'chatgptBadge',label:'ChatGPT API',web:'ChatGPT trên Chrome',use:'Viết và kiểm duyệt prompt'}};
+const API_CARDS={gemini:{p:'geminiApi',state:'api',badge:'geminiBadge',label:'Gemini API',web:'Gemini trên Chrome',use:'Phân tích video'}};
 let state=null,key='',filter='all',busy=false,pendingBatch=null,toastTimer,visibleJobs=[],mode='text',libraryImages=[];
 const selectedJobs=new Set(),promptImages=new Map();
 let licenseData=null,licenseEditing=null,licensePlan='1y';

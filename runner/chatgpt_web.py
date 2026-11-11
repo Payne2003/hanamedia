@@ -6,6 +6,8 @@ Chỉ khác các đoạn JavaScript nhận diện trang ChatGPT bên dưới.
 
 Nếu ChatGPT hiện trang xác minh ("Verify you are human"), tool chỉ chờ người dùng tự hoàn tất trong cửa sổ đó.
 """
+import re
+
 from .gemini_web import GeminiWebRunner, GeminiWebSession
 
 CHATGPT_URL = "https://chatgpt.com/"
@@ -129,12 +131,52 @@ return '';
 """
 
 
+# Thông báo hết lượt của gói Plus (vd hết lượt Thinking trong tuần) trên chatgpt.com, tiếng Anh/Việt.
+LIMIT_NOTICE = re.compile(r"(?:reached|hit|used up)\s+(?:your|the)\s+(?:[\w.-]+\s+){0,4}(?:limit|cap)|usage (?:limit|cap)|"
+                          r"limit (?:for|on) (?:\w+[\s.-]*){0,3}thinking|đã (?:đạt|hết|dùng hết)\s+(?:\S+\s+){0,4}(?:giới hạn|lượt)|"
+                          r"hết lượt", re.IGNORECASE)
+JS_PAGE_TAIL = "return ((document.body && document.body.innerText) || '').slice(-4000);"
+
+
 class ChatGPTWebSession(GeminiWebSession):
     NAME = "ChatGPT"
     URL = CHATGPT_URL
     LOGIN_HINT = "Bấm “Đăng nhập ChatGPT” để mở Chrome thường, đăng nhập rồi đóng cửa sổ đó, sau đó bấm Chạy lại."
     JS_STATE, JS_FIND_INPUT, JS_SEND = JS_STATE, JS_FIND_INPUT, JS_SEND
     JS_OPEN_MODEL_MENU, JS_PICK_MODEL = JS_OPEN_MODEL_MENU, JS_PICK_MODEL
+    FALLBACK_MODEL = "Auto"
+
+    def limit_shown(self):
+        try:
+            return bool(LIMIT_NOTICE.search(self.driver.execute_script(JS_PAGE_TAIL) or ""))
+        except Exception:
+            return False
+
+    def choose_model(self, name):
+        """Chọn chế độ trên chatgpt.com (Thinking/Auto/Instant). Thinking đã hết lượt thì chọn Auto."""
+        self.wanted_model = name
+        picked = super().choose_model(name)
+        if name and name.lower() != self.FALLBACK_MODEL.lower() and self.limit_shown():
+            auto = super().choose_model(self.FALLBACK_MODEL)
+            return f"{auto or self.FALLBACK_MODEL} (hết lượt {name})"
+        return picked
+
+    def ask(self, text, status, stop, email="", timeout=1200, label="ChatGPT đang viết"):
+        """Hết lượt Thinking giữa chừng (ChatGPT báo giới hạn thay vì trả lời): chuyển sang Auto rồi gửi lại một lần
+        (tin nhắn bị chặn vì hết lượt chưa được xử lý nên không bị trùng)."""
+        wanted = getattr(self, "wanted_model", "") or ""
+        try:
+            answer = super().ask(text, status, stop, email, timeout, label)
+        except Exception:
+            if not (wanted.lower() != self.FALLBACK_MODEL.lower() and self.limit_shown()):
+                raise
+            answer = None
+        if answer is not None and not (len(answer) < 800 and LIMIT_NOTICE.search(answer)):
+            return answer
+        status(f"ChatGPT báo hết lượt {wanted or 'của chế độ đang chọn'} · chuyển sang {self.FALLBACK_MODEL} và gửi lại")
+        self.wanted_model = self.FALLBACK_MODEL
+        GeminiWebSession.choose_model(self, self.FALLBACK_MODEL)
+        return super().ask(text, status, stop, email, timeout, label)
 
 
 def chatgpt_runner(profile, session_factory=ChatGPTWebSession):
