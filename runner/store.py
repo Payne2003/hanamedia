@@ -23,6 +23,14 @@ def folder_name(value):
     return name
 
 
+def prompt_seconds(prompt):
+    """Số giây ghi ở đầu prompt ("Generate a 2-second …", "8 seconds") nếu nằm trong các thời lượng Muse nhận; không thì 0."""
+    from .video_tools import DURATIONS
+    match = re.search(r"\b(\d{1,2})[\s-]*(?:second|sec)s?\b", str(prompt or "")[:400], re.IGNORECASE)
+    value = int(match.group(1)) if match else 0
+    return value if value in DURATIONS else 0
+
+
 def video_options(options):
     """Kiểm tra thiết lập video: tỉ lệ khung, thời lượng (tối đa 10 giây), độ phân giải, tự ghép, ảnh nhân vật cố định,
     nick xử lý. Thiếu trường nào thì để trống (Muse tự quyết)."""
@@ -34,7 +42,7 @@ def video_options(options):
     if aspect and aspect not in ASPECTS:
         raise ValueError("Tỉ lệ khung không hợp lệ.")
     if duration and (type(duration) is not int or duration not in DURATIONS):
-        raise ValueError("Thời lượng mỗi cảnh phải là 4, 5, 6, 8 hoặc 10 giây (Muse tối đa 10 giây).")
+        raise ValueError("Thời lượng mỗi cảnh phải là 2, 3, 4, 5, 6, 8 hoặc 10 giây (Muse tối đa 10 giây).")
     if resolution and resolution not in RESOLUTIONS:
         raise ValueError("Độ phân giải không hợp lệ.")
     characters = options.get("characters") or []
@@ -460,6 +468,9 @@ class Store:
             if db.execute("SELECT count(*) FROM jobs").fetchone()[0] + len(prompts) > 10000:
                 raise ValueError("Đã đạt giới hạn 10.000 tác vụ trong dữ liệu này.")
             now = time.time()
+            # Thời lượng chung để trống: lấy số giây ghi trong chính prompt ("Generate a 2-second …") nếu Muse hỗ trợ,
+            # để mỗi cảnh theo góc quay giữ đúng số giây và Studio hiện đúng thời lượng.
+            durations = [options["duration"] or prompt_seconds(p) for p in prompts]
             # Ưu tiên trường có sẵn trong chính prompt (khung chuẩn); không có thì lấy từ dòng cảnh gốc.
             details = [self.prompt_details(p) or self.scene_details(sources[n] if n < len(sources) else "")
                        for n, p in enumerate(prompts)]
@@ -468,7 +479,7 @@ class Store:
                               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                            [(uuid.uuid4().hex, p.strip(), cost, now, now, batch, start + n, json.dumps(images[n]), mode,
                              json.dumps(details[n], ensure_ascii=False), scene_ids[n], options["aspect"],
-                             options["duration"], options["resolution"], account, int(bool(account)), options["folder"])
+                             durations[n], options["resolution"], account, int(bool(account)), options["folder"])
                             for n, p in enumerate(prompts)])
             db.execute("INSERT OR IGNORE INTO batch_options(batch,stitch,created) VALUES(?,?,?)",
                        (batch, int(options["stitch"]), now))
