@@ -12,7 +12,7 @@ from pathlib import Path
 
 ASPECTS = ("16:9", "9:16", "1:1", "4:3", "3:4")
 RESOLUTIONS = ("720p", "1080p", "4K")
-DURATIONS = (4, 5, 6, 8, 10)  # Muse: tối đa 10 giây mỗi cảnh
+DURATIONS = (2, 3, 4, 5, 6, 8, 10)  # Muse: tối đa 10 giây mỗi cảnh; 2–3 giây cho cảnh theo từng góc quay
 SHORT_SIDE = {"720p": 720, "1080p": 1080, "4K": 2160}
 LABELS = {"720p": "720p (HD)", "1080p": "1080p (Full HD)", "4K": "4K (Ultra HD, 3840×2160)"}
 

@@ -122,3 +122,19 @@ class ActionSceneTests(unittest.TestCase):
         from runner import content
         self.assertIn("TỐC ĐỘ và CƯỜNG ĐỘ", content.SCENE_RULES)
         self.assertIn("FULL-SPEED", content.detailed_request("Bối cảnh 1: sói đuổi nai", 1, 1, 10))
+
+
+class ShortSceneDurationTests(unittest.TestCase):
+    def test_prompt_seconds_set_job_duration(self):
+        from runner.store import prompt_seconds
+        self.assertEqual(prompt_seconds("Generate a 2-second ultra-realistic video"), 2)
+        self.assertEqual(prompt_seconds("Generate a 3-second video"), 3)
+        self.assertEqual(prompt_seconds("Generate a 7-second video"), 0)  # Muse không có 7 giây: để Muse tự chọn
+        self.assertEqual(prompt_seconds("A tiger walks"), 0)
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(Path(folder) / "t.db")
+            batch = uuid.uuid4().hex
+            store.enqueue(["Generate a 2-second video of a fox.", "Generate a 10-second video of a fox."], 1, batch)
+            self.assertEqual(sorted(j["duration"] for j in store.snapshot()["jobs"]), [2, 10])
+            store.enqueue(["Generate a 2-second video of a deer."], 1, uuid.uuid4().hex, options={"duration": 5})
+            self.assertIn(5, [j["duration"] for j in store.snapshot()["jobs"]])
