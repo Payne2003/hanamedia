@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 from runner import content
 from runner.gemini_web import GeminiWebRunner
 from runner import gemini_api, openai_api
+from runner.support_chat import SupportChat
 from runner.chatgpt_web import chatgpt_login_url, chatgpt_runner
 from runner.engine import FLOW_URL
 from runner.flow import default_chrome_profile
@@ -128,6 +129,8 @@ class AppServer(ThreadingHTTPServer):
         from runner.ai_api import KeyVault
         self.key_vault = KeyVault(self.data_dir)
         self.gemini_web.api_session = lambda: self.api_session("gemini")
+        # Chatbot hỗ trợ khách: FAQ trước, rồi Gemini (khóa của chủ tool, giới hạn lượt/ngày), hết lượt → Zalo.
+        self.support = SupportChat(store, allowed=lambda: self.license.allows("create_jobs"))
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
         self.chatgpt_web.api_session = lambda: self.api_session("chatgpt")
         self.claude_web = claude_runner(self.data_dir / "profiles" / "claude-web")
@@ -502,6 +505,7 @@ class Handler(BaseHTTPRequestHandler):
             data["shared_account"] = {"enabled": shared.enabled, "profile": str(shared.dir), "login_open": shared.login_open(),
                                       "profile_used": (shared.dir / "Local State").exists()}
             data["content"] = {"version": content.VERSION,
+                               "support": self.server.support.status(),
                                "api": self.server.api_public("gemini"),
                                "chatgpt_api": self.server.api_public("chatgpt"),
                                "web": dict(self.server.gemini_web.snapshot(),
@@ -1136,6 +1140,12 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.gemini_web.open_login(store.setting("gemini_web_email") or "")
             elif path == "/api/content/web-take":
                 (self.server.chatgpt_web if body.get("engine") == "chatgpt" else self.server.gemini_web).take_now()
+            elif path == "/api/support/chat":
+                history = body.get("history") if isinstance(body.get("history"), list) else []
+                return self.reply(self.server.support.ask(body.get("message"), history))
+            elif path == "/api/support/zalo":
+                webbrowser.open(self.server.support.status()["zalo_link"])  # địa chỉ Zalo cố định của chủ tool
+                return self.reply({"ok": True})
             elif re.fullmatch(r"/api/(gemini|chatgpt)-api/(settings|key-page|models|test)", path):
                 engine, action = re.fullmatch(r"/api/(gemini|chatgpt)-api/(\w+(?:-\w+)?)", path).groups()
                 module, prefix, mode_key, _ = self.server.API_ENGINES[engine]

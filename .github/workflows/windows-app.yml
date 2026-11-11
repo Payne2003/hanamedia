@@ -36,6 +36,10 @@ jobs:
           [IO.File]::WriteAllText((Resolve-Path $file), $text, (New-Object Text.UTF8Encoding $false))
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Phiên bản: $v"
+      - name: Khóa Gemini cho chatbot hỗ trợ (GitHub Secret)
+        env:
+          SUPPORT_KEY: ${{ secrets.SUPPORT_GEMINI_API_KEY }}
+        run: python packaging/write_support_key.py
       - name: Đóng gói app
         run: python -m PyInstaller --noconfirm --clean packaging/HanaMedia.spec
       - name: Kiểm tra thư viện trong bản đóng gói (Selenium, Chrome, cửa sổ app)
@@ -117,6 +121,10 @@ jobs:
           echo "Phiên bản: $v"
       - name: Biểu tượng app (.icns)
         run: python -c "from PIL import Image; Image.open('web/logo.png').convert('RGBA').resize((1024, 1024), Image.LANCZOS).save('packaging/hanamedia.icns')"
+      - name: Khóa Gemini cho chatbot hỗ trợ (GitHub Secret)
+        env:
+          SUPPORT_KEY: ${{ secrets.SUPPORT_GEMINI_API_KEY }}
+        run: python packaging/write_support_key.py
       - name: Đóng gói app
         run: python -m PyInstaller --noconfirm --clean packaging/HanaMedia.spec
       - name: Kiểm tra thư viện trong bản đóng gói (Selenium, Chrome, cửa sổ app)
