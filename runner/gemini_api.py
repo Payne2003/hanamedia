@@ -118,6 +118,22 @@ def list_models(key):
     return models
 
 
+FRAME_BUDGET = 600  # số khung hình Gemini xem mỗi video (bằng 1 khung/giây của video 10 phút)
+MAX_FPS = 5
+
+
+def video_fps(file):
+    """Số khung hình/giây cho Gemini xem: video càng ngắn càng xem dày (1–5), để không lỡ động tác nhanh."""
+    try:
+        from . import video_tools as video
+        seconds = float(video.probe(file)["duration"] or 0)
+    except Exception:
+        seconds = 0
+    if seconds <= 0:
+        return 1
+    return float(max(1, min(MAX_FPS, int(FRAME_BUDGET / seconds))))
+
+
 class GeminiAPISession:
     """Phiên "giả trình duyệt" chạy bằng Gemini API (cùng giao diện với GeminiWebSession)."""
     api = True
@@ -298,9 +314,15 @@ class GeminiAPISession:
             info = http("GET", f"{BASE}/v1beta/{name}", self.key, timeout=30)
         if info.get("state") == "FAILED":
             raise GeminiAPIError(f"Google không xử lý được tệp {file.name}.")
+        part = {"fileData": {"fileUri": uri, "mimeType": info.get("mimeType") or mime}}
         if is_video:
-            status("Đã tải video gốc lên Gemini API")
-        return {"fileData": {"fileUri": uri, "mimeType": info.get("mimeType") or mime}}
+            # Gemini API mặc định chỉ xem 1 khung hình/giây: cảnh rượt đuổi, đánh nhau, chạy hết tốc lực bị "nhảy cóc"
+            # và dễ bị bỏ sót. Video ngắn thì xem dày hơn (tối đa 5 khung/giây) trong cùng lượng token như video 10 phút.
+            fps = video_fps(file)
+            if fps > 1:
+                part["videoMetadata"] = {"fps": fps}
+            status(f"Đã tải video gốc lên Gemini API · xem {fps:g} khung hình/giây")
+        return part
 
     def cleanup(self):
         """Xóa tệp đã tải lên (Google tự xóa sau 48 giờ; xóa sớm cho gọn). Lỗi thì bỏ qua."""

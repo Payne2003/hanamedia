@@ -32,6 +32,11 @@ SCENE_RULES = f"""Quy tắc cho từng cảnh:
   mỗi góc ghi cỡ cảnh (toàn/trung/cận/đặc tả), góc máy (ngang tầm/thấp/cao/trên cao), chuyển động máy (tĩnh/lia/bám theo/đẩy/zoom) và chủ thể trong khung.
 - Trường "behavior": hành vi, biểu cảm, tư thế của nhân vật.
 - Trường "action": nội dung hành động diễn ra trong cảnh; ghi lời thoại trong ngoặc kép nếu có.
+- Luôn ghi TỐC ĐỘ và CƯỜNG ĐỘ của hành động đúng như video: đi chậm / đi / chạy nước kiệu / chạy nhanh / chạy hết tốc lực
+  (phi nước đại, lao vút); ai đuổi ai, khoảng cách giữa hai bên đang rút ngắn hay giãn ra, hướng chạy trên màn hình.
+- Cảnh rượt đuổi, săn mồi, đánh nhau, húc nhau: mô tả đúng mức kịch tính của video, KHÔNG làm dịu thành đi bộ hay đứng
+  nhìn nhau. Đánh nhau ghi từng đòn liên tiếp (vồ, cắn, cào, húc, quật ngã, vật lộn, lăn tròn), ai thắng thế, bụi/tuyết/nước
+  bắn lên. Đoạn cắt cảnh nhanh hay hình bị nhòe vì chuyển động mạnh vẫn phải viết thành cảnh, không bỏ qua.
 - Không đưa tên người thật/người nổi tiếng, logo, thương hiệu, chữ trên màn hình; mô tả bằng đặc điểm chung.
 - Không viết trường nào trống. Không xuống dòng trong một trường."""
 
@@ -874,6 +879,16 @@ def is_detailed(prompt):
     return bool(DETAILED_OPENING.search(text)) and bool(re.search(r"\bMAIN ACTION\s*:", text))
 
 
+ACTION_INTENSITY = (
+    "Action intensity: keep EXACTLY the speed and violence of the scene description. Chases, hunts, escapes and fights "
+    "are FULL-SPEED: the animals sprint flat-out at their maximum natural speed (full gallop, explosive acceleration, "
+    "legs fully extended, dust/snow/water kicked up), the chaser closes the gap behind the fleeing animal in the same "
+    "screen direction; fights are continuous, fast and powerful (lunges, bites, claws, head-butts, takedowns, wrestling, "
+    "rolling) with no pauses. Never soften them into walking, trotting, posing, staring or slow movement. The CAMERA "
+    "keeps up: fast tracking, whip pans, low ground-level follow shots that match the speed. MOTION must state the "
+    "real top speed of the action (e.g. \"full sprint at maximum speed\").")
+
+
 def detailed_request(line, number, total, seconds, spans=None, previous="", aspect="16:9", style=""):
     """Yêu cầu viết prompt chi tiết cho MỘT cảnh (gửi lần lượt từng cảnh)."""
     from .prompt_example import DETAILED_EXAMPLE
@@ -910,6 +925,7 @@ def detailed_request(line, number, total, seconds, spans=None, previous="", aspe
         f"{ASPECTS.get(aspect, ASPECTS['16:9'])}" + (f", {style}" if style else "") + ".\n"
         "8. STRICT NEGATIVE CONSTRAINTS: \"No …\" lines (no slow motion, no music, no text, no extra animals, "
         "no environment change, plus scene-specific ones).\n\n"
+        + ACTION_INTENSITY + "\n\n"
         "Rules: use only facts from the scene description (and the previous prompt for continuity); never invent other "
         "animals, places or events; keep predator/prey roles and directions. Write ONLY the prompt — no title, no "
         "numbering, no markdown, no comments — starting with \"Generate\".\n\n"
@@ -985,6 +1001,7 @@ def detailed_batch_request(items, total, previous="", aspect="16:9", style=""):
         f"{ASPECTS.get(aspect, ASPECTS['16:9'])}" + (f", {style}" if style else "") + ".\n"
         "8. STRICT NEGATIVE CONSTRAINTS: \"No …\" lines (no slow motion, no music, no text, no extra animals, no environment "
         "change, plus scene-specific ones).\n\n"
+        + ACTION_INTENSITY + "\n\n"
         "Rules: use only facts from the scene descriptions; never invent other animals, places or events; keep predator/prey "
         "roles and directions. Start each prompt with a line \"SCENE N:\" (its number), then the prompt starting with "
         f"\"Generate\". No markdown, no comments. After the last prompt write exactly: {END_EN}\n\n"

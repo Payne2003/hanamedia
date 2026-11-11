@@ -108,3 +108,17 @@ class AngleDefaultTests(unittest.TestCase):
         sent.clear()
         gemini_web.english_detailed(Session(), ["Bối cảnh 1: hổ đi"], lambda _: None, threading.Event(), seconds=10)
         self.assertIn("1–3 consecutive camera segments", sent[0])
+
+
+class ActionSceneTests(unittest.TestCase):
+    def test_short_videos_are_watched_at_more_frames_per_second(self):
+        from unittest import mock
+        from runner import gemini_api
+        for seconds, fps in ((60, 5), (240, 2), (600, 1), (1800, 1), (0, 1)):
+            with mock.patch("runner.video_tools.probe", return_value={"duration": seconds}):
+                self.assertEqual(gemini_api.video_fps(Path("v.mp4")), fps)
+
+    def test_prompts_keep_full_speed_chases_and_fights(self):
+        from runner import content
+        self.assertIn("TỐC ĐỘ và CƯỜNG ĐỘ", content.SCENE_RULES)
+        self.assertIn("FULL-SPEED", content.detailed_request("Bối cảnh 1: sói đuổi nai", 1, 1, 10))
