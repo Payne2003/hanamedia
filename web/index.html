@@ -242,6 +242,9 @@
         </div>
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">AI</span><div><h3>ChatGPT</h3><small>Tìm nhân vật và viết prompt tiếng Anh</small></div><span id="chatgptBadge" class="status-chip">Chưa kiểm tra</span></div>
           <label hidden>Model ChatGPT <small>(để trống: model đang chọn)</small><input id="chatgptModel" list="chatgptModels" maxlength="40" placeholder="Ví dụ: GPT-5"><datalist id="chatgptModels"><option value="Auto"><option value="Instant"><option value="Thinking"></datalist></label>
+          <div class="gemini-mode" role="radiogroup" aria-label="Viết prompt bằng"><label><input type="radio" name="promptProvider" value="gemini"><span><b>Gemini API · miễn phí</b><small>Dùng chung khóa Gemini ở thẻ Gemini Pro</small></span></label><label><input type="radio" name="promptProvider" value="openai"><span><b>ChatGPT (OpenAI)</b><small>API trả phí hoặc ChatGPT trên Chrome</small></span></label></div>
+          <p id="promptGeminiNote" class="detail" hidden><b>Viết prompt và kiểm duyệt bằng Gemini API</b>, dùng model, cấp độ tư duy và giới hạn yêu cầu/phút ở thẻ <b>Gemini Pro</b>. Prompt được viết và kiểm duyệt lần lượt từng nhóm 10 cảnh. Gợi ý model: <code>gemini-3-flash-preview</code> hoặc <code>gemini-flash-latest</code>.</p>
+          <div id="openaiBox">
           <div class="gemini-mode" role="radiogroup" aria-label="Cách dùng ChatGPT"><label><input type="radio" name="chatgptApiMode" value="api"><span><b>ChatGPT API key</b><small>Khuyên dùng · ổn định, không cần Chrome</small></span></label><label><input type="radio" name="chatgptApiMode" value="web"><span><b>ChatGPT trên Chrome</b><small>Điều khiển trang web chatgpt.com</small></span></label></div>
           <div id="chatgptApiBox" class="gemini-api-box">
             <div class="api-key-row"><label>API key ChatGPT (OpenAI)<input id="chatgptApiKey" type="password" autocomplete="off" spellcheck="false" maxlength="300" placeholder="sk-… lấy ở OpenAI Platform"></label><button id="chatgptApiKeyPage" type="button">🔑 Lấy API key</button></div>
@@ -254,6 +257,7 @@
           <div id="chatgptApiWebBox">
           <button id="loginChatgpt" type="button" class="full">Đăng nhập ChatGPT (mở Chrome thường)</button>
           <p class="detail">Lần đầu: bấm Đăng nhập ChatGPT, đăng nhập tài khoản ChatGPT của bạn trong Chrome vừa mở, thấy ô nhắn tin thì đóng hẳn cửa sổ đó. ChatGPT chạy trong Chrome riêng, tách khỏi Gemini.</p>
+          </div>
           </div>
         </div>
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">M</span><div><h3>Tài khoản Muse</h3><small>Tạo video hàng loạt</small></div><span id="museBadge" class="status-chip">0 tài khoản</span></div>

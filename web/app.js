@@ -1436,7 +1436,21 @@ $('issuerInitButton').onclick=()=>{if(!confirm('Khởi tạo khóa Super Admin t
   action(async()=>{await api('/api/license/init-signing',{confirm:true});await loadLicense();toast('Đã tạo khóa Super Admin. Sao chép khóa công khai để gắn vào app.');});};
 
 // ---------- API key: Gemini (phân tích video) và ChatGPT (viết + kiểm duyệt prompt) ----------
-function renderApiCards(force){for(const engine of Object.keys(API_CARDS))renderApiCard(engine,force);}
+function renderApiCards(force){for(const engine of Object.keys(API_CARDS))renderApiCard(engine,force);renderPromptProvider();}
+// Viết + kiểm duyệt prompt bằng Gemini API (miễn phí) hay ChatGPT (OpenAI API / Chrome).
+function renderPromptProvider(){
+  const info=state?.content?.chatgpt_api;if(!info)return;
+  const gemini=info.provider==='gemini';
+  for(const radio of document.querySelectorAll('input[name=promptProvider]'))radio.checked=radio.value===(gemini?'gemini':'openai');
+  $('openaiBox').hidden=gemini;$('promptGeminiNote').hidden=!gemini;
+  if(gemini){const g=state.content.api||{};$('chatgptBadge').textContent=g.configured?`✓ Viết prompt bằng Gemini API · ${g.model}`:'Chưa có API key Gemini';$('chatgptBadge').className='status-chip '+(g.configured?'approved':'error');}
+}
+document.querySelectorAll('input[name=promptProvider]').forEach(radio=>radio.onchange=async()=>{
+  if(radio.value==='gemini'&&!state?.content?.api?.configured){renderPromptProvider();return toast('Nhập API key Gemini ở thẻ Gemini Pro trước.',true);}
+  try{state.content.chatgpt_api=await api('/api/chatgpt-api/settings',{provider:radio.value});renderApiCards(true);
+    toast(radio.value==='gemini'?'Viết và kiểm duyệt prompt sẽ dùng Gemini API (miễn phí).':'Viết và kiểm duyệt prompt sẽ dùng ChatGPT.');}
+  catch(error){toast(error.message,true);}
+});
 function renderApiCard(engine,force){
   const c=API_CARDS[engine],p=c.p,info=state?.content?.[c.state];if(!info)return;
   // Chưa có khóa: hiện sẵn ô nhập API key (cách khuyên dùng); chọn tay thì giữ lựa chọn đó.

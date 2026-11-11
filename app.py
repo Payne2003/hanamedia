@@ -71,7 +71,9 @@ class AppServer(ThreadingHTTPServer):
                 "thinking": self.store.setting(prefix + "_thinking") or "",
                 "rpm": self.api_rpm(engine),
                 "mode": "api" if key and self.store.setting(mode_key, "api") == "api" else "web",
-                "key_page": module.KEY_PAGE}
+                "key_page": module.KEY_PAGE,
+                # ChatGPT: viết/kiểm duyệt prompt bằng OpenAI (trả phí) hay bằng khóa Gemini (miễn phí)
+                "provider": (self.store.setting("chatgpt_provider") or "openai") if engine == "chatgpt" else "gemini"}
 
     # Mặc định yêu cầu/phút: khóa Gemini miễn phí chỉ cho vài yêu cầu mỗi phút (Pro ít nhất); OpenAI cao hơn nhiều.
     DEFAULT_RPM = {"gemini": 5, "chatgpt": 30}
@@ -87,12 +89,25 @@ class AppServer(ThreadingHTTPServer):
     def api_session(self, engine):
         """Phiên API cho yêu cầu kế tiếp, hoặc None nếu đang dùng trang web trên Chrome."""
         info = self.api_public(engine)
+        if engine == "chatgpt" and info["provider"] == "gemini":
+            return self.gemini_writer()  # viết prompt bằng khóa Gemini miễn phí
         if info["mode"] != "api":
             return None
         module = self.API_ENGINES[engine][0]
         key, _ = self.key_vault.credential(engine)
         session = module.GeminiAPISession if engine == "gemini" else module.OpenAIAPISession
-        return session(key, info["model"], info["thinking"], rpm=info["rpm"])
+        session = session(key, info["model"], info["thinking"], rpm=info["rpm"])
+        if engine == "chatgpt" and self.api_public("gemini")["configured"]:
+            session.fallback = self.gemini_writer  # OpenAI hết tiền/hạn mức: tự chuyển sang Gemini chạy tiếp
+        return session
+
+    def gemini_writer(self):
+        """Phiên Gemini API dùng cho bước viết/kiểm duyệt prompt (model, cấp độ tư duy, giới hạn/phút của thẻ Gemini)."""
+        info = self.api_public("gemini")
+        key, _ = self.key_vault.credential("gemini")
+        if not key:
+            raise ValueError("Chọn viết prompt bằng Gemini nhưng chưa có API key Gemini. Nhập khóa ở Cài đặt → Gemini Pro.")
+        return gemini_api.GeminiAPISession(key, info["model"], info["thinking"], rpm=info["rpm"])
 
     def __init__(self, port, store, engine):
         super().__init__(("127.0.0.1", port), Handler)
@@ -1155,6 +1170,8 @@ class Handler(BaseHTTPRequestHandler):
                     store.save_setting(prefix + "_thinking", level if level in ("low", "medium", "high") else "")
                 if body.get("mode") in ("api", "web"):
                     store.save_setting(mode_key, body["mode"])
+                if engine == "chatgpt" and body.get("provider") in ("openai", "gemini"):
+                    store.save_setting("chatgpt_provider", body["provider"])
                 if "rpm" in body:
                     rpm = body.get("rpm")
                     if type(rpm) is not int or not 0 <= rpm <= 1000:
