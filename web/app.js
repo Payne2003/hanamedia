@@ -639,11 +639,13 @@ function queueEnglishGroup(engine,lines,upto,final){
     if(studioRun!==run)return;
     const sources=splitSceneLines(content.englishInput),from=run.sent,picked=[];
     const sceneIds=project&&project.scenes.length===sources.length?project.scenes.map(x=>x.id):[];
-    for(let i=from;i<upto;i++){const line=String(lines[i]||'').trim();if(line&&line.length<=20000)picked.push([i,line,sources[i]||'',sceneIds[i]||null]);}
+    const tooLong=[];
+    for(let i=from;i<upto;i++){const line=String(lines[i]||'').trim();if(line.length>20000)tooLong.push(i+1);else if(line)picked.push([i,line,sources[i]||'',sceneIds[i]||null]);}
+    if(tooLong.length)toast(`Prompt ${tooLong.join(', ')} dài quá 20.000 ký tự nên chưa đưa vào Studio. Rút gọn trong ô Đầu ra rồi bấm “→ Đưa vào Studio”.`,true);
     if(!picked.length&&!(final&&run.added))return;
     const group=picked.length?picked:[[run.lastIndex,run.prompts[run.lastIndex],run.lastSource||'',run.lastScene||null]];
     const start=picked.length?run.next:run.ordinals[run.lastIndex];
-    const options={...videoOptions(),duration:0,resolution:$('contentResolution').value,aspect:content.englishAspect||$('vAspect').value};
+    const options={...videoOptions(),duration:0,aspect:content.englishAspect||$('vAspect').value};
     try{
       await api('/api/jobs',{prompts:group.map(g=>g[1]),cost:Number($('cost').value)||1,mode:'text',batch:run.batch,append:start,more:!final,
         images:group.map(()=>[]),sources:group.map(g=>g[2]),scene_ids:group.map(g=>g[3]),options});
@@ -685,7 +687,7 @@ async function sendEnglishToStudio(auto){
   rememberSources(pairs);
   // Đưa thẳng từng prompt vào hàng đợi Studio (không qua khung nhập), kèm ảnh nhân vật đã chọn và độ phân giải.
   // Thời lượng để trống: mỗi prompt đã ghi đúng số giây của cảnh (Generate a N-second…), không ép một số chung.
-  const options={...videoOptions(),duration:0,resolution:$('contentResolution').value,aspect:content.englishAspect||$('vAspect').value};
+  const options={...videoOptions(),duration:0,aspect:content.englishAspect||$('vAspect').value};
   const cost=Number($('cost').value)||1,button=$('useEnglish');button.disabled=true;
   try{
     await api('/api/jobs',{prompts,cost,mode:'text',batch:crypto.randomUUID(),images:prompts.map(()=>[]),
@@ -1281,10 +1283,8 @@ document.addEventListener('click',e=>{if(e.target.closest('#hideStitch')){stitch
 for(const id of ['vAspect','vDuration','vResolution','vStitch','vAccount'])$(id).addEventListener('change',saveVideoSettings);
 $('vStitch').addEventListener('change',()=>{if($('vStitch').checked&&stitchHidden){stitchHidden=false;try{localStorage.removeItem('hana-hide-stitch');}catch{}if(state)renderStitchPanel();}});
 $('vCharacters').onclick=()=>openPicker('characters');
-$('contentCharacters').onclick=()=>openPicker('characters');
 $('vClearCharacters').onclick=()=>{fixedCharacters=[];saveVideoSettings();renderFixedCharacters();};
 $('vCharacterChips').onclick=e=>{const b=e.target.closest('[data-remove-fixed]');if(!b)return;fixedCharacters.splice(Number(b.dataset.removeFixed),1);saveVideoSettings();renderFixedCharacters();}
-$('contentCharacterChips').onclick=$('vCharacterChips').onclick;;
 loadVideoSettings();renderFixedCharacters();if(state){renderNickOptions();renderStitchPanel();}
 
 // ===== Thanh hỗ trợ trên cùng (lời nhắn, SĐT, ảnh QR do người dùng tải lên; không có popup) =====
