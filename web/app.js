@@ -273,7 +273,7 @@ function renderScenes(){
 }
 const CONTENT_VERSION='content-22';
 const fmtClock=s=>{s=Math.max(0,Number(s)||0);return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(Math.floor(s%60)).padStart(2,'0')}`;};
-function sceneTime(index){const w=content.windows?.[index];if(!w)return '';const angles=(w.angles||[]).map(([a,b])=>`${a}–${b}s`).join(' · ');return `<span class="scene-time" title="Góc máy FFmpeg đo được: ${esc(angles)}">${fmtClock(w.start)}–${fmtClock(w.end)} · ${(w.angles||[]).length} góc máy</span>`;}
+function sceneTime(index){const w=content.windows?.[index];if(!w)return '';const angles=(w.angles||[]).map(([a,b])=>`${a}–${b}s`).join(' · ');return `<span class="scene-time" title="Góc máy FFmpeg đo được: ${esc(angles)}">${fmtClock(w.start)}–${fmtClock(w.end)} · ${w.shot?`${(w.end-w.start).toFixed(1)} giây · 1 góc máy`:`${(w.angles||[]).length} góc máy`}</span>`;}
 function saveBlob(blob,name){const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);}
 $('downloadContentJson').onclick=()=>saveBlob(new Blob([JSON.stringify({original_script:content.script,scenes:content.scenes.map((s,i)=>({scene:i+1,start:content.windows?.[i]?.start??null,end:content.windows?.[i]?.end??null,measured_angles:content.windows?.[i]?.angles??[],...s})),issues:content.issues},null,2)],{type:'application/json'}),'kich-ban.json');
 $('downloadContentXlsx').onclick=async()=>{try{const r=await fetch('/api/content/export-xlsx',{method:'POST',headers:{'Content-Type':'application/json','X-Runner-Key':key},body:JSON.stringify({scenes:content.scenes,windows:content.windows,script:content.script,subjects:content.scenes.map(s=>s.subjects||'')})});if(!r.ok)throw Error((await r.json()).error||'Không xuất được Excel.');saveBlob(await r.blob(),'kich-ban.xlsx');}catch(error){toast(error.message,true);}};
@@ -335,7 +335,7 @@ async function runAuto(kind,silent=false){
   if(!silent&&kind!=='review'&&content.scenes.length&&!confirm('Chạy lại sẽ thay thế danh sách cảnh hiện tại. Tiếp tục?'))return false;
   try{
     await saveAutoSettings();
-    const {id}=await api('/api/content/web-run',{kind,brief:content.brief,video_url:content.video,video_file:content.videoFile||undefined,language:content.language,scenes:kind==='review'?content.scenes:undefined});
+    const {id}=await api('/api/content/web-run',{kind,brief:content.brief,video_url:content.video,video_file:content.videoFile||undefined,language:content.language,split:$('sceneSplit').value,scenes:kind==='review'?content.scenes:undefined});
     autoJob={id,kind};lastJobError='';renderAuto();refresh();return true;
   }catch(error){toast(error.message,true);return false;}
 }
@@ -478,6 +478,12 @@ function saveReviewRules(){clearTimeout(reviewTimer);reviewTimer=setTimeout(()=>
 $('reviewRules').oninput=saveReviewRules;$('reviewLock').oninput=saveReviewRules;
 $('resetReview').onclick=()=>{if(!confirm('Khôi phục bộ quy tắc và khóa mặc định?'))return;$('reviewRules').value='';$('reviewLock').value='';api('/api/content/review-rules',{rules:'',lock:''}).then(async()=>{reviewLoaded=false;await refresh();loadReviewRules();toast('Đã khôi phục mặc định.');}).catch(error=>toast(error.message,true));};
 let reviewOne=null;  // số dòng đang tạo lại riêng (null = kiểm duyệt cả danh sách)
+// Chia cảnh theo góc quay: mỗi prompt có thời lượng riêng (đúng số giây của góc máy) để kiểm duyệt không sửa sai DURATION.
+function reviewDurations(line){
+  const w=content.windows||[],count=$('englishOutput').value.split('\n').filter(l=>l.trim()).length;
+  if(!w.length||!w.every(x=>x.shot)||w.length!==count)return undefined;
+  const all=w.map(x=>Math.max(1,Math.round(x.end-x.start)));return line===null?all:[all[line-1]];
+}
 async function startReview(line=null){
   const engine=content.englishEngine;
   if(engine==='gemini'?autoJob:chatJob)return false;
@@ -485,7 +491,7 @@ async function startReview(line=null){
   if(!text){toast('Chưa có prompt tiếng Anh để kiểm duyệt.',true);return false;}
   reviewOne=line;
   try{
-    const {id,total}=await api('/api/content/review-prompts',{engine,text,rules:$('reviewRules').value,lock:$('reviewLock').value,seconds:content.englishSeconds});
+    const {id,total}=await api('/api/content/review-prompts',{engine,text,rules:$('reviewRules').value,lock:$('reviewLock').value,seconds:content.englishSeconds,durations:reviewDurations(line)});
     lastJobError='';
     if(engine==='gemini'){autoJob={id,kind:'promptreview'};renderAuto();}else{chatJob={id,kind:'promptreview'};renderEnglishRun();}
     $('reviewStatus').textContent=`${engineNames[engine]} đang kiểm duyệt ${total} prompt…`;renderReviewList();refresh();return true;

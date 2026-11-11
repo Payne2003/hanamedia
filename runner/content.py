@@ -159,6 +159,46 @@ def scene_windows(shots, duration, seconds=DEFAULT_SECONDS):
     return windows
 
 
+MIN_SHOT_SCENE = 1.0  # góc máy ngắn hơn (nháy, cắt rất nhanh) gộp vào cảnh trước
+MAX_SHOT_SCENE = 10.0  # một góc máy dài hơn một clip Muse thì chia đều thành nhiều cảnh
+
+
+def shot_windows(shots, duration, max_len=MAX_SHOT_SCENE, min_len=MIN_SHOT_SCENE):
+    """Chia cảnh THEO GÓC QUAY: mỗi lần video gốc đổi góc máy (điểm cắt FFmpeg đo được) là một cảnh, dài đúng bằng góc
+    máy đó (vd 3 giây đổi góc → cảnh 3 giây, một góc máy). Góc quá ngắn gộp vào cảnh trước; góc dài hơn max_len chia đều."""
+    import math
+    duration = float(duration or (shots[-1]["end"] if shots else 0))
+    if duration <= 0:
+        return []
+    bounds = sorted({0.0, duration} | {round(float(s["start"]), 2) for s in shots or [] if 0 < float(s["start"]) < duration})
+    pieces = []
+    for start, end in zip(bounds, bounds[1:]):
+        if pieces and end - start < min_len:
+            pieces[-1][1] = end  # góc máy rất ngắn: gộp vào cảnh trước
+        elif not pieces and end - start < min_len and len(bounds) > 2:
+            pieces.append([start, end])
+        else:
+            pieces.append([start, end])
+    if len(pieces) > 1 and pieces[0][1] - pieces[0][0] < min_len:
+        pieces[1][0] = pieces[0][0]
+        pieces.pop(0)
+    windows = []
+    for start, end in pieces:
+        parts = max(1, math.ceil((end - start) / max_len - 1e-9))
+        for index in range(parts):
+            a = start + (end - start) * index / parts
+            b = start + (end - start) * (index + 1) / parts
+            windows.append({"start": round(a, 2), "end": round(b, 2), "angles": [(0.0, round(b - a, 1))], "shot": True})
+            if len(windows) >= MAX_SCENES:
+                return windows
+    return windows
+
+
+def scene_seconds(window):
+    """Thời lượng (giây, số nguyên ≥ 1) ghi vào prompt của một cảnh."""
+    return max(1, int(round(float(window["end"]) - float(window["start"]))))
+
+
 def clean_windows(windows):
     """Cảnh 10 giây gửi từ giao diện (đã đo bằng FFmpeg): chỉ giữ số liệu hợp lệ."""
     result = []
@@ -168,13 +208,15 @@ def clean_windows(windows):
             angles = [(float(a), float(b)) for a, b in (window.get("angles") or [])][:20]
         except (KeyError, TypeError, ValueError):
             return None
-        result.append({"start": start, "end": end, "angles": angles})
+        result.append({"start": start, "end": end, "angles": angles, "shot": window.get("shot") is True})
         if len(result) >= MAX_SCENES:
             break
     return result or None
 
 
 def needed_marks(window):
+    if window.get("shot"):
+        return 0  # chia theo góc quay: mỗi cảnh đúng một góc máy, không cần mốc giây
     length = window["end"] - window["start"]
     return max(len(window["angles"]), 3 if length >= 6 else 2 if length >= 3 else 1)
 
@@ -184,6 +226,8 @@ def scene_section(windows, duration=0, sheets=0):
     if not windows:
         return ""
     fmt = lambda value: f"{value:g}"
+    if all(w.get("shot") for w in windows):
+        return angle_section(windows, duration, sheets)
     rows = []
     for number, window in enumerate(windows, 1):
         angles = " | ".join(f"{fmt(a)}–{fmt(b)}s" for a, b in window["angles"])
@@ -210,6 +254,28 @@ def scene_section(windows, duration=0, sheets=0):
     return text
 
 
+def angle_section(windows, duration=0, sheets=0):
+    """Bảng cảnh THEO GÓC QUAY cho Gemini: mỗi cảnh là đúng một góc máy của video gốc, dài đúng số giây đo được."""
+    rows = [f"Cảnh {n} ({clock(w['start'])}–{clock(w['end'])}) · dài {float(w['end']) - float(w['start']):.1f} giây · MỘT góc máy"
+            for n, w in enumerate(windows, 1)]
+    text = (f"BẢNG CẢNH THEO GÓC QUAY (FFmpeg đo điểm cắt trên từng khung hình của file video"
+            f"{f', dài {clock(duration)}' if duration else ''}): {len(windows)} cảnh, mỗi cảnh là đúng MỘT lần máy quay "
+            "giữ nguyên một góc (đổi góc = sang cảnh mới).\n" + "\n".join(rows) + "\n"
+            f"Viết ĐÚNG {len(windows)} cảnh: Bối cảnh 1 = Cảnh 1 … Bối cảnh {len(windows)} = Cảnh {len(windows)}, mỗi cảnh "
+            "mô tả đúng khoảng thời gian của nó, không gộp hai cảnh, không tách một cảnh.\n"
+            "Trường góc quay: mô tả ĐÚNG MỘT góc máy của cảnh đó (cỡ cảnh, góc máy, chuyển động máy, ống kính, chủ thể "
+            "trong khung) — giống hệt góc máy trong video gốc. Không thêm góc khác.\n"
+            "Bối cảnh, hành vi và hành động nhân vật: đúng những gì xảy ra trong đúng số giây của cảnh.\n"
+            "NGAY DƯỚI mỗi dòng Bối cảnh N, viết thêm đúng một dòng liệt kê mọi con vật/nhân vật thấy trong cảnh đó: "
+            "\"Nhân vật cảnh N: <tên> ×<số lượng> (<vị trí trong khung: trái/giữa/phải, gần/xa>, <hướng di chuyển>); "
+            "<tên khác> ×<số lượng> (…)\". Đếm đúng số lượng nhìn thấy; dùng cùng một tên cho cùng một loài/nhân vật ở mọi "
+            "cảnh. Nếu số lượng thay đổi so với cảnh trước, ghi rõ con nào bước vào hoặc rời khung.")
+    if sheets:
+        text += (f"\nẢNH KHUNG HÌNH ĐÍNH KÈM ({sheets} ảnh, tool trích bằng FFmpeg): mỗi ô là khung giữa của một cảnh, theo "
+                 "thứ tự cảnh từ trái sang phải, trên xuống dưới. Dùng ảnh để xác định đúng cỡ cảnh, góc máy, bối cảnh và nhân vật.")
+    return text
+
+
 SCENE_SEGMENT = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:s|giây)?\s*[–—-]\s*(\d+(?:[.,]\d+)?)\s*(?:s\b|giây)", re.IGNORECASE)
 
 
@@ -217,6 +283,8 @@ def camera_problem(camera, window):
     """Reference Analyst: góc quay của cảnh có đủ mốc giây, khớp các điểm cắt đo được và phủ hết cảnh không."""
     marks = [(float(a.replace(",", ".")), float(b.replace(",", "."))) for a, b in SCENE_SEGMENT.findall(str(camera or ""))]
     length = window["end"] - window["start"]
+    if window.get("shot"):
+        return ""  # một góc máy cho cả cảnh: không đối chiếu mốc giây
     need = needed_marks(window)
     if len(marks) < need:
         return f"góc quay mới có {len(marks)} mốc giây, cần ít nhất {need}"
@@ -618,7 +686,7 @@ def angle_plan(seconds, step=3):
     return ", ".join(f"{a:g}–{b:g}s" for a, b in zip(marks, marks[1:]))
 
 
-def english_request(lines, numbers=None, style="", aspect="16:9", structured=True, seconds=8, angles=0):
+def english_request(lines, numbers=None, style="", aspect="16:9", structured=True, seconds=8, angles=0, shots=False):
     """Yêu cầu gửi Gemini/ChatGPT: viết prompt Muse tiếng Anh theo MASTER PROMPT 08 (numbers=None: tất cả cảnh)."""
     numbers = numbers or list(range(1, len(lines) + 1))
     partial = len(numbers) < len(lines)
@@ -648,7 +716,11 @@ def english_request(lines, numbers=None, style="", aspect="16:9", structured=Tru
         "Action rules: state the initial state, who acts, the main movement, direction and speed, reactions of the other "
         "animals and the end state. Prefer ONE clear main action per clip. Runs, chases and attacks move at the natural "
         "speed of the species, no slow motion.\n"
-        + (("Camera rules: CHANGE THE CAMERA ANGLE EVERY 2–3 SECONDS. The CAMERA field MUST be a timeline covering the whole "
+        + (("Camera rules: EACH SCENE IS EXACTLY ONE CAMERA ANGLE OF THE SOURCE VIDEO, with its own duration given in "
+            "brackets after the scene (e.g. [Cảnh dài 3 giây …] = a 3-second clip). CAMERA describes that single angle only "
+            "(shot size, angle, camera position, camera movement, lens, subject in frame) exactly as in the source; no cuts, "
+            "no second angle, no time marks. ACTION fits exactly that scene's duration.\n") if shots else
+           ("Camera rules: CHANGE THE CAMERA ANGLE EVERY 2–3 SECONDS. The CAMERA field MUST be a timeline covering the whole "
             f"clip from 0 to {seconds}s, each angle 2–3 seconds, consecutive, written like \"{angle_plan(seconds, angles)}\" "
             "with one angle per mark separated by \" / \" (for example \"0–3s: wide shot, static, from the left / 3–5s: "
             "side tracking medium shot …\"). Use a different angle for each mark (extreme wide, wide, medium, close-up, "
@@ -667,7 +739,7 @@ def english_request(lines, numbers=None, style="", aspect="16:9", structured=Tru
         "  SCENE N — SETTING: <environment, terrain, time, light, fixed objects>; CHARACTERS: <species, count, looks, "
         "position, distance>; CAMERA: <shot size, angle, camera position and movement, time marks if several angles>; "
         "CHARACTER BEHAVIOR: <posture, reactions, body movement, biologically correct behavior>; ACTION: <the action in "
-        f"clear order from start to end, fitting {seconds} seconds>; ENDING FRAME: <position, posture, direction and state "
+        f"clear order from start to end, fitting {'the scene duration in brackets' if shots else f'{seconds} seconds'}>; ENDING FRAME: <position, posture, direction and state "
         "of each animal at the end of the clip>\n"
         "- Do not write STYLE, DURATION or ASPECT RATIO: the tool adds the standard ones. Never use a label inside "
         "another field. Concise, specific, action-focused.\n"

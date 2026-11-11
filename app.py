@@ -991,7 +991,8 @@ class Handler(BaseHTTPRequestHandler):
                                             body.get("language", "vi"), body.get("scenes"), attached=bool(video_file))
                 job = self.server.gemini_web.start(kind, prompt, store.setting("gemini_web_email") or "",
                                                    store.setting("gemini_web_model") or "",
-                                                   {"video": str(Path(video_file).resolve()), "measure": body.get("measure") is not False}
+                                                   {"video": str(Path(video_file).resolve()), "measure": body.get("measure") is not False,
+                                                    "split": "fixed" if body.get("split") == "fixed" else "shot"}
                                                    if video_file else None)
                 return self.reply({"ok": True, "id": job})
             elif path == "/api/content/review-prompts":
@@ -1009,7 +1010,11 @@ class Handler(BaseHTTPRequestHandler):
                 job = runner.start("promptreview", "", "" if chatgpt else (store.setting("gemini_web_email") or ""),
                                    store.setting("chatgpt_web_model" if chatgpt else "gemini_web_model") or "",
                                    {"prompts": prompts, "rules": rules, "lock": lock,
-                                    "seconds": int(body["seconds"]) if str(body.get("seconds") or "").isdigit()
+                                    # chia cảnh theo góc quay: thời lượng riêng từng prompt; không thì một số cho tất cả
+                                    "seconds": [int(d) if isinstance(d, int) and 1 <= d <= 60 else None
+                                                for d in body["durations"][:len(prompts)]]
+                                    if isinstance(body.get("durations"), list) and len(body["durations"]) == len(prompts)
+                                    else int(body["seconds"]) if str(body.get("seconds") or "").isdigit()
                                     and 1 <= int(body["seconds"]) <= 60 else None})
                 return self.reply({"ok": True, "id": job, "total": len(prompts), "engine": "chatgpt" if chatgpt else "gemini"})
             elif path == "/api/content/camera-custom":

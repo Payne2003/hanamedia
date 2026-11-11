@@ -285,7 +285,7 @@ class GeminiVideoFileTests(unittest.TestCase):
                                       side_effect=lambda *a: order.append("ffmpeg") or (self.shots[:2], 3.5)), \
                     mock.patch.object(reverse_engineer, "contact_sheets", side_effect=lambda *a: order.append("frames") or [sheet]):
                 runner = gemini_web.GeminiWebRunner(Path(folder) / "profile", Session)
-                runner.start("generate", "Yêu cầu", lines={"video": str(video), "measure": True})
+                runner.start("generate", "Yêu cầu", lines={"video": str(video), "measure": True, "split": "fixed"})
                 for _ in range(100):
                     if not runner.snapshot()["busy"]:
                         break
