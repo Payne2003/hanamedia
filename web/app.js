@@ -1523,3 +1523,37 @@ for(const [engine,c] of Object.entries(API_CARDS)){
     finally{delete status.dataset.busy;renderApiCard(engine);}
   };
 }
+
+// ---------- Chatbot hỗ trợ (góc phải): FAQ trước, rồi trợ lý AI; hết lượt → Zalo ----------
+const supportChat={history:[],busy:false,greeted:false};
+function supportAdd(role,text,extra=''){
+  const box=$('supportMessages'),div=document.createElement('div');div.className='support-msg '+role;
+  div.innerHTML=`<div class="support-bubble">${esc(text).replace(/\n/g,'<br>')}</div>${extra}`;box.appendChild(div);box.scrollTop=box.scrollHeight;return div;
+}
+function supportQuota(info){
+  if(!info)return;
+  $('supportQuota').textContent=info.ai?`Trợ lý AI · còn ${info.remaining}/${info.limit} lượt hôm nay`:'Câu hỏi thường gặp · Zalo hỗ trợ';
+}
+function supportOpen(){
+  $('supportPanel').hidden=false;$('supportFab').classList.add('open');supportQuota(state?.content?.support);
+  if(!supportChat.greeted){supportChat.greeted=true;supportAdd('bot','Xin chào! Mình là trợ lý HANA MEDIA. Bạn cần giúp gì về tool? Có thể chọn câu hỏi nhanh bên dưới.');}
+  setTimeout(()=>$('supportInput').focus(),50);
+}
+async function supportSend(text){
+  text=String(text||'').trim();if(!text||supportChat.busy)return;
+  supportChat.busy=true;$('supportInput').value='';$('supportSuggest').hidden=true;
+  supportAdd('user',text);const typing=supportAdd('bot','Đang trả lời…');typing.classList.add('typing');
+  try{
+    const r=await api('/api/support/chat',{message:text,history:supportChat.history});typing.remove();
+    const zalo=r.source==='zalo'?`<button type="button" class="support-zalo inline" data-support-zalo>Chat Zalo ${esc(r.zalo)}</button>`:'';
+    supportAdd('bot',r.answer,(r.source==='faq'?'<small class="support-tag">Câu hỏi thường gặp</small>':'')+zalo);
+    supportChat.history.push({role:'user',text},{role:'model',text:r.answer});supportChat.history=supportChat.history.slice(-12);
+    supportQuota(r);if(state?.content)state.content.support={...state.content.support,...r};
+  }catch(error){typing.remove();supportAdd('bot',error.message||'Không gửi được câu hỏi.',`<button type="button" class="support-zalo inline" data-support-zalo>Chat Zalo 0983105651</button>`);}
+  finally{supportChat.busy=false;}
+}
+$('supportFab').onclick=()=>$('supportPanel').hidden?supportOpen():($('supportPanel').hidden=true,$('supportFab').classList.remove('open'));
+$('supportClose').onclick=()=>{$('supportPanel').hidden=true;$('supportFab').classList.remove('open');};
+$('supportForm').onsubmit=e=>{e.preventDefault();supportSend($('supportInput').value);};
+$('supportSuggest').onclick=e=>{const b=e.target.closest('button');if(b)supportSend(b.textContent);};
+document.addEventListener('click',e=>{if(e.target.closest('#supportZalo,[data-support-zalo]'))api('/api/support/zalo',{}).then(()=>toast('Đã mở Zalo hỗ trợ trong trình duyệt.')).catch(error=>toast(error.message,true));});
