@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from runner import content
 from runner.gemini_web import GeminiWebRunner
+from runner import gemini_api, openai_api
 from runner.chatgpt_web import chatgpt_login_url, chatgpt_runner
 from runner.engine import FLOW_URL
 from runner.flow import default_chrome_profile
@@ -55,13 +56,12 @@ class AppServer(ThreadingHTTPServer):
     daemon_threads = True
 
     # Khóa API (Gemini, ChatGPT): lưu mã hóa trong kho khóa của máy, không trả về giao diện.
-    API_ENGINES = {"gemini": ("runner.gemini_api", "gemini_api", "gemini_mode", "thinking"),
-                   "chatgpt": ("runner.openai_api", "chatgpt_api", "chatgpt_mode", "reasoning")}
+    # Import tĩnh (không dùng importlib) để PyInstaller đóng gói đủ hai module vào bản cài.
+    API_ENGINES = {"gemini": (gemini_api, "gemini_api", "gemini_mode", "thinking"),
+                   "chatgpt": (openai_api, "chatgpt_api", "chatgpt_mode", "reasoning")}
 
     def api_public(self, engine):
-        import importlib
-        module_name, prefix, mode_key, _ = self.API_ENGINES[engine]
-        module = importlib.import_module(module_name)
+        module, prefix, mode_key, _ = self.API_ENGINES[engine]
         try:
             key, source = self.key_vault.credential(engine)
         except Exception:
@@ -74,11 +74,10 @@ class AppServer(ThreadingHTTPServer):
 
     def api_session(self, engine):
         """Phiên API cho yêu cầu kế tiếp, hoặc None nếu đang dùng trang web trên Chrome."""
-        import importlib
         info = self.api_public(engine)
         if info["mode"] != "api":
             return None
-        module = importlib.import_module(self.API_ENGINES[engine][0])
+        module = self.API_ENGINES[engine][0]
         key, _ = self.key_vault.credential(engine)
         session = module.GeminiAPISession if engine == "gemini" else module.OpenAIAPISession
         return session(key, info["model"], info["thinking"])
@@ -1107,10 +1106,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/content/web-take":
                 (self.server.chatgpt_web if body.get("engine") == "chatgpt" else self.server.gemini_web).take_now()
             elif re.fullmatch(r"/api/(gemini|chatgpt)-api/(settings|key-page|models|test)", path):
-                import importlib
                 engine, action = re.fullmatch(r"/api/(gemini|chatgpt)-api/(\w+(?:-\w+)?)", path).groups()
-                module_name, prefix, mode_key, _ = self.server.API_ENGINES[engine]
-                module = importlib.import_module(module_name)
+                module, prefix, mode_key, _ = self.server.API_ENGINES[engine]
                 vault = self.server.key_vault
                 if action == "key-page":
                     webbrowser.open(module.KEY_PAGE)  # trang lấy khóa cố định của Google AI Studio / OpenAI
