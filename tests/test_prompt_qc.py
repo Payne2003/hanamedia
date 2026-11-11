@@ -216,3 +216,23 @@ class ChatGPTPlusLimitTests(unittest.TestCase):
         session.wanted_model = "Thinking"
         with mock.patch.object(chatgpt_web.GeminiWebSession, "ask", lambda self, *a, **k: "1. a long normal answer"):
             self.assertEqual(session.ask("x", lambda t: None, threading.Event()), "1. a long normal answer")
+
+
+class WebBatchTests(unittest.TestCase):
+    def test_chrome_session_also_writes_in_batches_and_reports_each(self):
+        sent, partials = [], []
+
+        class Session:  # phiên Chrome (không có thuộc tính api)
+            def new_chat(self): pass
+            def wait_ready(self, *a, **k): pass
+            def choose_model(self, name): return name
+            def ask(self, text, *a, **k):
+                sent.append(text)
+                return "\n".join(f"{n}. {GOOD}" for n in range(1, 11)) + f"\n{content.END_EN}"
+
+        lines = [f"Cảnh {n}: hổ chạy" for n in range(1, 24)]
+        result = gemini_web.run_english(Session(), lines, lambda t: None, threading.Event(), seconds=10,
+                                        on_batch=lambda p: partials.append(p["done"]))
+        self.assertEqual(len(result["english"]), 23)
+        self.assertEqual(partials, [10, 20, 23])  # giao diện nhận kết quả từng nhóm
+        self.assertEqual(len([t for t in sent if "MASTER PROMPT 08" in t]), 3)

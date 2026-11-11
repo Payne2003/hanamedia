@@ -352,6 +352,7 @@ function renderAuto(){
 function pollAuto(){
   const web=state?.content?.web;applyAutoSettings();renderRunnerVersion();loadReviewRules();
   if(!autoJob||!web){renderAuto();return;}
+  if(web.id===autoJob.id&&web.busy)applyPartial('gemini',autoJob,web);
   if(web.id!==autoJob.id||web.busy){renderAuto();return;}
   const job=autoJob;autoJob=null;renderAuto();
   if(job.kind==='characters')return finishCharacters('gemini',job.id,web);
@@ -423,6 +424,22 @@ function renderEnglishEngine(){
   if(document.activeElement!==$('chatgptModel'))$('chatgptModel').value=state?.content?.chatgpt?.model||'';
   renderEnglish();renderEnglishRun();
 }
+// Viết / kiểm duyệt lần lượt từng nhóm 10: nhóm nào xong thì hiện ngay vào ô kết quả (dừng giữa chừng vẫn giữ phần đã có).
+function applyPartial(engine,job,web){
+  const p=web.partial;if(!p||!Array.isArray(p.english)||p.done===job.partialDone)return;
+  job.partialDone=p.done;
+  const [textKey]=englishKey(engine);
+  if(job.kind==='english'){
+    content[textKey]=p.english.join('\n');saveContent();
+    if(content.englishEngine===engine)$('englishOutput').value=content[textKey];
+    renderEnglish();
+  }else if(job.kind==='promptreview'&&reviewOne===null){
+    const lines=(content[textKey]||'').split('\n');p.english.forEach((line,i)=>{if(line)lines[i]=line;});
+    content[textKey]=lines.join('\n');saveContent();
+    if(content.englishEngine===engine)$('englishOutput').value=content[textKey];
+  }else return;
+  $(job.kind==='english'?'englishStatus':'reviewStatus')&&($(job.kind==='english'?'englishStatus':'reviewStatus').textContent=`Đã có ${p.done}/${p.total} prompt · đang làm nhóm tiếp theo…`);
+}
 function finishEnglish(engine,result){
   const [textKey,missingKey]=englishKey(engine);
   content[textKey]=result.english.join('\n');content[missingKey]=result.missing;content[textKey+'Issues']=result.issues||[];content[textKey+'Sources']=result.lines||splitSceneLines(content.englishInput);saveContent();
@@ -432,6 +449,7 @@ function finishEnglish(engine,result){
 }
 function pollChat(){
   const web=state?.content?.chatgpt;
+  if(chatJob&&web&&web.id===chatJob.id&&web.busy)applyPartial('chatgpt',chatJob,web);
   if(!chatJob||!web||web.id!==chatJob.id||web.busy){renderEnglishRun();return;}
   const job=chatJob;chatJob=null;renderEnglishRun();
   if(job.kind==='characters')return finishCharacters('chatgpt',job.id,web);
