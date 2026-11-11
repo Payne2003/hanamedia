@@ -122,3 +122,67 @@ class PacerTests(unittest.TestCase):
         Pacer.wait("test-pace", 600, notes.append, stop)
         self.assertGreaterEqual(time.monotonic() - before, 0.25)
         Pacer.wait("other-key", 0, notes.append, stop)  # 0 = không giới hạn, khóa khác không bị ảnh hưởng
+
+
+class BatchAndFallbackTests(unittest.TestCase):
+    def test_api_writes_prompts_in_batches_of_ten_with_continuity(self):
+        sent = []
+
+        class Session:
+            api = True
+            def new_chat(self): pass
+            def wait_ready(self, *a, **k): pass
+            def choose_model(self, name): return name
+            def ask(self, text, *a, **k):
+                sent.append(text)
+                count = text.count("\n") and len([l for l in text.split("\n") if l[:1].isdigit() and ". " in l[:5]])
+                return "\n".join(f"{n}. {GOOD}" for n in range(1, 11)) + f"\n{content.END_EN}"
+
+        lines = [f"Cảnh {n}: hổ chạy" for n in range(1, 24)]
+        result = gemini_web.run_english(Session(), lines, lambda t: None, threading.Event(), seconds=10)
+        self.assertEqual(len(result["english"]), 23)
+        self.assertEqual(len([t for t in sent if "MASTER PROMPT 08" in t]), 3)  # 3 nhóm: 10 + 10 + 3
+        self.assertIn("CONTINUITY: these scenes", sent[1])
+        self.assertNotIn("CONTINUITY: these scenes", sent[0])
+
+    def test_review_batches_keep_numbering(self):
+        bad = GOOD.replace("collide hard", "collide hard in slow motion")
+
+        class Session:
+            api = True
+            def new_chat(self): pass
+            def wait_ready(self, *a, **k): pass
+            def choose_model(self, name): return name
+            def ask(self, text, *a, **k):
+                rows = [l for l in text.split("\n") if l[:2].strip(". ").isdigit() and l[1:3].startswith((". ", ".")) or l[:3].rstrip(".").isdigit() and ". " in l[:4]]
+                count = len(rows) or 10
+                return "\n".join(f"{n}. {bad if n == 2 else GOOD}" for n in range(1, count + 1)) + f"\n{content.END_EN}"
+
+        prompts = [GOOD] * 12
+        result = gemini_web.run_review(Session(), prompts, "", "no music", lambda t: None, threading.Event(), seconds=10)
+        self.assertEqual(len(result["english"]), 12)
+        self.assertIn(2, result["violations"])
+        self.assertTrue(all(n <= 12 for n in result["violations"]))
+
+    def test_openai_out_of_credit_switches_to_gemini(self):
+        def fake(request, timeout, handlers=()):
+            raise urllib.error.HTTPError(request.full_url, 429, "x", {}, io.BytesIO(
+                b'{"error":{"message":"You have no credits remaining. Add credits to continue using the API"}}'))
+        asked = []
+
+        class Gemini:
+            api = True
+            history = []
+            def ask(self, text, status, stop, email="", timeout=1200, label=""):
+                asked.append((text, list(self.history)))
+                return "gemini answer"
+            def new_chat(self): self.history = []
+            def close(self): pass
+        session = openai_api.OpenAIAPISession("sk-TESTKEY000000000000000", "gpt-5-mini")
+        session.fallback = Gemini
+        notes = []
+        with mock.patch.object(openai_api, "opener", return_value=fake):
+            self.assertEqual(session.ask("Write prompts", notes.append, threading.Event()), "gemini answer")
+            self.assertEqual(session.ask("Continue", notes.append, threading.Event()), "gemini answer")
+        self.assertEqual([a[0] for a in asked], ["Write prompts", "Continue"])
+        self.assertIn("chuyển sang Gemini", " ".join(notes))

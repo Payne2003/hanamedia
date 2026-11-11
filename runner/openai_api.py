@@ -20,6 +20,7 @@ DEFAULT_MODEL = "gpt-4.1-mini"
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}")
 REASONING = {"low": "Thấp", "medium": "Trung bình", "high": "Cao"}
 RETRY_WAIT = (15, 45, 90)  # 429/500/502/503: yêu cầu chưa được xử lý, đợi tăng dần rồi gửi lại
+OUT_OF_CREDIT = re.compile(r"credit|quota|billing|insufficient", re.IGNORECASE)  # hết tiền/hạn mức: gửi lại vô ích
 
 
 class OpenAIAPIError(APIError):
@@ -100,9 +101,13 @@ class OpenAIAPISession:
 
     def close(self):
         self.closed = True
+        if self.delegate is not None:
+            self.delegate.close()
 
     def new_chat(self):
         self.history, self.pending = [], []
+        if self.delegate is not None:
+            self.delegate.new_chat()
 
     def wait_ready(self, status=None, stop=None, email="", timeout=0):
         return True
@@ -123,12 +128,28 @@ class OpenAIAPISession:
         self.pending += [{"type": "input_image", "image_url": f"data:{mime};base64,{data}", "detail": "low"}
                          for mime, data in image_parts(files)]
 
+    fallback = None  # hàm trả về phiên Gemini API khi OpenAI hết tiền / hết hạn mức
+    delegate = None
+
     def ask(self, text, status, stop, email="", timeout=1200, label="ChatGPT đang viết"):
+        if self.delegate is not None:
+            return self.delegate.ask(text, status, stop, email, timeout, label)
         message = {"role": "user", "content": [{"type": "input_text", "text": text}] + self.pending}
-        self.pending = []
         conversation = self.history + [message]
         status(f"{label} (ChatGPT API · {self.model})…")
-        response = self.generate(conversation, status, stop, timeout)
+        try:
+            response = self.generate(conversation, status, stop, timeout)
+        except HTTPFailure as error:
+            if not (self.fallback and error.code in (402, 429) and OUT_OF_CREDIT.search(error.detail)):
+                raise
+            # OpenAI hết tiền / hết hạn mức: chuyển sang Gemini API, mang theo hội thoại đã có, chạy tiếp.
+            status("ChatGPT API hết tiền hoặc hết hạn mức · chuyển sang Gemini API (miễn phí) chạy tiếp…")
+            self.delegate = self.fallback()
+            self.delegate.history = [{"role": "user" if m["role"] == "user" else "model",
+                                      "parts": [{"text": c.get("text", "")} for c in m["content"] if c.get("text")]}
+                                     for m in self.history]
+            return self.delegate.ask(text, status, stop, email, timeout, label)
+        self.pending = []
         answer = "\n".join(c.get("text", "") for item in response.get("output") or [] if item.get("type") == "message"
                            for c in item.get("content") or [] if c.get("type") == "output_text")
         if not answer.strip():
@@ -162,7 +183,7 @@ class OpenAIAPISession:
                 if error.code == 400 and self.max_output > 16000 and "max_output_tokens" in error.detail.lower():
                     self.max_output = 16000
                     continue
-                if error.code in (429, 500, 502, 503) and attempt < len(RETRY_WAIT) and "quota" not in error.detail.lower():
+                if error.code in (429, 500, 502, 503) and attempt < len(RETRY_WAIT) and not OUT_OF_CREDIT.search(error.detail):
                     wait = RETRY_WAIT[attempt]
                     attempt += 1
                     status(f"{error} Gửi lại sau {wait} giây (lần {attempt}/{len(RETRY_WAIT)})…")

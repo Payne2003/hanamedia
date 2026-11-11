@@ -849,6 +849,33 @@ REGENERATE_ROUNDS = 3  # mỗi prompt còn lỗi được AI tạo lại tối �
 
 
 def run_review(session, prompts, rules, lock, status, stop, email="", model="", seconds=None):
+    """Kiểm duyệt. Chạy bằng API thì lần lượt từng nhóm PROMPT_BATCH prompt (Character Master tính trên toàn bộ prompt
+    để mọi nhóm giữ cùng nhân vật), ghép kết quả theo thứ tự."""
+    total = len(prompts)
+    if not getattr(session, "api", False) or total <= PROMPT_BATCH:
+        return review_once(session, prompts, rules, lock, status, stop, email, model, seconds)
+    secs = list(seconds) if isinstance(seconds, (list, tuple)) else [seconds] * total
+    master = content.character_master([str(p or "") for p in prompts])
+    merged = {"english": [], "issues": [], "violations": {}, "needs_check": [], "attempts": {}, "missing": [],
+              "total": total, "rounds": 0, "reviewed": True}
+    for first in range(0, total, PROMPT_BATCH):
+        if stop.is_set():
+            raise GeminiWebError("Đã dừng.")
+        part = prompts[first:first + PROMPT_BATCH]
+        status(f"Nhóm {first // PROMPT_BATCH + 1}/{-(-total // PROMPT_BATCH)}: kiểm duyệt prompt {first + 1}–{first + len(part)}…")
+        result = review_once(session, part, rules, lock, status, stop, email, model, secs[first:first + len(part)], master)
+        merged["english"] += result["english"]
+        merged["issues"] += [re.sub(r"Prompt\s+(\d+)", lambda m: f"Prompt {first + int(m.group(1))}", i) for i in result["issues"]]
+        merged["violations"].update({first + n: v for n, v in result["violations"].items()})
+        merged["needs_check"] += [first + n for n in result.get("needs_check", [])]
+        merged["attempts"].update({first + n: a for n, a in result.get("attempts", {}).items()})
+        merged["missing"] += [first + n for n in result["missing"]]
+        merged["rounds"] += result["rounds"]
+        status(f"Đã kiểm duyệt {len(merged['english'])}/{total} prompt")
+    return merged
+
+
+def review_once(session, prompts, rules, lock, status, stop, email="", model="", seconds=None, master=None):
     """Quality Control: Viết prompt → Kiểm tra → Tự sửa → Kiểm tra lại → Khóa prompt.
 
     1. Tool tự sửa lỗi không cần AI (markdown, xuống dòng, thời lượng sai cấu hình).
@@ -867,7 +894,7 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model="", 
         raise GeminiWebError("Chưa có prompt để kiểm duyệt.")
     structured = sum(1 for p in prompts if len(content.parse_structured(p)) >= 5) * 2 > total
     check = lambda text, n: content.qc_problems(text, secs[n - 1], structured)
-    master = content.character_master(prompts)
+    master = master if master is not None else content.character_master(prompts)
     start_fresh(session, status, stop, email)
     if model:
         session.choose_model(model)
@@ -1018,8 +1045,45 @@ def run_characters(session, script, scenes, status, stop, email="", model=""):
     return result
 
 
+PROMPT_BATCH = 10  # API: viết / kiểm duyệt lần lượt từng nhóm 10 prompt, lấy kết quả từng nhóm
+
+
 def run_english(session, lines, status, stop, email="", model="", style="", aspect="16:9", structured=True,
                 seconds=content.DEFAULT_SECONDS, angles=0, library=False, custom_angles="", windows=None):
+    """Viết prompt tiếng Anh. Chạy bằng API thì gửi lần lượt từng nhóm PROMPT_BATCH cảnh (mỗi nhóm một cuộc trò chuyện
+    mới, ít token, ít chạm hạn mức) và ghép kết quả theo thứ tự; nhóm sau được biết prompt cuối của nhóm trước để
+    nối tiếp nhân vật, bối cảnh, hướng di chuyển."""
+    total = len(lines)
+    if not getattr(session, "api", False) or total <= PROMPT_BATCH:
+        return english_once(session, lines, status, stop, email, model, style, aspect, structured, seconds, angles,
+                            library, custom_angles, windows)
+    merged = {"english": [], "missing": [], "lines": [], "issues": [], "structured": structured, "total": total,
+              "rounds": 0, "durations": []}
+    windows = list(windows) if windows and len(windows) == total else None
+    for first in range(0, total, PROMPT_BATCH):
+        if stop.is_set():
+            raise GeminiWebError("Đã dừng.")
+        part = lines[first:first + PROMPT_BATCH]
+        status(f"Nhóm {first // PROMPT_BATCH + 1}/{-(-total // PROMPT_BATCH)}: viết prompt cảnh {first + 1}–{first + len(part)}…")
+        previous = next((p for p in reversed(merged["english"]) if p), "")
+        context = ("CONTINUITY: these scenes continue directly after the previous scene, whose prompt was:\n" + previous +
+                   "\nKeep the same animals (species, count, look), place, light and screen direction.") if previous else ""
+        result = english_once(session, part, status, stop, email, model, style, aspect, structured, seconds, angles, library,
+                              custom_angles, windows[first:first + len(part)] if windows else None, context)
+        merged["english"] += result["english"]
+        merged["lines"] += result["lines"]
+        merged["missing"] += [first + n for n in result["missing"]]
+        merged["issues"] += [re.sub(r"(Scene|Prompt|Cảnh)\s+(\d+)", lambda m: f"{m.group(1)} {first + int(m.group(2))}", i)
+                             for i in result["issues"]]
+        merged["rounds"] += result["rounds"]
+        merged["durations"] += result.get("durations") or []
+        status(f"Đã xong {len(merged['english'])}/{total} prompt")
+    merged["durations"] = merged["durations"] if len(merged["durations"]) == total else None
+    return merged
+
+
+def english_once(session, lines, status, stop, email="", model="", style="", aspect="16:9", structured=True,
+                 seconds=content.DEFAULT_SECONDS, angles=0, library=False, custom_angles="", windows=None, context=""):
     """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
     total = len(lines)
     name = getattr(session, "NAME", "Gemini")
@@ -1034,7 +1098,8 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
     rounds = 1
     answer = session.ask(content.english_request(lines, style=style, aspect=aspect, structured=structured, seconds=seconds,
-                                                 angles=0 if shot_mode else angles, shots=shot_mode), status, stop, email,
+                                                 angles=0 if shot_mode else angles, shots=shot_mode)
+                         + (f"\n\n{context}" if context else ""), status, stop, email,
                          label=f"{name} đang viết {total} prompt tiếng Anh")
     found = content.parse_english(answer, total)
     issues = content.parse_issues(answer)
