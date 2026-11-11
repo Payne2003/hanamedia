@@ -765,6 +765,54 @@ def prompt_violations(prompt):
     return found
 
 
+# ---------- Quality Control: kiểm tra máy từng prompt (không cần AI) ----------
+DURATION_FIELD = re.compile(r"(DURATION\s*:\s*)(\d+(?:[.,]\d+)?)\s*(?:s\b|sec\w*|giây)?", re.IGNORECASE)
+MERGED = re.compile(r"(?:^|[\s;.])(?:scene|prompt|shot\s+list|cảnh)\s*#?\d+\s*[:.)-]|(?:^|\n)\s*\d+\s*[.)]\s+\S", re.IGNORECASE)
+
+
+def tidy_prompt(prompt, seconds=None):
+    """Tự sửa lỗi định dạng không cần AI: bỏ markdown, gộp xuống dòng thành một dòng, sửa thời lượng theo cấu hình."""
+    text = re.sub(r"[*_`#>]+", "", str(prompt or ""))
+    text = re.sub(r"^\s*(?:prompt|scene|cảnh)\s*\d+\s*[:.)-]\s*", "", text.strip(), flags=re.IGNORECASE)
+    text = re.sub(r"\s*\n+\s*", " ", text).strip()
+    if seconds:
+        text = DURATION_FIELD.sub(lambda m: f"{m.group(1)}{int(seconds) if float(seconds).is_integer() else seconds} seconds", text)
+    return text
+
+
+def qc_problems(prompt, seconds=None, structured=None):
+    """Danh sách lỗi của một prompt (rỗng = đạt). structured: True/False bắt buộc có/không các trường; None: tự nhận."""
+    text = strip_lock(prompt).strip()
+    if len(re.sub(r"\W+", "", text)) < 15:
+        return ["Prompt trống"]
+    problems = []
+    if not is_english(text):
+        problems.append("Còn tiếng Việt — viết lại hoàn toàn bằng tiếng Anh")
+    fields = parse_structured(text)
+    if (structured if structured is not None else len(fields) >= 5) and not structured_complete(text):
+        missing = [label for key, label in STRUCT_FIELDS if not fields.get(key)]
+        problems.append("Sai định dạng — thiếu trường " + ", ".join(missing))
+    if len(MERGED.findall(text)) >= 2 or len(text) > 4000:
+        problems.append("Gộp nhiều cảnh — mỗi prompt chỉ được một cảnh")
+    duration = DURATION_FIELD.search(text)
+    if seconds and duration and abs(float(duration.group(2).replace(",", ".")) - float(seconds)) > 0.01:
+        problems.append(f"Sai thời lượng — phải là {float(seconds):g} giây")
+    return problems + prompt_violations(prompt)
+
+
+def character_master(prompts):
+    """Character Master: mô tả nhân vật lần đầu xuất hiện (trường CHARACTERS) để các prompt sau giữ y nguyên."""
+    master, seen = [], set()
+    for number, prompt in enumerate(prompts, 1):
+        characters = parse_structured(strip_lock(prompt)).get("characters") or ""
+        for part in re.split(r"\s*;\s*|\s*\|\s*", characters):
+            key = re.sub(r"[^a-z ]", "", part.lower()).strip()[:40]
+            if len(key) >= 3 and key not in seen:
+                seen.add(key)
+                master.append(f"- {part.strip()[:200]} (first in prompt {number})")
+    return "\n".join(master[:40])
+
+
 def apply_lock(prompt, lock=DEFAULT_LOCK):
     """Gắn khóa chung vào cuối prompt (thay khóa cũ nếu có)."""
     body = strip_lock(prompt).strip().rstrip(" .;")
@@ -772,8 +820,10 @@ def apply_lock(prompt, lock=DEFAULT_LOCK):
     return f"{body}; LOCK: {lock}." if body and lock else body
 
 
-def review_request(prompts, rules, numbers=None):
+def review_request(prompts, rules, numbers=None, master=""):
     numbers = list(numbers or range(1, len(prompts) + 1))
+    master = (f"CHARACTER MASTER (keep every animal's look EXACTLY as described here in every prompt; a prompt that "
+              f"describes an animal differently is wrong):\n{master}\n\n") if master else ""
     rows = "\n".join(f"{n}. {strip_lock(prompts[n - 1]).strip()}" for n in numbers)
     return ("You are the senior wildlife documentary director reviewing video prompts before they are sent to an AI video "
             "generator. Check EVERY prompt below against these rules (written in Vietnamese):\n"
@@ -785,7 +835,7 @@ def review_request(prompts, rules, numbers=None):
             "(a chaser always behind what it chases). Do not mention music, slow motion, logos or text except to forbid them.\n"
             "First write one line per problem you fixed: \"ISSUE: Prompt N — …\". Then write every prompt again, one "
             f"line each, starting with its number (\"N. …\"), in English, no markdown. After the last one write {END_EN}.\n\n"
-            + rows)
+            + master + rows)
 
 
 def continue_review(after, numbers):
