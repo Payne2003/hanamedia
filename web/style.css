@@ -840,3 +840,42 @@ dialog{border-radius:20px;background:var(--hana-card)}
 .content-to-studio .cts-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .content-to-studio .cts-row small{color:var(--muted);font-size:var(--fs-xs);flex:1}
 .content-to-studio label{display:flex;align-items:center;gap:8px;margin:0}
+/* Cài đặt · thẻ AI (Gemini API, viết prompt): chia khối rõ ràng, khoảng cách thoáng */
+.ai-card{gap:18px!important}
+.ai-body{display:flex;flex-direction:column;gap:16px}
+.ai-section{display:flex;flex-direction:column;gap:12px;padding:16px;border:1px solid var(--c-border);border-radius:var(--radius-lg);background:var(--c-surface)}
+.ai-section-title{display:flex;align-items:center;gap:12px}
+.ai-section-title>div{flex:1;min-width:0;display:grid;gap:2px}
+.ai-section-title b{font-size:var(--fs-md);color:var(--c-text)}
+.ai-section-title small{font-size:var(--fs-xs);color:var(--muted)}
+.ai-step{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;flex:0 0 auto;font-size:var(--fs-sm);font-weight:700;background:var(--c-accent-soft);color:var(--c-accent-text)}
+.ai-key-field{display:flex;gap:10px;align-items:stretch}
+.ai-key-field input{flex:1;min-width:0}
+.ai-key-field button{white-space:nowrap}
+.ai-actions{display:flex;flex-wrap:wrap;gap:10px}
+.ai-actions .danger-outline{margin-left:auto}
+.ai-state{margin:0;font-size:var(--fs-xs);color:var(--muted)}
+.ai-state:empty{display:none}
+.ai-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.settings-card .ai-field{display:grid!important;gap:6px!important;font-size:var(--fs-xs)!important;color:var(--muted)!important;font-weight:600}
+.ai-grid .ai-field:nth-child(3){max-width:200px}
+.ai-hint{grid-column:1/-1;margin:0;font-size:var(--fs-xs);line-height:1.6;color:var(--muted)}
+button.ghost{background:transparent;border-color:var(--c-border);color:var(--c-accent-text)}
+button.ghost:hover{background:var(--c-accent-soft)}
+button.small{padding:6px 10px;font-size:var(--fs-xs);white-space:nowrap}
+.ai-help{border:1px dashed var(--c-border);border-radius:var(--radius);padding:10px 14px;font-size:var(--fs-xs);color:var(--muted)}
+.ai-help summary{cursor:pointer;font-weight:600;color:var(--c-text-2)}
+.ai-help p{margin:10px 0 0;line-height:1.65}
+.ai-choices{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ai-choices label{position:relative;display:flex!important;flex-direction:row!important;align-items:center;gap:12px!important;padding:14px!important;border:1.5px solid var(--c-border);border-radius:var(--radius-lg);background:var(--c-surface);cursor:pointer;transition:border-color .15s,background .15s,box-shadow .15s}
+.ai-choices label:hover{border-color:var(--c-border-strong)}
+.ai-choices label:has(input:checked){border-color:var(--c-accent);background:var(--c-accent-soft);box-shadow:0 0 0 3px color-mix(in srgb,var(--c-accent) 18%,transparent)}
+.ai-choices input{position:absolute;opacity:0;pointer-events:none}
+.ai-choice-icon{display:grid;place-items:center;width:36px;height:36px;border-radius:10px;flex:0 0 auto;font-size:var(--fs-sm);font-weight:700;background:var(--c-surface-3);color:var(--c-accent-text)}
+.ai-choices label:has(input:checked) .ai-choice-icon{background:linear-gradient(135deg,var(--violet-1),var(--violet-2));color:#fff}
+.ai-choices span:last-child{display:grid;gap:3px;min-width:0}
+.ai-choices b{font-size:var(--fs-sm);color:var(--c-text)}
+.ai-choices small{font-size:var(--fs-xs);color:var(--muted);line-height:1.45}
+.ai-note{margin:0;padding:12px 14px;border-radius:var(--radius);background:var(--c-surface-3);font-size:var(--fs-xs);line-height:1.6;color:var(--muted)}
+#openaiBox .full{margin-top:0}
+@media(max-width:640px){.ai-section-title{flex-wrap:wrap}.ai-section-title>button{margin-left:40px}.ai-grid,.ai-choices{grid-template-columns:1fr}.ai-grid .ai-field:nth-child(3){max-width:none}.ai-key-field{flex-direction:column}.ai-actions .danger-outline{margin-left:0}}

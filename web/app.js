@@ -972,7 +972,7 @@ function renderSettings(force){
   $('sharedBadge').textContent=shared.enabled?(shared.login_open?'Cửa sổ đăng nhập đang mở':shared.profile_used?'✓ Đang bật':'Đang bật · chưa đăng nhập'):'Đang tắt';
   $('sharedBadge').className='status-chip '+(shared.enabled?(shared.profile_used?'approved':'review'):'');
   $('sharedLogin').hidden=$('sharedHint').hidden=!shared.enabled;$('sharedLogin').disabled=Boolean(shared.login_open);
-  for(const id of ['loginAuto','loginChatgpt']){$(id).textContent=shared.enabled?'Đăng nhập bằng tài khoản chung (ở trên)':{loginAuto:'Đăng nhập Google · Gemini (mở Chrome thường)',loginChatgpt:'Đăng nhập ChatGPT (mở Chrome thường)'}[id];}
+  for(const id of ['loginAuto','loginChatgpt']){$(id).textContent=shared.enabled?'Đăng nhập bằng tài khoản chung (ở trên)':{loginAuto:'Đăng nhập Google · Gemini (mở Chrome thường)',loginChatgpt:'Đăng nhập ChatGPT'}[id];}
   const seen=web.account?.logged_in?(web.account.email||'đã đăng nhập'):'';
   $('geminiAccountLine').innerHTML=`Tài khoản Gemini: <b>${esc(email||seen||'chưa đăng nhập')}</b>${model?` · model ${esc(model)}`:''} · <button type="button" class="text-button" data-open-settings>⚙ Đổi trong Cài đặt</button>`;
   if(force||document.activeElement!==$('chatgptModel'))$('chatgptModel').value=chat.model||'';

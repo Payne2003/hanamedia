@@ -71,7 +71,8 @@ class AppServer(ThreadingHTTPServer):
                 "model": self.store.setting(prefix + "_model") or module.DEFAULT_MODEL,
                 "thinking": self.store.setting(prefix + "_thinking") or "",
                 "rpm": self.api_rpm(engine),
-                "mode": "api" if key and self.store.setting(mode_key, "api") == "api" else "web",
+                # Gemini chỉ dùng API key (đã bỏ chế độ điều khiển Gemini trên Chrome): có khóa là dùng API.
+                "mode": "api" if key and (engine == "gemini" or self.store.setting(mode_key, "api") == "api") else "web",
                 "key_page": module.KEY_PAGE,
                 # ChatGPT: viết/kiểm duyệt prompt bằng OpenAI (trả phí) hay bằng khóa Gemini (miễn phí)
                 "provider": (self.store.setting("chatgpt_provider") or "openai") if engine == "chatgpt" else "gemini"}
@@ -93,9 +94,9 @@ class AppServer(ThreadingHTTPServer):
         if engine == "chatgpt":
             # Không dùng OpenAI API: viết prompt bằng khóa Gemini (miễn phí) hoặc ChatGPT Plus trên Chrome (None).
             return self.gemini_writer() if info["provider"] == "gemini" else None
-        if info["mode"] != "api":
-            return None
         key, _ = self.key_vault.credential(engine)
+        if not key:
+            raise ValueError("Chưa có API key Gemini. Vào Cài đặt → Gemini, bấm “Lấy API key”, dán khóa rồi bấm Lưu.")
         return gemini_api.GeminiAPISession(key, info["model"], info["thinking"], rpm=info["rpm"])
 
     def gemini_writer(self):
