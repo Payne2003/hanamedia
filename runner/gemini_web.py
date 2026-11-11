@@ -1469,9 +1469,9 @@ class GeminiWebRunner:
                                     + (f" · còn thiếu {len(result['missing'])}" if result["missing"] else ""))
                     continue
                 files, windows, shots = prepared
-                # Gemini API: gửi cả video trong một cuộc trò chuyện (nhanh hơn chia đoạn 1 phút); run_conversation tự
-                # nhắn viết tiếp đến khi đủ mọi cảnh FFmpeg cắt được. run_chunked giữ lại cho video quá dài (> 200 cảnh).
-                if api is not None and windows and files and len(windows) > content.MAX_SCENES:
+                # Gemini API: gửi lần lượt từng đoạn ~1 phút (mỗi đoạn một cuộc trò chuyện mới), lấy kết quả lần lượt —
+                # không gửi cả video dài một lần. Mỗi đoạn ngắn nên Gemini xem dày (5 khung/giây), giữ đủ cảnh nhanh.
+                if api is not None and windows and files:
                     result = run_chunked(self.session, base, files[0], windows, status, self.stop, email, model,
                                          kind == "review", self.profile.parent / "gemini-uploads" / "doan")
                     result["prompts"] = content.format_prompts(result["scenes"])
