@@ -54,7 +54,8 @@ class SupportChatTests(unittest.TestCase):
                                                                          {"role": "model", "text": "Xin chào"}])
         self.assertEqual((r["source"], r["remaining"]), ("ai", 19))
         url, headers, body = self.calls[0]
-        self.assertIn("gemini-flash-latest:generateContent", url)
+        self.assertIn("gemini-flash-lite-latest:generateContent", url)  # model nhanh nhất trước
+        self.assertEqual(body["generationConfig"]["thinkingConfig"], {"thinkingBudget": 0})
         self.assertEqual(headers["X-goog-api-key"], "AIzaOWNERKEY0000000000")
         self.assertIn("HANA MEDIA", body["system_instruction"]["parts"][0]["text"])
         self.assertEqual([c["role"] for c in body["contents"]], ["user", "model", "user"])
@@ -72,12 +73,25 @@ class SupportChatTests(unittest.TestCase):
         with mock.patch.object(gemini_api, "opener", return_value=self.fake([429, 429])):
             r = self.chat().ask("Làm sao đổi tỉ lệ khung hình video?")
         self.assertEqual((r["source"], r["remaining"]), ("zalo", 20))
-        self.assertIn("flash-lite", self.calls[1][0])  # đã thử model dự phòng
+        self.assertIn("flash-latest", self.calls[1][0])  # đã thử model dự phòng
+        self.assertIn("mã 429", r["answer"])
 
     def test_no_key_or_no_license_uses_zalo(self):
         self.assertEqual(self.chat(key="").ask("Tỉ lệ khung hình đổi ở đâu?")["source"], "zalo")
         self.assertEqual(self.chat(allowed=False).ask("Tỉ lệ khung hình đổi ở đâu?")["source"], "zalo")
         self.assertEqual(self.chat(key="").status()["ai"], False)
+
+    def test_greeting_answered_instantly(self):
+        with mock.patch.object(gemini_api, "opener", return_value=self.fake()):
+            r = self.chat().ask("Hello")
+        self.assertEqual((r["source"], self.calls), ("faq", []))
+
+    def test_rejected_key_retried_as_bearer_once(self):
+        with mock.patch.object(gemini_api, "opener", return_value=self.fake([401])):
+            r = self.chat(key="AQ.NEWSTYLEKEY000000").ask("Làm sao đổi tỉ lệ khung hình video?")
+        self.assertEqual(r["source"], "ai")
+        self.assertEqual(self.calls[1][1].get("Authorization"), "Bearer AQ.NEWSTYLEKEY000000")
+        self.assertNotIn("X-goog-api-key", self.calls[1][1])
 
     def test_mask_roundtrip_hides_plain_key(self):
         blob = support_chat.mask("AIzaSECRET123")
