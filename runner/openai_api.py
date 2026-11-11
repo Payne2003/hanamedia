@@ -4,6 +4,7 @@ OpenAIAPISession có cùng các hàm mà quy trình gọi trên phiên Chrome (n
 Viết prompt → Kiểm tra → Tự sửa → Kiểm tra lại → Khóa prompt chạy y như cũ, chỉ khác là gọi thẳng API.
 Khóa chỉ gửi tới api.openai.com; không ghi log, không trả về giao diện.
 """
+import hashlib
 import re
 import threading
 import urllib.error
@@ -11,7 +12,7 @@ import urllib.request
 import json
 from urllib.parse import urlsplit
 
-from .ai_api import APIError, NoRedirect, image_parts
+from .ai_api import APIError, NoRedirect, Pacer, image_parts
 
 BASE = "https://api.openai.com/v1"
 KEY_PAGE = "https://platform.openai.com/api-keys"
@@ -83,12 +84,13 @@ class OpenAIAPISession:
     api = True
     NAME = "ChatGPT"
 
-    def __init__(self, key, model=DEFAULT_MODEL, reasoning="", max_output=32000):
+    def __init__(self, key, model=DEFAULT_MODEL, reasoning="", max_output=32000, rpm=0):
         if not key:
             raise OpenAIAPIError("Chưa nhập API key ChatGPT trong Cài đặt.")
         if not MODEL_NAME.fullmatch(model or ""):
             raise OpenAIAPIError("Tên model ChatGPT API không hợp lệ.")
         self.key, self.model, self.reasoning, self.max_output = key, model, reasoning, max_output
+        self.rpm = int(rpm or 0)  # giới hạn yêu cầu/phút người dùng đặt (0 = không giãn cách)
         self.history, self.pending = [], []
         self.debug_path = self.take_now = self.account_seen = None
         self.closed = False
@@ -148,6 +150,8 @@ class OpenAIAPISession:
         while True:
             if stop.is_set():
                 raise OpenAIAPIError("Đã dừng.")
+            pace = "openai:" + hashlib.sha256(self.key.encode()).hexdigest()[:12]
+            Pacer.wait(pace, self.rpm, status, stop)  # giãn cách để không vượt giới hạn yêu cầu/phút
             try:
                 return self.call(self.payload(conversation, reasoning), timeout, stop)
             except HTTPFailure as error:
@@ -162,6 +166,7 @@ class OpenAIAPISession:
                     wait = RETRY_WAIT[attempt]
                     attempt += 1
                     status(f"{error} Gửi lại sau {wait} giây (lần {attempt}/{len(RETRY_WAIT)})…")
+                    Pacer.cool_down(pace, wait)
                     if stop.wait(wait):
                         raise OpenAIAPIError("Đã dừng.") from None
                     continue

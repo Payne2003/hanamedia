@@ -770,7 +770,20 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
     return result
 
 
-CHUNK_SCENES = 6  # Gemini API: gửi lần lượt từng đoạn 6 cảnh (~60 giây), lấy kết quả từng đoạn
+CHUNK_SCENES = 6  # Gemini API: gửi lần lượt từng đoạn ~60 giây (6 cảnh 10 giây), lấy kết quả từng đoạn
+CHUNK_SECONDS = 60
+CHUNK_MAX_SCENES = 20  # cảnh theo góc quay ngắn (2–3 giây): tối đa 20 cảnh mỗi đoạn
+
+
+def chunk_windows(windows):
+    """Chia các cảnh thành từng đoạn khoảng CHUNK_SECONDS giây video (không cắt ngang một cảnh)."""
+    chunks, current = [], []
+    for window in windows:
+        if current and (window["end"] - current[0]["start"] > CHUNK_SECONDS + 1 or len(current) >= CHUNK_MAX_SCENES):
+            chunks.append(current)
+            current = []
+        current.append(window)
+    return chunks + ([current] if current else [])
 
 
 def run_chunked(session, base, source, windows, status, stop, email="", model="", review=False, folder=None):
@@ -779,7 +792,7 @@ def run_chunked(session, base, source, windows, status, stop, email="", model=""
     thứ tự. Một đoạn lỗi giữa chừng (vd hết hạn mức) thì giữ các cảnh đã có và ghi rõ dừng ở đâu."""
     from . import reverse_engineer
     windows = list(windows)
-    chunks = [windows[i:i + CHUNK_SCENES] for i in range(0, len(windows), CHUNK_SCENES)]
+    chunks = chunk_windows(windows)
     folder = Path(folder or Path(source).parent / "hana-doan")
     total = {"original_script": [], "scenes": [], "issues": [], "subjects": [], "rounds": 0}
     done = 0
@@ -844,13 +857,16 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model="", 
     3. Tool kiểm tra máy (trống, còn tiếng Việt, sai định dạng, gộp cảnh, sai thời lượng, từ cấm, thiếu góc quay);
        prompt còn lỗi được AI tạo lại riêng, kèm đúng lỗi, tối đa 3 lần. Vẫn sai → danh sách "Cần kiểm tra".
     4. Gắn KHÓA chung vào cuối mọi prompt. Không bao giờ làm mất prompt (AI không trả thì giữ bản cũ)."""
-    prompts = [content.tidy_prompt(p, seconds) for p in prompts]
     total = len(prompts)
+    # seconds: một số cho mọi prompt, hoặc danh sách thời lượng riêng từng prompt (chia cảnh theo góc quay)
+    secs = [s if isinstance(s, (int, float)) and s > 0 else None
+            for s in (list(seconds)[:total] + [None] * total)[:total]] if isinstance(seconds, (list, tuple)) else [seconds] * total
+    prompts = [content.tidy_prompt(p, secs[i]) for i, p in enumerate(prompts)]
     name = getattr(session, "NAME", "Gemini")
     if not total:
         raise GeminiWebError("Chưa có prompt để kiểm duyệt.")
     structured = sum(1 for p in prompts if len(content.parse_structured(p)) >= 5) * 2 > total
-    check = lambda text: content.qc_problems(text, seconds, structured)
+    check = lambda text, n: content.qc_problems(text, secs[n - 1], structured)
     master = content.character_master(prompts)
     start_fresh(session, status, stop, email)
     if model:
@@ -872,20 +888,20 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model="", 
         if not any(n > after for n in more):
             break
         found.update(more)
-    found = {n: content.tidy_prompt(t, seconds) for n, t in found.items()}
+    found = {n: content.tidy_prompt(t, secs[n - 1]) for n, t in found.items()}
     skipped = [n for n in numbers if not (found.get(n) and content.is_english(found[n]))]
     if skipped:  # thiếu prompt: tạo bổ sung đúng số (Scene ID) bị thiếu
         answer = session.ask(content.review_request(prompts, rules, skipped, master) + "\n\nCHỈ kiểm duyệt và viết lại các prompt "
                              "trên (bạn đã bỏ sót chúng).", status, stop, email,
                              label=f"Thiếu {len(skipped)} prompt · {name} tạo bổ sung")
         rounds += 1
-        found.update({n: content.tidy_prompt(t, seconds) for n, t in content.parse_english(answer, total, skipped).items()
+        found.update({n: content.tidy_prompt(t, secs[n - 1]) for n, t in content.parse_english(answer, total, skipped).items()
                       if content.is_english(t)})
         issues += [i for i in content.parse_issues(answer) if i not in issues]
     reviewed = [found.get(n) if found.get(n) and content.is_english(found[n]) else prompts[n - 1] for n in numbers]
     attempts = {n: 0 for n in numbers}
     for attempt in range(REGENERATE_ROUNDS):  # Kiểm tra → Tự sửa → Kiểm tra lại
-        bad = [n for n in numbers if check(reviewed[n - 1])]
+        bad = [n for n in numbers if check(reviewed[n - 1], n)]
         if not bad:
             break
         for n in bad:
@@ -893,12 +909,12 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model="", 
         status(f"Kiểm tra máy: {len(bad)} prompt còn lỗi · {name} sửa (lần {attempt + 1}/{REGENERATE_ROUNDS})")
         answer = session.ask(content.review_request(reviewed, rules, bad, master)
                              + "\n\nCHỈ viết lại các prompt trên, sửa đúng các lỗi sau (mỗi prompt một cảnh, tiếng Anh, giữ "
-                             "nhãn trường):\n" + "\n".join(f"{n}: {'; '.join(check(reviewed[n - 1]))}" for n in bad),
+                             "nhãn trường):\n" + "\n".join(f"{n}: {'; '.join(check(reviewed[n - 1], n))}" for n in bad),
                              status, stop, email, label=f"{len(bad)} prompt còn lỗi · {name} tạo lại (lần {attempt + 1})")
         rounds += 1
         for n, text in content.parse_english(answer, total, bad).items():
-            text = content.tidy_prompt(text, seconds)
-            if len(check(text)) < len(check(reviewed[n - 1])) or (not check(text) and n in bad):
+            text = content.tidy_prompt(text, secs[n - 1])
+            if len(check(text, n)) < len(check(reviewed[n - 1], n)) or (not check(text, n) and n in bad):
                 reviewed[n - 1] = text
         issues += [i for i in content.parse_issues(answer) if i not in issues]
     from . import camera_library
@@ -909,7 +925,7 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model="", 
                                                              reviewed[n - 1], count=1) \
                 if camera_library.CAMERA_FIELD.search(reviewed[n - 1]) else reviewed[n - 1]
     final = [content.apply_lock(p, lock or content.DEFAULT_LOCK) for p in reviewed]
-    violations = {n: check(final[n - 1]) + ([] if found.get(n) else ["AI chưa kiểm duyệt prompt này — bấm Tạo lại"])
+    violations = {n: check(final[n - 1], n) + ([] if found.get(n) else ["AI chưa kiểm duyệt prompt này — bấm Tạo lại"])
                   for n in numbers}
     violations = {n: v for n, v in violations.items() if v}
     return {"english": final, "issues": issues, "violations": violations,
@@ -1007,13 +1023,18 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
     """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
     total = len(lines)
     name = getattr(session, "NAME", "Gemini")
+    # Chia cảnh theo góc quay: mỗi cảnh có thời lượng riêng (đúng số giây của góc máy) và đúng MỘT góc máy.
+    shot_mode = bool(windows) and len(windows) == total and all(w.get("shot") for w in windows)
+    durations = [content.scene_seconds(w) for w in windows] if shot_mode else [seconds] * total
+    original_lines, lines = lines, ([f"{line} [Cảnh dài {d} giây · đúng MỘT góc máy, giữ nguyên góc máy của video gốc]"
+                                     for line, d in zip(lines, durations)] if shot_mode else lines)
     start_fresh(session, status, stop, email)
     if model:
         picked = session.choose_model(model)
         status(f"Đã chọn model {picked}" if picked else f"Không tự chọn được model “{model}”, dùng model đang chọn sẵn")
     rounds = 1
     answer = session.ask(content.english_request(lines, style=style, aspect=aspect, structured=structured, seconds=seconds,
-                                                 angles=angles), status, stop, email,
+                                                 angles=0 if shot_mode else angles, shots=shot_mode), status, stop, email,
                          label=f"{name} đang viết {total} prompt tiếng Anh")
     found = content.parse_english(answer, total)
     issues = content.parse_issues(answer)
@@ -1042,7 +1063,8 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
         missing = content.missing_english(found, total, structured, seconds, angles)
         if not missing:
             break
-        answer = session.ask(content.english_request(lines, missing, style, aspect, structured, seconds, angles), status, stop, email,
+        answer = session.ask(content.english_request(lines, missing, style, aspect, structured, seconds,
+                                                     0 if shot_mode else angles, shot_mode), status, stop, email,
                              label=f"Thiếu {len(missing)} prompt hoặc thiếu trường · {name} đang viết lại (lần {attempt + 1})")
         rounds += 1
         fixed = 0
@@ -1057,13 +1079,14 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
             break  # Hỏi lại mà không có cảnh nào được sửa: dừng, không gửi lặp.
     missing = content.missing_english(found, total, structured, seconds, angles)
     if structured:  # dựng lại đúng cấu trúc MASTER PROMPT 08, STYLE/DURATION/ASPECT RATIO chuẩn
-        found = {number: content.muse_prompt(prompt, seconds, aspect, style) for number, prompt in found.items()}
-    if library:  # thư viện góc quay: mỗi cảnh đúng 3 góc, chọn theo hành động, không lặp góc cảnh trước
+        found = {number: content.muse_prompt(prompt, durations[number - 1], aspect, style) for number, prompt in found.items()}
+    if library and not shot_mode:  # thư viện góc quay (chia theo góc quay thì giữ đúng góc máy của video gốc): mỗi cảnh đúng 3 góc, chọn theo hành động, không lặp góc cảnh trước
         from . import camera_library
         plans = camera_library.plans([f"{lines[n - 1]} {found.get(n, '')}" for n in range(1, total + 1)], seconds,
                                      custom_angles, windows)  # góc theo điểm cắt FFmpeg đo được trong từng cảnh
         found = {number: camera_library.apply(prompt, plans[number - 1], seconds) for number, prompt in found.items() if prompt}
-    return {"english": [found.get(number, "") for number in range(1, total + 1)], "missing": missing, "lines": lines,
+    return {"english": [found.get(number, "") for number in range(1, total + 1)], "missing": missing, "lines": original_lines,
+            "durations": durations if shot_mode else None,
             "issues": issues,
             "structured": structured,
             "total": total, "rounds": rounds}
@@ -1179,7 +1202,9 @@ class GeminiWebRunner:
                 status("FFmpeg + Shot Detection: đang tìm điểm cắt cảnh trong video gốc…")
                 try:
                     shots, duration = reverse_engineer.quick_shots(source, self.stop)
-                    windows = content.scene_windows(shots, duration)
+                    # Mặc định: mỗi lần video gốc đổi góc máy là một cảnh (đúng số giây của góc đó); "fixed": 10 giây một cảnh.
+                    windows = (content.scene_windows(shots, duration) if lines.get("split") == "fixed"
+                               else content.shot_windows(shots, duration))
                     status(f"Đã tìm {len(shots or [])} điểm cắt · chia {len(windows or [])} cảnh 10 giây")
                 except Exception as error:  # không đo được: vẫn cho Gemini xem file, chỉ bỏ bảng cảnh
                     if self.stop.is_set():
@@ -1283,7 +1308,7 @@ class GeminiWebRunner:
                                          kind == "review", self.profile.parent / "gemini-uploads" / "doan")
                     result["prompts"] = content.format_prompts(result["scenes"])
                     self.set(busy=False, result=result,
-                             status=f"Xong: {len(result['scenes'])} cảnh, gửi lần lượt {-(-len(windows) // CHUNK_SCENES)} đoạn")
+                             status=f"Xong: {len(result['scenes'])} cảnh, gửi lần lượt {len(chunk_windows(windows))} đoạn")
                     continue
                 result = run_conversation(self.session, prompt, status, self.stop, email, model, kind == "review",
                                           files=files, windows=windows, shots=shots)

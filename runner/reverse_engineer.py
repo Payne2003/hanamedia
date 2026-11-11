@@ -121,6 +121,10 @@ def contact_sheets(path, windows, folder, stop=None, status=lambda text: None, c
     folder.mkdir(parents=True, exist_ok=True)
     if not windows:
         return []
+    if all(w.get("shot") for w in windows):
+        # Chia cảnh theo góc quay (mỗi cảnh một góc): xếp các cảnh liền nhau từ trái sang phải, mỗi hàng `columns` cảnh.
+        windows = [{"start": 0.0, "angles": [(float(w["start"]), float(w["end"])) for w in windows[i:i + columns]]}
+                   for i in range(0, len(windows), columns)]
     rows = max(6, math.ceil(len(windows) / max_sheets))
     width, height = TILE
     fit = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
