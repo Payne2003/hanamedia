@@ -224,32 +224,43 @@
           <button id="sharedLogin" type="button" class="full primary" hidden>Đăng nhập tài khoản chung (mở Chrome thường)</button>
           <p class="detail" id="sharedHint" hidden><b>Cách đăng nhập:</b> cửa sổ mở 3 tab. Tab 1 đăng nhập Google; tab 2 ChatGPT bấm <b>Continue with Google</b> và chọn đúng tài khoản. Xong thì <b>đóng hẳn cửa sổ đó</b>. Đổi sang tài khoản chung lần đầu cần đăng nhập lại một lần; hồ sơ riêng cũ vẫn giữ để tắt chế độ này là dùng lại được.</p>
         </div>
-        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">G</span><div><h3>Gemini Pro</h3><small>Viết kịch bản, chia cảnh, tìm nhân vật, prompt tiếng Anh</small></div><span id="geminiBadge" class="status-chip">Chưa đặt tài khoản</span></div>
-          <div class="content-grid" hidden><label>Tài khoản Google <small>(không bắt buộc · để tool kiểm tra đúng tài khoản)</small><input id="autoEmail" type="email" maxlength="254" placeholder="ten@gmail.com"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40" placeholder="Pro"><datalist id="autoModels"><option value="Pro"><option value="Argon"><option value="Flash"></datalist></label></div>
-          <div class="gemini-mode" role="radiogroup" aria-label="Cách dùng Gemini"><label><input type="radio" name="geminiApiMode" value="api"><span><b>Gemini API key</b><small>Khuyên dùng · ổn định, không cần Chrome</small></span></label><label><input type="radio" name="geminiApiMode" value="web"><span><b>Gemini trên Chrome</b><small>Điều khiển trang web gemini.google.com</small></span></label></div>
-          <div id="geminiApiBox" class="gemini-api-box">
-            <div class="api-key-row"><label>API key Gemini<input id="geminiApiKey" type="password" autocomplete="off" spellcheck="false" maxlength="200" placeholder="Dán API key lấy ở Google AI Studio"></label><button id="geminiApiKeyPage" type="button">🔑 Lấy API key</button></div>
-            <div class="api-key-row"><button id="geminiApiSave" type="button" class="primary">Lưu API key</button><button id="geminiApiTest" type="button">Kiểm tra</button><button id="geminiApiRemove" type="button" class="danger-outline">Xóa khóa</button><span id="geminiApiState" class="detail"></span></div>
-            <div class="content-grid"><label>Model<select id="geminiApiModel"></select></label><label>Cấp độ tư duy<select id="geminiApiThinking"><option value="">Mặc định của model</option><option value="low">Thấp · nhanh, tiết kiệm</option><option value="medium">Trung bình · cân bằng</option><option value="high">Cao · kỹ lưỡng nhất</option></select></label></div>
-            <label class="api-rpm">Số yêu cầu tối đa mỗi phút <small>(tool tự đợi giữa các yêu cầu để không bị lỗi 429 · 0 = không giới hạn · Khóa miễn phí: Pro ~5, Flash ~10–15. Đã bật thanh toán: 60 trở lên.)</small><input id="geminiApiRpm" type="number" min="0" max="1000" step="1"></label>
-            <button id="geminiApiModels" type="button" class="full">↻ Tải danh sách model của API key</button>
-            <p class="detail"><b>Cách lấy khóa:</b> bấm <b>🔑 Lấy API key</b> (mở Google AI Studio) → đăng nhập Google → <b>Create API key</b> → sao chép rồi dán vào ô trên, bấm <b>Lưu</b>. Khóa được mã hóa và chỉ lưu trên máy này. Video gốc và ảnh khung hình được tải lên qua Files API của Google; phí tính theo bảng giá API của tài khoản Google.</p>
+        <div class="card settings-card ai-card"><div class="settings-head"><span class="settings-icon">G</span><div><h3>Gemini</h3><small>Phân tích video, chia cảnh, tìm nhân vật · chạy bằng API key</small></div><span id="geminiBadge" class="status-chip">Chưa có API key</span></div>
+          <div class="content-grid" hidden><label>Tài khoản Google<input id="autoEmail" type="email" maxlength="254"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40"><datalist id="autoModels"><option value="Pro"><option value="Flash"></datalist></label></div>
+          <div id="geminiApiBox" class="ai-body">
+            <section class="ai-section">
+              <div class="ai-section-title"><span class="ai-step">1</span><div><b>API key</b><small>Lấy miễn phí ở Google AI Studio</small></div></div>
+              <div class="ai-key-field"><input id="geminiApiKey" type="password" autocomplete="off" spellcheck="false" maxlength="200" placeholder="Dán API key vào đây" aria-label="API key Gemini"><button id="geminiApiKeyPage" type="button" class="ghost">🔑 Lấy API key</button></div>
+              <div class="ai-actions"><button id="geminiApiSave" type="button" class="primary">Lưu API key</button><button id="geminiApiTest" type="button">Kiểm tra</button><button id="geminiApiRemove" type="button" class="danger-outline">Xóa khóa</button></div>
+              <p id="geminiApiState" class="ai-state"></p>
+            </section>
+            <section class="ai-section">
+              <div class="ai-section-title"><span class="ai-step">2</span><div><b>Model và tốc độ</b><small>Áp dụng cho phân tích video và viết prompt bằng Gemini</small></div><button id="geminiApiModels" type="button" class="ghost small">↻ Tải danh sách model</button></div>
+              <div class="ai-grid">
+                <label class="ai-field">Model<select id="geminiApiModel"></select></label>
+                <label class="ai-field">Cấp độ tư duy<select id="geminiApiThinking"><option value="">Mặc định của model</option><option value="low">Thấp · nhanh, tiết kiệm</option><option value="medium">Trung bình · cân bằng</option><option value="high">Cao · kỹ lưỡng nhất</option></select></label>
+                <label class="ai-field">Yêu cầu tối đa mỗi phút<input id="geminiApiRpm" type="number" min="0" max="1000" step="1"></label>
+                <p class="ai-hint">Tool tự giãn cách để không bị lỗi 429. Khóa miễn phí: Pro khoảng 5, Flash khoảng 10–15. Đã bật thanh toán: 60 trở lên. Nhập 0 là không giới hạn.</p>
+              </div>
+            </section>
+            <details class="ai-help"><summary>Cách lấy API key</summary><p>Bấm <b>🔑 Lấy API key</b> (mở Google AI Studio), đăng nhập Google, bấm <b>Create API key</b>, sao chép rồi dán vào ô trên và bấm <b>Lưu API key</b>. Khóa được mã hóa và chỉ lưu trên máy này. Video và ảnh khung hình được tải lên qua Files API của Google; phí (nếu có) tính theo tài khoản Google của bạn.</p></details>
           </div>
-          <div id="geminiApiWebBox">
-          <button id="loginAuto" type="button" class="full">Đăng nhập Google · Gemini (mở Chrome thường)</button>
-          <p class="detail"><b>Lần đầu:</b> bấm Đăng nhập để mở Chrome thường bằng hồ sơ riêng của tool, đăng nhập tài khoản Google của bạn (tool không đọc mật khẩu), thấy trang Gemini thì <b>đóng hẳn cửa sổ đó</b>. Các lần sau chỉ cần bấm Chạy. Tool tự dán yêu cầu, chờ Gemini viết, tự nhắn “viết tiếp” khi câu trả lời bị cắt rồi đọc kết quả. Giữ cửa sổ Gemini mở, không gõ vào đó khi tool đang chạy.</p>
-          </div>
+          <div id="geminiApiWebBox" hidden><button id="loginAuto" type="button" hidden>Đăng nhập Gemini</button></div>
         </div>
-        <div class="card settings-card"><div class="settings-head"><span class="settings-icon">AI</span><div><h3>ChatGPT</h3><small>Tìm nhân vật và viết prompt tiếng Anh</small></div><span id="chatgptBadge" class="status-chip">Chưa kiểm tra</span></div>
-          <div class="gemini-mode" role="radiogroup" aria-label="Viết prompt bằng"><label><input type="radio" name="promptProvider" value="gemini"><span><b>Gemini API · miễn phí</b><small>Dùng chung khóa Gemini ở thẻ Gemini Pro</small></span></label><label><input type="radio" name="promptProvider" value="openai"><span><b>ChatGPT Plus trên Chrome</b><small>Dùng gói ChatGPT bạn đang có, không cần API key</small></span></label></div>
-          <p id="promptGeminiNote" class="detail" hidden><b>Viết prompt và kiểm duyệt bằng Gemini API</b>, dùng model, cấp độ tư duy và giới hạn yêu cầu/phút ở thẻ <b>Gemini Pro</b>. Prompt được viết và kiểm duyệt lần lượt từng nhóm 10 cảnh. Gợi ý model: <code>gemini-3-flash-preview</code> hoặc <code>gemini-flash-latest</code>.</p>
-          <div id="openaiBox">
-          <div id="chatgptApiWebBox">
-          <label class="api-rpm">Chế độ ChatGPT tool chọn trên chatgpt.com<select id="chatgptModel"><option value="Thinking">Thinking · viết và kiểm duyệt kỹ nhất (khuyên dùng)</option><option value="Auto">Auto · nhanh hơn, chất lượng khá</option><option value="Instant">Instant · nhanh, dễ sai định dạng</option><option value="">Giữ chế độ đang chọn trên chatgpt.com</option></select></label>
-          <p class="detail">Hết lượt Thinking của gói Plus thì tool tự chuyển sang Auto và gửi lại.</p>
-          <button id="loginChatgpt" type="button" class="full">Đăng nhập ChatGPT (mở Chrome thường)</button>
-          <p class="detail">Lần đầu: bấm Đăng nhập ChatGPT, đăng nhập tài khoản ChatGPT của bạn trong Chrome vừa mở, thấy ô nhắn tin thì đóng hẳn cửa sổ đó. ChatGPT chạy trong Chrome riêng, tách khỏi Gemini.</p>
-          </div>
+        <div class="card settings-card ai-card"><div class="settings-head"><span class="settings-icon">AI</span><div><h3>Viết prompt tiếng Anh</h3><small>Chọn AI viết và kiểm duyệt prompt cho Muse</small></div><span id="chatgptBadge" class="status-chip">Chưa kiểm tra</span></div>
+          <div class="ai-body">
+            <div class="ai-choices" role="radiogroup" aria-label="Viết prompt bằng">
+              <label><input type="radio" name="promptProvider" value="gemini"><span class="ai-choice-icon">G</span><span><b>Gemini API</b><small>Miễn phí · dùng chung khóa ở thẻ Gemini</small></span></label>
+              <label><input type="radio" name="promptProvider" value="openai"><span class="ai-choice-icon">AI</span><span><b>ChatGPT Plus</b><small>Chạy trên Chrome · dùng gói Plus bạn đang có</small></span></label>
+            </div>
+            <p id="promptGeminiNote" class="ai-note" hidden>Viết và kiểm duyệt prompt bằng <b>Gemini API</b>, theo model, cấp độ tư duy và giới hạn yêu cầu/phút ở thẻ <b>Gemini</b>. Gợi ý model: <code>gemini-3-flash-preview</code> hoặc <code>gemini-flash-latest</code>.</p>
+            <div id="openaiBox">
+              <div id="chatgptApiWebBox" class="ai-section">
+                <label class="ai-field">Chế độ ChatGPT<select id="chatgptModel"><option value="Thinking">Thinking · viết và kiểm duyệt kỹ nhất (khuyên dùng)</option><option value="Auto">Auto · nhanh hơn, chất lượng khá</option><option value="Instant">Instant · nhanh, dễ sai định dạng</option><option value="">Giữ chế độ đang chọn trên chatgpt.com</option></select></label>
+                <p class="ai-hint">Hết lượt Thinking của gói Plus thì tool tự chuyển sang Auto và gửi lại.</p>
+                <button id="loginChatgpt" type="button" class="primary full">Đăng nhập ChatGPT</button>
+                <details class="ai-help"><summary>Đăng nhập lần đầu thế nào?</summary><p>Bấm <b>Đăng nhập ChatGPT</b>: Chrome mở ra, bạn đăng nhập tài khoản ChatGPT của mình. Thấy ô nhắn tin thì <b>đóng hẳn cửa sổ đó</b>. Các lần sau tool tự dùng phiên đăng nhập này. Tool không đọc hay lưu mật khẩu.</p></details>
+              </div>
+            </div>
           </div>
         </div>
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">M</span><div><h3>Tài khoản Muse</h3><small>Tạo video hàng loạt</small></div><span id="museBadge" class="status-chip">0 tài khoản</span></div>
@@ -304,7 +315,7 @@
           <ol>
             <li>Bấm <b>↓ Lấy từ danh sách cảnh</b>, chọn thời lượng, tỷ lệ khung hình, bật <b>Prompt chuẩn đủ trường</b> nếu muốn.</li>
             <li>Bấm <b>✦ Viết prompt tiếng Anh bằng ChatGPT</b>. Cảnh nào thiếu hoặc còn tiếng Việt, tool tự hỏi lại.</li>
-            <li>Viết xong, prompt <b>tự vào hàng đợi Studio</b> (kèm ảnh nhân vật và độ phân giải đã chọn). Sửa prompt rồi muốn đưa lại thì bấm <b>→ Đưa vào Studio</b>.</li>
+            <li>Viết xong nhóm nào, nhóm đó <b>tự vào hàng đợi Studio</b> ngay (đúng thứ tự cảnh) (kèm ảnh nhân vật và độ phân giải đã chọn). Sửa prompt rồi muốn đưa lại thì bấm <b>→ Đưa vào Studio</b>.</li>
           </ol>
         </details>
         <details><summary><b>4</b> Tạo video hàng loạt trên Muse</summary>
@@ -385,7 +396,7 @@
           <div>
             <div class="english-label"><label for="englishInput">Đầu vào · danh sách cảnh</label><button id="englishFromScenes" type="button" class="text-button">↓ Lấy từ danh sách cảnh</button></div>
             <textarea id="englishInput" rows="9" maxlength="600000" placeholder="Bối cảnh 1: ..., góc quay: ..., hành vi nhân vật: ..., Nội dung hành động nhân vật: ...;&#10;Bối cảnh 2: ..."></textarea>
-            <div class="content-grid english-options"><label>Phong cách chung <small>(không bắt buộc)</small><input id="englishStyle" maxlength="2000" placeholder="Ví dụ: cinematic, ánh sáng tự nhiên"></label><label>Thời lượng mỗi cảnh<select id="englishSeconds"><option value="10">10 giây · mặc định</option><option value="8">8 giây · Master Prompt 08</option><option value="5">5 giây</option></select></label><label>Góc máy<select id="englishAngles"><option value="lib">Thư viện góc quay · theo điểm cắt, ~2–3 giây một góc</option><option value="0">Theo kịch bản · tối đa 3 góc</option><option value="3">Đổi góc mỗi 2–3 giây</option></select></label><label>Tỷ lệ khung hình<select id="englishAspect"><option value="16:9">16:9 · ngang</option><option value="9:16">9:16 · dọc</option><option value="1:1">1:1 · vuông</option></select></label></div>
+            <div class="content-grid english-options"><label>Phong cách chung <small>(không bắt buộc)</small><input id="englishStyle" maxlength="2000" placeholder="Ví dụ: cinematic, ánh sáng tự nhiên"></label><label>Thời lượng mỗi cảnh<select id="englishSeconds"><option value="10">10 giây · mặc định</option><option value="8">8 giây · Master Prompt 08</option><option value="5">5 giây</option></select></label><label>Góc máy<select id="englishAngles"><option value="3">Đổi góc mỗi 2–3 giây · mặc định</option><option value="lib">Thư viện góc quay · theo điểm cắt video gốc</option><option value="0">Theo kịch bản · tối đa 3 góc</option></select></label><label>Tỷ lệ khung hình<select id="englishAspect"><option value="16:9">16:9 · ngang</option><option value="9:16">9:16 · dọc</option><option value="1:1">1:1 · vuông</option></select></label></div>
             <label class="english-format">Kiểu prompt<select id="englishFormat"><option value="detailed">Chi tiết theo mẫu (Generate… / CONTINUITY / MAIN ACTION / CAMERA SEQUENCE…) · gửi lần lượt 3 cảnh mỗi lần</option><option value="labels">Gọn có nhãn (SETTING; CHARACTERS; CAMERA…) · 10 cảnh mỗi lần</option></select></label>
             <input id="englishStructured" type="checkbox" checked hidden>
             
@@ -397,11 +408,6 @@
             <div class="english-label"><label for="englishOutput">Đầu ra · mỗi dòng 1 prompt tiếng Anh</label><b id="englishCount"></b></div>
             <textarea id="englishOutput" rows="9" placeholder="Kết quả hiện ở đây. Có thể sửa trực tiếp."></textarea>
             <div id="englishMissing" class="content-issues" hidden></div>
-            <div class="content-to-studio">
-              <div class="cts-row"><b>Ảnh nhân vật</b><small>gắn vào mọi prompt khi đưa vào Studio · tối đa 10 ảnh</small><button id="contentCharacters" type="button">👤 + Chọn ảnh nhân vật</button></div>
-              <div id="contentCharacterChips" class="image-chips"></div>
-              <div class="cts-row"><label>Độ phân giải<select id="contentResolution"><option value="1080p" selected>1080p Full HD</option><option value="4K">4K Ultra HD</option><option value="720p">720p HD</option><option value="">Giữ nguyên của Muse</option></select></label></div>
-            </div>
             <div class="content-actions"><button id="useEnglish" type="button" class="primary">→ Đưa vào Studio</button><button id="copyEnglish" type="button">⧉ Chép</button><button id="downloadEnglish" type="button">⇩ Tải .txt</button></div>
           </div>
         </div>

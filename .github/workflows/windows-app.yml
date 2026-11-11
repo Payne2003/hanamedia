@@ -173,7 +173,12 @@ jobs:
           mkdir -p dmg
           cp -R dist/HanaMedia.app dmg/
           ln -s /Applications dmg/Applications
-          hdiutil create -volname "HANA MEDIA" -srcfolder dmg -ov -format UDZO "dist/HanaMedia-$v-${{ matrix.suffix }}.dmg"
+          # hdiutil trên máy build đôi khi báo "Resource busy" (ổ đĩa ảo đang bận): đợi rồi thử lại tối đa 5 lần.
+          for attempt in 1 2 3 4 5; do
+            if hdiutil create -volname "HANA MEDIA" -srcfolder dmg -ov -format UDZO "dist/HanaMedia-$v-${{ matrix.suffix }}.dmg"; then break; fi
+            if [ "$attempt" = 5 ]; then exit 1; fi
+            echo "hdiutil lỗi, thử lại lần $((attempt + 1))…"; sleep $((attempt * 10))
+          done
           (cd dist && shasum -a 256 "HanaMedia-$v-${{ matrix.suffix }}.dmg" > "HanaMedia-$v-${{ matrix.suffix }}.dmg.sha256")
       - uses: actions/upload-artifact@v4
         with:

@@ -287,7 +287,7 @@ function showView(view){
   if(isLicense)loadLicense();
   if(isSettings){applyAutoSettings(true);renderSettings(true);}
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
-  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;renderVideoFile();$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles??'lib');renderEnglishEngine();openCharacters();}
+  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;renderVideoFile();$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles??'3');renderEnglishEngine();openCharacters();}
   const hash=isProduction?'#production':isContent?'#content':isSettings?'#settings':isMedia?'#media':isCommunity?'#community':isLicense?'#license':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);markSidebar();
 }
@@ -433,6 +433,7 @@ function applyPartial(engine,job,web){
     content[textKey]=p.english.join('\n');saveContent();
     if(content.englishEngine===engine)$('englishOutput').value=content[textKey];
     renderEnglish();
+    queueEnglishGroup(engine,p.english,Math.min(p.done,p.english.length),false);
   }else if(job.kind==='promptreview'&&reviewOne===null){
     const lines=(content[textKey]||'').split('\n');p.english.forEach((line,i)=>{if(line)lines[i]=line;});
     content[textKey]=lines.join('\n');saveContent();
@@ -445,7 +446,8 @@ function finishEnglish(engine,result){
   content[textKey]=result.english.join('\n');content[missingKey]=result.missing;content[textKey+'Issues']=result.issues||[];content[textKey+'Sources']=result.lines||splitSceneLines(content.englishInput);saveContent();
   if(content.englishEngine===engine)renderEnglishEngine();
   const name=engineNames[engine];
-  if(!pipeline&&result.english.some(line=>String(line||'').trim()))setTimeout(()=>sendEnglishToStudio(true),1500);
+  if(studioRun&&studioRun.engine===engine)queueEnglishGroup(engine,result.english,result.english.length,true);
+  else if(!pipeline&&result.english.some(line=>String(line||'').trim()))setTimeout(()=>sendEnglishToStudio(true),1500);
   toast(result.missing.length?`${name} viết ${result.total-result.missing.length}/${result.total} prompt; còn thiếu cảnh ${result.missing.join(', ')}. Bấm chạy lại hoặc tự sửa.`:`${name}: đủ ${result.total} prompt tiếng Anh (${result.rounds} lượt trả lời).`,Boolean(result.missing.length));
 }
 function pollChat(){
@@ -466,8 +468,9 @@ $('englishInput').oninput=()=>{content.englishInput=$('englishInput').value;save
 $('englishStyle').oninput=()=>{content.englishStyle=$('englishStyle').value;saveContent();};
 $('englishAspect').onchange=()=>{content.englishAspect=$('englishAspect').value;saveContent();};
 $('englishSeconds').onchange=()=>{content.englishSeconds=Number($('englishSeconds').value);saveContent();};
-$('englishAngles').onchange=()=>{content.englishAngles=$('englishAngles').value;try{localStorage.setItem('hana-english-angles',String(content.englishAngles));}catch{}};
-try{const saved=localStorage.getItem('hana-english-angles');content.englishAngles=['lib','0','3'].includes(saved)?saved:'lib';}catch{content.englishAngles='lib';}
+// Mặc định đổi góc mỗi 2–3 giây (khóa lưu mới: lựa chọn cũ "Thư viện góc quay" do mặc định trước đây không giữ lại).
+$('englishAngles').onchange=()=>{content.englishAngles=$('englishAngles').value;try{localStorage.setItem('hana-english-angles-v2',String(content.englishAngles));}catch{}};
+try{const saved=localStorage.getItem('hana-english-angles-v2');content.englishAngles=['lib','0','3'].includes(saved)?saved:'3';}catch{content.englishAngles='3';}
 $('englishStructured').onchange=()=>{content.englishStructured=$('englishStructured').checked;saveContent();};
 $('englishFormat').value=content.englishFormat||'detailed';
 $('englishFormat').onchange=()=>{content.englishFormat=$('englishFormat').value;saveContent();};
@@ -486,8 +489,9 @@ async function startEnglish(silent){
     else await api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()});
     const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked,format:$('englishFormat').value,angles:$('englishAngles').value==='lib'?0:Number($('englishAngles').value),library:$('englishAngles').value==='lib',seconds:Number($('englishSeconds').value),windows:(content.windows||[]).length?content.windows:undefined});
     lastJobError='';
-    if(engine==='gemini'){autoJob={id,kind:'english'};renderAuto();}else{chatJob={id};renderEnglishRun();}
-    refresh();toast(`Đã gửi ${total} cảnh cho ${engineNames[engine]}.`);return true;
+    if(engine==='gemini'){autoJob={id,kind:'english'};renderAuto();}else{chatJob={id,kind:'english'};renderEnglishRun();}
+    studioRun={engine,batch:crypto.randomUUID(),sent:0,next:0,ordinals:{},prompts:{},added:0};
+    refresh();toast(`Đã gửi ${total} cảnh cho ${engineNames[engine]}. Nhóm prompt nào xong sẽ tự vào hàng đợi Studio.`);return true;
   }catch(error){toast(error.message,true);return false;}
 }
 // ---- Kiểm duyệt prompt: quy tắc + khóa (lưu trên máy, người dùng cập nhật dần) ----
@@ -531,6 +535,7 @@ function finishReview(engine,result){
     return toast(left?`Prompt ${line} vẫn còn lỗi, thử tạo lại lần nữa hoặc sửa tay.`:`Đã tạo lại prompt ${line}.`,Boolean(left));
   }
   content[textKey]=result.english.join('\n');content.reviewIssues=result.issues||[];content.reviewViolations=result.violations||{};content.reviewed=true;saveContent();
+  if(!pipeline&&studioRun&&studioRun.engine===engine)syncReviewedToStudio();  // prompt đã ở Studio: thay bằng bản đã kiểm duyệt
   if(content.englishEngine===engine)renderEnglishEngine();
   renderReviewIssues();
   const left=Object.keys(result.violations||{}).length;
@@ -593,7 +598,7 @@ async function runPipelineFlow(){
     if(!await startReview())throw Error('Không chạy được bước kiểm duyệt.');
     await waitJobs();
     pipeStep('review','done');setStep(4);
-    await sendEnglishToStudio(true);
+    await syncReviewedToStudio();
   }catch(error){pipeStep(current,'failed');toast(`Dừng ở bước “${document.querySelector(`#pipelineSteps [data-pipe="${current}"]`).textContent}”: ${error.message}`,true);}
   finally{pipeline=null;renderAuto();}
 }
@@ -625,6 +630,47 @@ function splitSceneLines(text){
 let promptSources={},promptScenes={};
 try{promptSources=JSON.parse(localStorage.getItem('hana-prompt-sources')||'{}')||{};promptScenes=JSON.parse(localStorage.getItem('hana-prompt-scenes')||'{}')||{};}catch{}
 function rememberSources(pairs){promptSources={};promptScenes={};for(const [prompt,source,scene] of pairs){if(source)promptSources[prompt]=source;if(scene)promptScenes[prompt]=scene;}try{localStorage.setItem('hana-prompt-sources',JSON.stringify(promptSources));localStorage.setItem('hana-prompt-scenes',JSON.stringify(promptScenes));}catch{}}
+// Viết prompt lần lượt từng nhóm: nhóm nào xong đưa ngay vào hàng đợi Studio (cùng một lượt, đúng thứ tự cảnh),
+// không đợi viết hết. Kiểm duyệt sửa lại prompt sau đó thì thay chữ của prompt còn Chờ trong Studio.
+let studioRun=null,studioQueue=Promise.resolve();
+function queueEnglishGroup(engine,lines,upto,final){
+  const run=studioRun;if(!run||run.engine!==engine)return;
+  studioQueue=studioQueue.then(async()=>{
+    if(studioRun!==run)return;
+    const sources=splitSceneLines(content.englishInput),from=run.sent,picked=[];
+    const sceneIds=project&&project.scenes.length===sources.length?project.scenes.map(x=>x.id):[];
+    const tooLong=[];
+    for(let i=from;i<upto;i++){const line=String(lines[i]||'').trim();if(line.length>20000)tooLong.push(i+1);else if(line)picked.push([i,line,sources[i]||'',sceneIds[i]||null]);}
+    if(tooLong.length)toast(`Prompt ${tooLong.join(', ')} dài quá 20.000 ký tự nên chưa đưa vào Studio. Rút gọn trong ô Đầu ra rồi bấm “→ Đưa vào Studio”.`,true);
+    if(!picked.length&&!(final&&run.added))return;
+    const group=picked.length?picked:[[run.lastIndex,run.prompts[run.lastIndex],run.lastSource||'',run.lastScene||null]];
+    const start=picked.length?run.next:run.ordinals[run.lastIndex];
+    const options={...videoOptions(),duration:0,aspect:content.englishAspect||$('vAspect').value};
+    try{
+      await api('/api/jobs',{prompts:group.map(g=>g[1]),cost:Number($('cost').value)||1,mode:'text',batch:run.batch,append:start,more:!final,
+        images:group.map(()=>[]),sources:group.map(g=>g[2]),scene_ids:group.map(g=>g[3]),options});
+      if(picked.length){
+        picked.forEach(([i,line,source,scene],n)=>{run.ordinals[i]=start+n;run.prompts[i]=line;run.lastIndex=i;run.lastSource=source;run.lastScene=scene;});
+        run.next+=picked.length;run.added+=picked.length;
+        toast(`Đã đưa prompt ${picked[0][0]+1}–${picked[picked.length-1][0]+1} vào hàng đợi Studio (tổng ${run.added})${final?' · xong lượt viết':''}.`);
+      }
+      run.sent=upto;
+      if(final){content.sentToStudio=Object.values(run.prompts).join('\n');saveContent();}
+      refresh();
+    }catch(error){toast('Chưa đưa được nhóm prompt vào Studio: '+error.message,true);}
+  });
+}
+async function syncReviewedToStudio(){
+  await studioQueue;const run=studioRun;if(!run)return;
+  const [textKey]=englishKey(run.engine),lines=(content[textKey]||'').split('\n');let changed=0;
+  for(const [index,ordinal] of Object.entries(run.ordinals)){
+    const line=String(lines[index]||'').trim();
+    if(!line||line===run.prompts[index]||line.length>20000)continue;
+    try{const r=await api('/api/jobs/reprompt',{batch:run.batch,ordinal,prompt:line});if(r.changed){run.prompts[index]=line;changed++;}}catch{}
+  }
+  await refresh();showView('studio');
+  toast(`Xong: ${run.added} prompt đã ở hàng đợi Studio${changed?` · cập nhật ${changed} prompt đã kiểm duyệt`:''}. Bấm ▶ Chạy để tạo video.`);
+}
 $('useEnglish').onclick=()=>sendEnglishToStudio(false);
 // Viết prompt xong là tự đưa vào hàng đợi Studio (auto); bấm nút thì đưa lại theo ý người dùng.
 // Không đưa trùng: bộ prompt đã đưa tự động rồi thì lần tự động sau bỏ qua.
@@ -641,7 +687,7 @@ async function sendEnglishToStudio(auto){
   rememberSources(pairs);
   // Đưa thẳng từng prompt vào hàng đợi Studio (không qua khung nhập), kèm ảnh nhân vật đã chọn và độ phân giải.
   // Thời lượng để trống: mỗi prompt đã ghi đúng số giây của cảnh (Generate a N-second…), không ép một số chung.
-  const options={...videoOptions(),duration:0,resolution:$('contentResolution').value,aspect:content.englishAspect||$('vAspect').value};
+  const options={...videoOptions(),duration:0,aspect:content.englishAspect||$('vAspect').value};
   const cost=Number($('cost').value)||1,button=$('useEnglish');button.disabled=true;
   try{
     await api('/api/jobs',{prompts,cost,mode:'text',batch:crypto.randomUUID(),images:prompts.map(()=>[]),
@@ -929,7 +975,7 @@ function renderSettings(force){
   $('sharedBadge').textContent=shared.enabled?(shared.login_open?'Cửa sổ đăng nhập đang mở':shared.profile_used?'✓ Đang bật':'Đang bật · chưa đăng nhập'):'Đang tắt';
   $('sharedBadge').className='status-chip '+(shared.enabled?(shared.profile_used?'approved':'review'):'');
   $('sharedLogin').hidden=$('sharedHint').hidden=!shared.enabled;$('sharedLogin').disabled=Boolean(shared.login_open);
-  for(const id of ['loginAuto','loginChatgpt']){$(id).textContent=shared.enabled?'Đăng nhập bằng tài khoản chung (ở trên)':{loginAuto:'Đăng nhập Google · Gemini (mở Chrome thường)',loginChatgpt:'Đăng nhập ChatGPT (mở Chrome thường)'}[id];}
+  for(const id of ['loginAuto','loginChatgpt']){$(id).textContent=shared.enabled?'Đăng nhập bằng tài khoản chung (ở trên)':{loginAuto:'Đăng nhập Google · Gemini (mở Chrome thường)',loginChatgpt:'Đăng nhập ChatGPT'}[id];}
   const seen=web.account?.logged_in?(web.account.email||'đã đăng nhập'):'';
   $('geminiAccountLine').innerHTML=`Tài khoản Gemini: <b>${esc(email||seen||'chưa đăng nhập')}</b>${model?` · model ${esc(model)}`:''} · <button type="button" class="text-button" data-open-settings>⚙ Đổi trong Cài đặt</button>`;
   if(force||document.activeElement!==$('chatgptModel'))$('chatgptModel').value=chat.model||'';
@@ -1237,10 +1283,8 @@ document.addEventListener('click',e=>{if(e.target.closest('#hideStitch')){stitch
 for(const id of ['vAspect','vDuration','vResolution','vStitch','vAccount'])$(id).addEventListener('change',saveVideoSettings);
 $('vStitch').addEventListener('change',()=>{if($('vStitch').checked&&stitchHidden){stitchHidden=false;try{localStorage.removeItem('hana-hide-stitch');}catch{}if(state)renderStitchPanel();}});
 $('vCharacters').onclick=()=>openPicker('characters');
-$('contentCharacters').onclick=()=>openPicker('characters');
 $('vClearCharacters').onclick=()=>{fixedCharacters=[];saveVideoSettings();renderFixedCharacters();};
 $('vCharacterChips').onclick=e=>{const b=e.target.closest('[data-remove-fixed]');if(!b)return;fixedCharacters.splice(Number(b.dataset.removeFixed),1);saveVideoSettings();renderFixedCharacters();}
-$('contentCharacterChips').onclick=$('vCharacterChips').onclick;;
 loadVideoSettings();renderFixedCharacters();if(state){renderNickOptions();renderStitchPanel();}
 
 // ===== Thanh hỗ trợ trên cùng (lời nhắn, SĐT, ảnh QR do người dùng tải lên; không có popup) =====

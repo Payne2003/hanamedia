@@ -71,7 +71,8 @@ class AppServer(ThreadingHTTPServer):
                 "model": self.store.setting(prefix + "_model") or module.DEFAULT_MODEL,
                 "thinking": self.store.setting(prefix + "_thinking") or "",
                 "rpm": self.api_rpm(engine),
-                "mode": "api" if key and self.store.setting(mode_key, "api") == "api" else "web",
+                # Gemini chỉ dùng API key (đã bỏ chế độ điều khiển Gemini trên Chrome): có khóa là dùng API.
+                "mode": "api" if key and (engine == "gemini" or self.store.setting(mode_key, "api") == "api") else "web",
                 "key_page": module.KEY_PAGE,
                 # ChatGPT: viết/kiểm duyệt prompt bằng OpenAI (trả phí) hay bằng khóa Gemini (miễn phí)
                 "provider": (self.store.setting("chatgpt_provider") or "openai") if engine == "chatgpt" else "gemini"}
@@ -93,9 +94,9 @@ class AppServer(ThreadingHTTPServer):
         if engine == "chatgpt":
             # Không dùng OpenAI API: viết prompt bằng khóa Gemini (miễn phí) hoặc ChatGPT Plus trên Chrome (None).
             return self.gemini_writer() if info["provider"] == "gemini" else None
-        if info["mode"] != "api":
-            return None
         key, _ = self.key_vault.credential(engine)
+        if not key:
+            raise ValueError("Chưa có API key Gemini. Vào Cài đặt → Gemini, bấm “Lấy API key”, dán khóa rồi bấm Lưu.")
         return gemini_api.GeminiAPISession(key, info["model"], info["thinking"], rpm=info["rpm"])
 
     def gemini_writer(self):
@@ -384,7 +385,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({"error": "Không ghi được file vào thư mục dữ liệu. Kiểm tra dung lượng ổ đĩa và quyền ghi."}, 500)
 
     # Bản quyền: chạy video / tải media cần quyền tương ứng còn hạn. Xem dữ liệu, cài đặt, kích hoạt luôn được phép.
-    JOB_PATHS = {"/api/jobs", "/api/start", "/api/jobs/update", "/api/jobs/rerun", "/api/retry", "/api/jobs/fetch", "/api/batch/stitch",
+    JOB_PATHS = {"/api/jobs", "/api/jobs/reprompt", "/api/start", "/api/jobs/update", "/api/jobs/rerun", "/api/retry", "/api/jobs/fetch", "/api/batch/stitch",
                  "/api/jobs/characters", "/api/jobs/attach-characters", "/api/login", "/api/accounts/login-all",
                  "/api/review", "/api/accounts/check", "/api/accounts/check-all",
                  "/api/production/agent/run", "/api/production/agent/approve", "/api/production/agent/api-test",
@@ -875,13 +876,17 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     store.enqueue(body["prompts"], body["cost"], body["batch"],
                                   body.get("images"), body.get("mode", "text"), body.get("sources"),
-                                  body.get("scene_ids"), body.get("options"))
+                                  body.get("scene_ids"), body.get("options"), body.get("append"), body.get("more") is True)
                 except Exception:
                     self.server.license.refund_jobs(reserved, count)
                     raise
                 if len(store.snapshot()["jobs"]) == before:  # gửi lại cùng mã yêu cầu: không tính quota lần nữa
                     self.server.license.refund_jobs(reserved, count)
                 engine.changed.set()
+            elif path == "/api/jobs/reprompt":
+                changed = store.reprompt(body.get("batch"), body.get("ordinal"), body.get("prompt"))
+                engine.changed.set()
+                return self.reply({"ok": True, "changed": changed})
             elif path == "/api/batch/stitch":
                 if not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", str(body.get("batch", ""))):
                     raise ValueError("Lượt chạy không hợp lệ.")
