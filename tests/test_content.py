@@ -702,7 +702,7 @@ class ChatGPTEngineTests(unittest.TestCase):
         try:
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
             connection.request("POST", "/api/content/english-run", body=json.dumps(
-                {"engine": "chatgpt", "text": "Bối cảnh 1: Vách đá"}),
+                {"engine": "chatgpt", "text": "Bối cảnh 1: Vách đá", "format": "labels"}),
                 headers={"Content-Type": "application/json", "Origin": server.origin, "X-Runner-Key": server.secret})
             reply = json.loads(connection.getresponse().read())
             self.assertEqual(reply["engine"], "chatgpt")

@@ -1056,7 +1056,9 @@ class Handler(BaseHTTPRequestHandler):
                                    (store.setting("chatgpt_web_model", "Thinking") if chatgpt else store.setting("gemini_web_model") or ""), lines,
                                                    (str(body.get("style") or ""),
                                                     body.get("aspect") if body.get("aspect") in content.ASPECTS else "16:9",
-                                                    body.get("structured") is not False,
+                                                    # kiểu prompt: chi tiết theo mẫu (mặc định, gửi từng cảnh) hoặc gọn có nhãn
+                                                    (body.get("structured") is not False) if body.get("format") == "labels"
+                                                    else "detailed",
                                                     body.get("seconds") if body.get("seconds") in content.SECONDS_CHOICES
                                                     else content.DEFAULT_SECONDS,
                                                     body.get("angles") if body.get("angles") in content.ANGLE_CHOICES else 0,
