@@ -1033,7 +1033,8 @@ class Handler(BaseHTTPRequestHandler):
                                                     else content.DEFAULT_SECONDS,
                                                     body.get("angles") if body.get("angles") in content.ANGLE_CHOICES else 0,
                                                     body.get("library") is True,
-                                                    str(store.setting("camera_custom") or "")[:20000]))
+                                                    str(store.setting("camera_custom") or "")[:20000],
+                                                    content.clean_windows(body.get("windows"))))
                 return self.reply({"ok": True, "id": job, "total": len(lines), "engine": "chatgpt" if chatgpt else "gemini"})
             elif path == "/api/projects/create":
                 registry = store.characters

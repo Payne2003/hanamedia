@@ -62,10 +62,10 @@ def http(method, url, key="", payload=None, data=None, headers=None, timeout=600
         return (result, got) if want_headers else result
     except urllib.error.HTTPError as error:
         try:
-            detail = json.loads(error.read(200000) or b"{}").get("error", {}).get("message", "")
+            info = json.loads(error.read(200000) or b"{}").get("error", {})
         except Exception:
-            detail = ""
-        raise HTTPFailure(error.code, detail) from None
+            info = {}
+        raise HTTPFailure(error.code, info.get("message", ""), info.get("details") or []) from None
     except APIError:
         raise
     except Exception as error:
@@ -79,10 +79,21 @@ class HTTPFailure(GeminiAPIError):
                 429: "Đã chạm hạn mức/giới hạn tốc độ của API key", 500: "Máy chủ Gemini lỗi tạm thời",
                 503: "Gemini đang quá tải"}
 
-    def __init__(self, code, detail=""):
+    def __init__(self, code, detail="", details=()):
         self.code, self.detail = code, str(detail or "")[:300]
+        # Google ghi loại hạn mức (theo phút / theo ngày) và thời gian nên đợi trong phần details.
+        blob = json.dumps(details, ensure_ascii=False)[:4000] + " " + str(detail or "")
+        delay = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', blob) or re.search(r"retry in (\d+(?:\.\d+)?)\s*s", blob, re.I)
+        self.retry_after = min(300.0, float(delay.group(1))) if delay else None
+        self.daily = bool(re.search(r"PerDay|per.?day|daily", blob, re.I))
+        self.no_free_tier = bool(re.search(r"limit:\s*0\b", blob))
+        self.quota = code == 429 and bool(re.search(r"quota", blob, re.I))
         text = self.MESSAGES.get(code, f"Gemini API trả lỗi HTTP {code}")
-        super().__init__(text + (f": {self.detail}" if self.detail else "") + ".")
+        if self.quota:
+            text = ("Model này không có hạn mức miễn phí cho API key (cần bật thanh toán)" if self.no_free_tier else
+                    "API key đã hết hạn mức trong ngày của model này" if self.daily else
+                    "API key chạm giới hạn số yêu cầu/token mỗi phút")
+        super().__init__(text + (f" ({self.detail[:160]})" if self.detail else "") + ".")
 
 
 def list_models(key):
@@ -196,14 +207,38 @@ class GeminiAPISession:
                 if error.code == 400 and self.max_output > 8192 and re.search(r"max.?output|token", error.detail, re.IGNORECASE):
                     self.max_output = 8192  # model giới hạn độ dài trả lời thấp hơn: hỏi lại với giới hạn của model
                     continue
+                if error.quota and (error.daily or error.no_free_tier):
+                    # Hết hạn mức ngày / model không có gói miễn phí: gửi lại vô ích. Đổi sang model dự phòng (một lần).
+                    fallback = self.fallback_model()
+                    if fallback:
+                        status(f"{error} Chuyển sang model {fallback} để chạy tiếp…")
+                        self.model = fallback
+                        url = f"{BASE}/v1beta/models/{quote(self.model, safe='')}:generateContent"
+                        thinking, attempt = True, 0
+                        continue
+                    raise GeminiAPIError(str(error) + " Đợi hạn mức đặt lại (khoảng 14–15 giờ chiều giờ Việt Nam), chọn model "
+                                         "khác trong Cài đặt, hoặc bật thanh toán cho API key ở Google AI Studio.") from None
                 if error.code in (429, 500, 503) and attempt < len(RETRY_WAIT):
-                    wait = RETRY_WAIT[attempt]
+                    # Giới hạn theo phút / quá tải: đợi (theo gợi ý của Google nếu có) rồi gửi lại.
+                    wait = int(error.retry_after + 2) if error.retry_after else (max(RETRY_WAIT[attempt], 60 if RETRY_WAIT[attempt] else 0)
+                                                                               if error.quota else RETRY_WAIT[attempt])
                     attempt += 1
                     status(f"{error} Gửi lại sau {wait} giây (lần {attempt}/{len(RETRY_WAIT)})…")
                     if stop.wait(wait):
                         raise GeminiAPIError("Đã dừng.") from None
                     continue
                 raise
+
+    FALLBACKS = ("gemini-flash-latest", "gemini-flash-lite-latest")
+
+    def fallback_model(self):
+        """Model dự phòng khi model đang dùng hết hạn mức: Pro → Flash → Flash-Lite (mỗi model có hạn mức riêng)."""
+        tried = self.__dict__.setdefault("tried", {self.model})
+        for name in self.FALLBACKS:
+            if name not in tried and not (("lite" in self.model) and "lite" not in name):
+                tried.add(name)
+                return name
+        return None
 
     def call(self, url, payload, timeout, stop):
         """Chạy yêu cầu ở luồng phụ để nút Dừng có tác dụng ngay cả khi Gemini đang suy nghĩ lâu."""

@@ -96,12 +96,53 @@ def marks(seconds):
     return [(0, a), (a, b), (b, seconds)], fmt
 
 
-def pick(scene_number, text, seconds=10, avoid=(), extra=()):
-    """3 góc cho một cảnh. avoid: góc của cảnh trước (không lặp lại). Trả về danh sách 3 góc (dict)."""
+SHOT_SECONDS = 2.5   # không đo được điểm cắt: mỗi góc khoảng 2–3 giây (10 giây → 4 góc)
+MIN_SPAN = 1.2       # góc ngắn hơn mức này gộp vào góc bên cạnh (nháy, chuyển cảnh)
+MAX_SPANS = 6
+
+
+def spans(seconds=10, measured=None):
+    """Mốc giây các góc máy trong một cảnh. measured: các góc FFmpeg đo được [(a, b)…] tính từ đầu cảnh → dùng đúng
+    điểm cắt thật (gộp góc quá ngắn, tối đa 6 góc); không có thì chia đều ~2,5 giây một góc."""
+    seconds = float(seconds or 10)
+    cuts = sorted({round(float(b), 1) for _, b in measured or [] if 0 < float(b) < seconds - 0.05})
+    merged = [0.0]
+    for point in cuts:
+        if point - merged[-1] >= MIN_SPAN:
+            merged.append(point)
+    if len(merged) > 1 and seconds - merged[-1] < MIN_SPAN:
+        merged.pop()
+    merged.append(seconds)
+    split = [merged[0]]
+    for a, b in zip(merged, merged[1:]):  # một góc kéo dài quá 4,5 giây: chia nhỏ ~2,5 giây một góc
+        parts = round((b - a) / SHOT_SECONDS) if b - a > 4.5 else 1
+        split += [round(a + (b - a) * i / parts, 1) for i in range(1, parts)] + [b]
+    merged = split
+    while len(merged) - 1 > MAX_SPANS:  # bỏ điểm cắt tạo góc ngắn nhất
+        index = min(range(1, len(merged) - 1), key=lambda i: merged[i + 1] - merged[i - 1])
+        merged.pop(index)
+    if len(merged) - 1 < 2:  # cảnh một góc máy liền hoặc không đo được: chia đều 2–3 giây một góc
+        count = max(1, round(seconds / SHOT_SECONDS))
+        merged = [round(seconds * i / count * 2) / 2 for i in range(count)] + [seconds]
+    return [(round(a, 1), round(b, 1)) for a, b in zip(merged, merged[1:])]
+
+
+def groups(kind, count):
+    """Nhóm cỡ cảnh cho `count` góc: theo nhịp của loại cảnh; góc thêm xen kẽ trung/cận, góc cuối là cận để kết cảnh."""
+    base = list(PATTERNS[kind])
+    if count <= len(base):
+        return base[:count] if count > 1 else [base[0]]
+    pair = ("medium", "close") if kind == "fight" else ("close", "medium")
+    extra = [pair[i % 2] for i in range(count - len(base))]
+    return base[:2] + extra + base[2:]
+
+
+def pick(scene_number, text, seconds=10, avoid=(), extra=(), count=3):
+    """`count` góc cho một cảnh. avoid: góc của cảnh trước (không lặp lại). Trả về danh sách góc (dict)."""
     kind = scene_kind(text)
     pool = LIBRARY + list(extra)
     chosen = []
-    for slot, group in enumerate(PATTERNS[kind]):
+    for slot, group in enumerate(groups(kind, count)):
         fresh = lambda a: ((kind in ("fight", "chase") or "dutch tilt" not in a["text"]) and a["text"] not in avoid and all(a["text"] != c["text"] for c in chosen)
                            and not (chosen and a["text"].split(",")[2:3] == chosen[-1]["text"].split(",")[2:3]))
         candidates = [a for a in pool if a["group"] == group and kind in a["kinds"] and fresh(a)]
@@ -115,16 +156,28 @@ def pick(scene_number, text, seconds=10, avoid=(), extra=()):
 
 
 def plan_text(angles, seconds=10):
-    spans, fmt = marks(seconds)
-    return "; ".join(f"{fmt(a)}–{fmt(b)}s: {angle['text']}" for (a, b), angle in zip(spans, angles))
+    """"0–2.5s: góc A; 2.5–5s: góc B; …" — dùng mốc giây của từng góc (span) nếu có, không thì chia như cũ."""
+    fmt = lambda value: f"{value:g}"
+    fallback = marks(seconds)[0] if len(angles) == 3 else spans(seconds) if len(spans(seconds)) == len(angles) else \
+        [(round(float(seconds) * i / len(angles), 1), round(float(seconds) * (i + 1) / len(angles), 1)) for i in range(len(angles))]
+    return "; ".join(f"{fmt(span[0])}–{fmt(span[1])}s: {angle['text']}"
+                     for span, angle in zip([a.get("span") or f for a, f in zip(angles, fallback)], angles))
 
 
-def plans(scene_texts, seconds=10, extra_lines=""):
-    """Kế hoạch 3 góc cho từng cảnh (không lặp góc của cảnh liền trước)."""
+def plans(scene_texts, seconds=10, extra_lines="", windows=None):
+    """Góc quay cho từng cảnh: theo đúng điểm cắt FFmpeg đo được trong cảnh (windows), không đo được thì ~2,5 giây
+    một góc (10 giây → 4 góc); không lặp góc của cảnh liền trước."""
     extra = custom_angles(extra_lines)
+    windows = list(windows or [])
     result, previous = [], ()
     for number, text in enumerate(scene_texts, 1):
-        angles = pick(number, text, seconds, previous, extra)
+        window = windows[number - 1] if number - 1 < len(windows) and isinstance(windows[number - 1], dict) else {}
+        try:
+            length = min(float(seconds), float(window["end"]) - float(window["start"]))
+        except (KeyError, TypeError, ValueError):
+            length = float(seconds)
+        timing = spans(length if length > 0.5 else seconds, window.get("angles"))
+        angles = [dict(a, span=span) for a, span in zip(pick(number, text, seconds, previous, extra, len(timing)), timing)]
         previous = {a["text"] for a in angles}
         result.append(angles)
     return result

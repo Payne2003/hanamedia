@@ -159,6 +159,21 @@ def scene_windows(shots, duration, seconds=DEFAULT_SECONDS):
     return windows
 
 
+def clean_windows(windows):
+    """Cảnh 10 giây gửi từ giao diện (đã đo bằng FFmpeg): chỉ giữ số liệu hợp lệ."""
+    result = []
+    for window in windows if isinstance(windows, list) else []:
+        try:
+            start, end = float(window["start"]), float(window["end"])
+            angles = [(float(a), float(b)) for a, b in (window.get("angles") or [])][:20]
+        except (KeyError, TypeError, ValueError):
+            return None
+        result.append({"start": start, "end": end, "angles": angles})
+        if len(result) >= MAX_SCENES:
+            break
+    return result or None
+
+
 def needed_marks(window):
     length = window["end"] - window["start"]
     return max(len(window["angles"]), 3 if length >= 6 else 2 if length >= 3 else 1)

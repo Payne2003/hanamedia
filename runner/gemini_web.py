@@ -770,6 +770,65 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
     return result
 
 
+CHUNK_SCENES = 6  # Gemini API: gửi lần lượt từng đoạn 6 cảnh (~60 giây), lấy kết quả từng đoạn
+
+
+def run_chunked(session, base, source, windows, status, stop, email="", model="", review=False, folder=None):
+    """Gửi lần lượt rồi lấy kết quả lần lượt: cắt video gốc thành từng đoạn CHUNK_SCENES cảnh, mỗi đoạn một cuộc trò
+    chuyện mới (không kéo theo video/lịch sử các đoạn trước → ít token mỗi yêu cầu, ít chạm hạn mức), ghép kết quả theo
+    thứ tự. Một đoạn lỗi giữa chừng (vd hết hạn mức) thì giữ các cảnh đã có và ghi rõ dừng ở đâu."""
+    from . import reverse_engineer
+    windows = list(windows)
+    chunks = [windows[i:i + CHUNK_SCENES] for i in range(0, len(windows), CHUNK_SCENES)]
+    folder = Path(folder or Path(source).parent / "hana-doan")
+    total = {"original_script": [], "scenes": [], "issues": [], "subjects": [], "rounds": 0}
+    done = 0
+    for index, part in enumerate(chunks, 1):
+        if stop.is_set():
+            raise GeminiWebError("Đã dừng.")
+        offset, length = part[0]["start"], part[-1]["end"] - part[0]["start"]
+        local = [dict(w, start=round(w["start"] - offset, 2), end=round(w["end"] - offset, 2)) for w in part]
+        status(f"Đoạn {index}/{len(chunks)}: cảnh {done + 1}–{done + len(part)} (giây {offset:g}–{offset + length:g}) · cắt video…")
+        try:
+            clip = reverse_engineer.cut_clip(source, offset, length, folder / f"doan-{index}.mp4", stop)
+            try:
+                sheets = reverse_engineer.contact_sheets(clip, local, folder / f"khung-{index}", stop, status)
+            except Exception:
+                if stop.is_set():
+                    raise
+                sheets = []
+            note = (f"\n\nLƯU Ý: video đính kèm là ĐOẠN {index}/{len(chunks)} của video gốc (giây {offset:g}–{offset + length:g}), "
+                    f"gồm đúng {len(part)} cảnh. Chỉ viết {len(part)} cảnh của đoạn này, đánh số Bối cảnh 1 đến {len(part)}, "
+                    "thời gian tính từ đầu đoạn.")
+            prompt = base + "\n\n" + content.scene_section(local, length, len(sheets)) + note
+            result = run_conversation(session, prompt, status, stop, email, model, review, files=[clip] + sheets, windows=local)
+        except Exception as error:
+            if stop.is_set() or not total["scenes"]:
+                raise
+            total["issues"].append(f"Dừng ở đoạn {index}/{len(chunks)} (từ cảnh {done + 1}): {error} Các cảnh trước đã giữ lại; "
+                                   "chạy lại sau để viết phần còn thiếu.")
+            break
+        finally:
+            if hasattr(session, "cleanup"):
+                session.cleanup()  # xóa đoạn video đã tải lên Google (không cần nữa)
+        scenes = list(result["scenes"][:len(part)])
+        while len(scenes) < len(part):  # giữ đúng số thứ tự cảnh cho các đoạn sau
+            scenes.append({field: "" for field in content.FIELDS} | {"action": "(Gemini chưa viết cảnh này — bấm Kiểm tra thiếu cảnh)"})
+        total["scenes"] += scenes
+        subjects = list(result.get("subjects") or []) if isinstance(result.get("subjects"), list) else []
+        total["subjects"] += (subjects + [[]] * len(part))[:len(part)]  # nhân vật theo thứ tự cảnh
+        total["issues"] += [f"Đoạn {index}: {issue}" for issue in result.get("issues") or []]
+        if result.get("original_script"):
+            total["original_script"].append(result["original_script"])
+        total["rounds"] += result.get("rounds", 1)
+        done += len(part)
+        status(f"Xong đoạn {index}/{len(chunks)} · đã có {done}/{len(windows)} cảnh")
+    total["original_script"] = "\n\n".join(total["original_script"])
+    total["windows"] = windows
+    total["shots"] = len(windows)
+    return total
+
+
 VERIFY_ROUNDS = 2
 
 
@@ -845,7 +904,7 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model="", 
     from . import camera_library
     for n in numbers:  # góc quay đã chọn từ thư viện (3 mốc giây) giữ nguyên, AI không được đổi
         original = camera_library.CAMERA_FIELD.search(content.strip_lock(prompts[n - 1]))
-        if original and len(content.SCENE_SEGMENT.findall(original.group(2))) >= 3 and reviewed[n - 1] != prompts[n - 1]:
+        if original and len(content.SCENE_SEGMENT.findall(original.group(2))) >= 2 and reviewed[n - 1] != prompts[n - 1]:
             reviewed[n - 1] = camera_library.CAMERA_FIELD.sub(lambda m: m.group(1) + original.group(2).strip(),
                                                              reviewed[n - 1], count=1) \
                 if camera_library.CAMERA_FIELD.search(reviewed[n - 1]) else reviewed[n - 1]
@@ -944,7 +1003,7 @@ def run_characters(session, script, scenes, status, stop, email="", model=""):
 
 
 def run_english(session, lines, status, stop, email="", model="", style="", aspect="16:9", structured=True,
-                seconds=content.DEFAULT_SECONDS, angles=0, library=False, custom_angles=""):
+                seconds=content.DEFAULT_SECONDS, angles=0, library=False, custom_angles="", windows=None):
     """Viết prompt tiếng Anh cho từng cảnh; tự nhắn viết tiếp và hỏi lại những cảnh thiếu/chưa phải tiếng Anh."""
     total = len(lines)
     name = getattr(session, "NAME", "Gemini")
@@ -1002,7 +1061,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
     if library:  # thư viện góc quay: mỗi cảnh đúng 3 góc, chọn theo hành động, không lặp góc cảnh trước
         from . import camera_library
         plans = camera_library.plans([f"{lines[n - 1]} {found.get(n, '')}" for n in range(1, total + 1)], seconds,
-                                     custom_angles)
+                                     custom_angles, windows)  # góc theo điểm cắt FFmpeg đo được trong từng cảnh
         found = {number: camera_library.apply(prompt, plans[number - 1], seconds) for number, prompt in found.items() if prompt}
     return {"english": [found.get(number, "") for number in range(1, total + 1)], "missing": missing, "lines": lines,
             "issues": issues,
@@ -1108,7 +1167,7 @@ class GeminiWebRunner:
         self.set(status=f"Đã mở Chrome để đăng nhập {self.name}. Đăng nhập xong, {self.login_done} thì đóng hẳn cửa sổ đó, rồi bấm Chạy.",
                  error="")
 
-    def prepare(self, prompt, lines, status):
+    def prepare(self, prompt, lines, status, light=False):
         """FFmpeg + Shot Detection trên video gốc (chưa mở Chrome): điểm cắt → cảnh 10 giây → ảnh khung hình.
         Trả về (prompt có bảng cảnh, (tệp gửi Gemini, các cảnh, điểm cắt))."""
         files, shots, windows, duration = [], None, None, 0
@@ -1127,6 +1186,8 @@ class GeminiWebRunner:
                         raise GeminiWebError("Đã dừng.") from None
                     shots = None
                     status(f"Không đo được điểm cắt ({str(error)[:80]}); Gemini vẫn xem file video")
+            if light:  # Gemini API: cắt đoạn + trích khung hình làm theo từng đoạn trong run_chunked
+                return prompt, ([source], windows, None if windows else shots)
             files = [upload_copy(source, self.profile.parent / "gemini-uploads")]
             sheets = []
             if windows and lines.get("frames", True):
@@ -1150,12 +1211,12 @@ class GeminiWebRunner:
             job_id, kind, prompt, email, model, lines, style = item
             status = lambda text: self.set(status=text)
             try:
-                prepared = None
+                prepared, base = None, prompt
+                api = self.api_session() if self.api_session else None
                 if kind in ("generate", "review"):
                     # Bước FFmpeg chạy TRƯỚC khi mở Gemini: tìm điểm cắt (Shot Detection), chia cảnh, trích khung hình.
-                    prompt, prepared = self.prepare(prompt, lines, status)
+                    prompt, prepared = self.prepare(prompt, lines, status, light=api is not None)
                 self.set(phase="gemini")
-                api = self.api_session() if self.api_session else None
                 if api is not None:  # Gemini API (API key): không mở Chrome, mỗi yêu cầu một phiên mới
                     if self.session:
                         self.session.close()
@@ -1206,17 +1267,24 @@ class GeminiWebRunner:
                              status=f"Đã kiểm duyệt {result['total']} prompt" + (f" · còn {left} prompt cần xem lại" if left else ""))
                     continue
                 if kind == "english":
-                    defaults = ("", "16:9", True, content.DEFAULT_SECONDS, 0, False, "")
+                    defaults = ("", "16:9", True, content.DEFAULT_SECONDS, 0, False, "", None)
                     options = tuple(style) if isinstance(style, tuple) else (style,)
-                    style, aspect, structured, seconds, angles, library, custom = options + defaults[len(options):]
+                    style, aspect, structured, seconds, angles, library, custom, windows = options + defaults[len(options):]
                     result = run_english(self.session, lines, status, self.stop, email, model, style, aspect, structured, seconds,
-                                         angles, library, custom)
+                                         angles, library, custom, windows)
                     done = result["total"] - len(result["missing"])
                     self.set(busy=False, result=result,
                              status=f"Xong: {done}/{result['total']} prompt tiếng Anh sau {result['rounds']} lượt"
                                     + (f" · còn thiếu {len(result['missing'])}" if result["missing"] else ""))
                     continue
                 files, windows, shots = prepared
+                if api is not None and windows and files:  # Gemini API: gửi lần lượt từng đoạn, lấy kết quả lần lượt
+                    result = run_chunked(self.session, base, files[0], windows, status, self.stop, email, model,
+                                         kind == "review", self.profile.parent / "gemini-uploads" / "doan")
+                    result["prompts"] = content.format_prompts(result["scenes"])
+                    self.set(busy=False, result=result,
+                             status=f"Xong: {len(result['scenes'])} cảnh, gửi lần lượt {-(-len(windows) // CHUNK_SCENES)} đoạn")
+                    continue
                 result = run_conversation(self.session, prompt, status, self.stop, email, model, kind == "review",
                                           files=files, windows=windows, shots=shots)
                 result["prompts"] = content.format_prompts(result["scenes"])
