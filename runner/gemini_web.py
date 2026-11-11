@@ -1007,6 +1007,7 @@ class GeminiWebRunner:
         self.session = None
         self.login_process = None
         self.gate = None  # SharedProfile khi bật "Tài khoản chung"
+        self.api_session = None  # hàm trả về GeminiAPISession khi dùng API key (None: dùng Chrome)
         self.job = {"id": "", "busy": False, "status": f"Chưa mở {name}", "result": None, "error": ""}
         self.thread = threading.Thread(target=self.worker, daemon=True)
         self.thread.start()
@@ -1139,9 +1140,17 @@ class GeminiWebRunner:
                     # Bước FFmpeg chạy TRƯỚC khi mở Gemini: tìm điểm cắt (Shot Detection), chia cảnh, trích khung hình.
                     prompt, prepared = self.prepare(prompt, lines, status)
                 self.set(phase="gemini")
-                if self.login_window_open():
+                api = self.api_session() if self.api_session else None
+                if api is not None:  # Gemini API (API key): không mở Chrome, mỗi yêu cầu một phiên mới
+                    if self.session:
+                        self.session.close()
+                    self.session = api
+                elif getattr(self.session, "api", False):
+                    self.session.close()
+                    self.session = None
+                if api is None and self.login_window_open():
                     raise GeminiWebError("Cửa sổ Chrome đăng nhập vẫn đang mở. Đóng hẳn cửa sổ đó rồi bấm Chạy lại.")
-                if not self.session or not self.session.alive():
+                if api is None and (not self.session or not self.session.alive()):
                     if self.session:
                         self.session.close()
                     if self.gate:

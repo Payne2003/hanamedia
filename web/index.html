@@ -226,8 +226,18 @@
         </div>
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">G</span><div><h3>Gemini Pro</h3><small>Viết kịch bản, chia cảnh, tìm nhân vật, prompt tiếng Anh</small></div><span id="geminiBadge" class="status-chip">Chưa đặt tài khoản</span></div>
           <div class="content-grid" hidden><label>Tài khoản Google <small>(không bắt buộc · để tool kiểm tra đúng tài khoản)</small><input id="autoEmail" type="email" maxlength="254" placeholder="ten@gmail.com"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40" placeholder="Pro"><datalist id="autoModels"><option value="Pro"><option value="Argon"><option value="Flash"></datalist></label></div>
+          <div class="gemini-mode" role="radiogroup" aria-label="Cách dùng Gemini"><label><input type="radio" name="geminiMode" value="api"><span><b>Gemini API key</b><small>Khuyên dùng · ổn định, không cần Chrome</small></span></label><label><input type="radio" name="geminiMode" value="web"><span><b>Gemini trên Chrome</b><small>Điều khiển trang web gemini.google.com</small></span></label></div>
+          <div id="geminiApiBox" class="gemini-api-box">
+            <div class="api-key-row"><label>API key Gemini<input id="geminiApiKey" type="password" autocomplete="off" spellcheck="false" maxlength="200" placeholder="Dán API key lấy ở Google AI Studio"></label><button id="geminiKeyPage" type="button">🔑 Lấy API key</button></div>
+            <div class="api-key-row"><button id="geminiApiSave" type="button" class="primary">Lưu API key</button><button id="geminiApiTest" type="button">Kiểm tra</button><button id="geminiApiRemove" type="button" class="danger-outline">Xóa khóa</button><span id="geminiApiState" class="detail"></span></div>
+            <div class="content-grid"><label>Model<select id="geminiApiModel"></select></label><label>Cấp độ tư duy<select id="geminiApiThinking"><option value="">Mặc định của model</option><option value="low">Thấp · nhanh, tiết kiệm</option><option value="medium">Trung bình · cân bằng</option><option value="high">Cao · kỹ lưỡng nhất</option></select></label></div>
+            <button id="geminiApiModels" type="button" class="full">↻ Tải danh sách model của API key</button>
+            <p class="detail"><b>Cách lấy khóa:</b> bấm <b>🔑 Lấy API key</b> (mở Google AI Studio) → đăng nhập Google → <b>Create API key</b> → sao chép rồi dán vào ô trên, bấm <b>Lưu</b>. Khóa được mã hóa và chỉ lưu trên máy này. Video gốc và ảnh khung hình được tải lên qua Files API của Google; phí tính theo bảng giá API của tài khoản Google.</p>
+          </div>
+          <div id="geminiWebBox">
           <button id="loginAuto" type="button" class="full">Đăng nhập Google · Gemini (mở Chrome thường)</button>
           <p class="detail"><b>Lần đầu:</b> bấm Đăng nhập để mở Chrome thường bằng hồ sơ riêng của tool, đăng nhập tài khoản Google của bạn (tool không đọc mật khẩu), thấy trang Gemini thì <b>đóng hẳn cửa sổ đó</b>. Các lần sau chỉ cần bấm Chạy. Tool tự dán yêu cầu, chờ Gemini viết, tự nhắn “viết tiếp” khi câu trả lời bị cắt rồi đọc kết quả. Giữ cửa sổ Gemini mở, không gõ vào đó khi tool đang chạy.</p>
+          </div>
         </div>
         <div class="card settings-card"><div class="settings-head"><span class="settings-icon">AI</span><div><h3>ChatGPT</h3><small>Tìm nhân vật và viết prompt tiếng Anh</small></div><span id="chatgptBadge" class="status-chip">Chưa kiểm tra</span></div>
           <label hidden>Model ChatGPT <small>(để trống: model đang chọn)</small><input id="chatgptModel" list="chatgptModels" maxlength="40" placeholder="Ví dụ: GPT-5"><datalist id="chatgptModels"><option value="Auto"><option value="Instant"><option value="Thinking"></datalist></label>

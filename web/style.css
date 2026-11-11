@@ -802,3 +802,14 @@ dialog{border-radius:20px;background:var(--hana-card)}
 .job-card .jc-actions button:hover,.job-card .jc-actions a:hover{background:var(--c-accent);border-color:var(--c-accent);color:#fff;text-decoration:none}
 :root[data-theme="light"] .job-card{box-shadow:0 8px 24px rgba(20,24,60,.08)}
 :root[data-theme="light"] .jc-refs img{border-color:#fff}
+/* Gemini: chọn API key hoặc Chrome */
+.gemini-mode{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 12px}
+.gemini-mode label{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--border);border-radius:11px;background:var(--c-input);cursor:pointer;margin:0}
+.gemini-mode label:has(input:checked){border-color:var(--c-border-strong);background:var(--c-surface-3)}
+.gemini-mode input{margin-top:3px;width:auto}
+.gemini-mode span{display:grid;gap:2px}.gemini-mode small{color:var(--muted);font-size:var(--fs-xs)}
+.gemini-api-box .api-key-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin:8px 0}
+.gemini-api-box .api-key-row label{flex:1;min-width:220px;margin:0;display:grid;gap:5px;font-size:var(--fs-xs);color:var(--muted)}
+.gemini-api-box .content-grid{grid-template-columns:1fr}
+.gemini-api-box .content-grid label{display:grid;gap:5px;font-size:var(--fs-xs);color:var(--muted)}
+@media (max-width:640px){.gemini-mode,.gemini-api-box .content-grid{grid-template-columns:1fr}}
