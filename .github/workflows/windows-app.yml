@@ -96,8 +96,17 @@ jobs:
             dist/HanaMedia-Setup-*.exe.sha256
 
   mac:
-    # Bản macOS (Apple Silicon M1/M2/M3/M4). Chưa ký Apple Developer ID: lần đầu mở cần chuột phải → Mở.
-    runs-on: macos-latest
+    # Bản macOS: chip Apple (M1/M2/M3/M4) và chip Intel, mỗi loại một file .dmg riêng.
+    # Chưa ký Apple Developer ID: lần đầu mở cần chuột phải → Mở (hoặc Cài đặt → Quyền riêng tư & Bảo mật → Vẫn mở).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            suffix: mac
+          - runner: macos-15-intel
+            suffix: mac-intel
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -155,14 +164,14 @@ jobs:
           mkdir -p dmg
           cp -R dist/HanaMedia.app dmg/
           ln -s /Applications dmg/Applications
-          hdiutil create -volname "HANA MEDIA" -srcfolder dmg -ov -format UDZO "dist/HanaMedia-$v-mac.dmg"
-          (cd dist && shasum -a 256 "HanaMedia-$v-mac.dmg" > "HanaMedia-$v-mac.dmg.sha256")
+          hdiutil create -volname "HANA MEDIA" -srcfolder dmg -ov -format UDZO "dist/HanaMedia-$v-${{ matrix.suffix }}.dmg"
+          (cd dist && shasum -a 256 "HanaMedia-$v-${{ matrix.suffix }}.dmg" > "HanaMedia-$v-${{ matrix.suffix }}.dmg.sha256")
       - uses: actions/upload-artifact@v4
         with:
-          name: HanaMedia-mac
+          name: HanaMedia-${{ matrix.suffix }}
           path: |
-            dist/HanaMedia-*-mac.dmg
-            dist/HanaMedia-*-mac.dmg.sha256
+            dist/HanaMedia-*-${{ matrix.suffix }}.dmg
+            dist/HanaMedia-*-${{ matrix.suffix }}.dmg.sha256
     outputs:
       version: ${{ steps.version.outputs.version }}
 
@@ -174,11 +183,12 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: HanaMedia-mac
+          pattern: HanaMedia-mac*
+          merge-multiple: true
           path: dist
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.mac.outputs.version }}
           files: |
-            dist/HanaMedia-*-mac.dmg
-            dist/HanaMedia-*-mac.dmg.sha256
+            dist/HanaMedia-*-mac*.dmg
+            dist/HanaMedia-*-mac*.dmg.sha256
