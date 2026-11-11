@@ -773,28 +773,36 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
 VERIFY_ROUNDS = 2
 
 
-REGENERATE_ROUNDS = 2
+REGENERATE_ROUNDS = 3  # mỗi prompt còn lỗi được AI tạo lại tối đa 3 lần; vẫn sai thì vào danh sách "Cần kiểm tra"
 
 
-def run_review(session, prompts, rules, lock, status, stop, email="", model=""):
-    """Kiểm duyệt prompt: AI đối chiếu từng prompt với bộ quy tắc của người dùng và viết lại cho đạt; tool kiểm tra máy
-    (từ cấm, đủ 2–3 góc quay), hỏi lại riêng prompt còn vi phạm (1 lượt), rồi gắn KHÓA chung vào cuối mọi prompt.
-    Prompt AI không trả về thì giữ bản cũ. Không bao giờ làm mất prompt."""
-    prompts = [str(p or "").strip() for p in prompts]
+def run_review(session, prompts, rules, lock, status, stop, email="", model="", seconds=None):
+    """Quality Control: Viết prompt → Kiểm tra → Tự sửa → Kiểm tra lại → Khóa prompt.
+
+    1. Tool tự sửa lỗi không cần AI (markdown, xuống dòng, thời lượng sai cấu hình).
+    2. AI đối chiếu từng prompt với bộ quy tắc + Character Master và viết lại; trả dở thì nhắn viết tiếp; bỏ sót prompt
+       nào thì hỏi lại đúng số prompt đó.
+    3. Tool kiểm tra máy (trống, còn tiếng Việt, sai định dạng, gộp cảnh, sai thời lượng, từ cấm, thiếu góc quay);
+       prompt còn lỗi được AI tạo lại riêng, kèm đúng lỗi, tối đa 3 lần. Vẫn sai → danh sách "Cần kiểm tra".
+    4. Gắn KHÓA chung vào cuối mọi prompt. Không bao giờ làm mất prompt (AI không trả thì giữ bản cũ)."""
+    prompts = [content.tidy_prompt(p, seconds) for p in prompts]
     total = len(prompts)
     name = getattr(session, "NAME", "Gemini")
     if not total:
         raise GeminiWebError("Chưa có prompt để kiểm duyệt.")
+    structured = sum(1 for p in prompts if len(content.parse_structured(p)) >= 5) * 2 > total
+    check = lambda text: content.qc_problems(text, seconds, structured)
+    master = content.character_master(prompts)
     start_fresh(session, status, stop, email)
     if model:
         session.choose_model(model)
     numbers = list(range(1, total + 1))
-    answer = session.ask(content.review_request(prompts, rules), status, stop, email,
+    answer = session.ask(content.review_request(prompts, rules, master=master), status, stop, email,
                          label=f"{name} đang kiểm duyệt {total} prompt")
     found = content.parse_english(answer, total)
     issues = content.parse_issues(answer)
     rounds = 1
-    for _ in range(MAX_CONTINUE):
+    for _ in range(MAX_CONTINUE):  # trả kết quả dở: nhắn viết tiếp phần còn lại
         if content.END_EN.lower() in answer.lower() or not found or max(found) >= total:
             break
         after = max(found)
@@ -805,30 +813,34 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model=""):
         if not any(n > after for n in more):
             break
         found.update(more)
+    found = {n: content.tidy_prompt(t, seconds) for n, t in found.items()}
     skipped = [n for n in numbers if not (found.get(n) and content.is_english(found[n]))]
-    if skipped:  # AI bỏ sót prompt khi kiểm duyệt: hỏi lại riêng những prompt đó (1 lượt)
-        answer = session.ask(content.review_request(prompts, rules, skipped) + "\n\nCHỈ kiểm duyệt và viết lại các prompt trên "
-                             "(bạn đã bỏ sót chúng).", status, stop, email,
-                             label=f"{len(skipped)} prompt bị bỏ sót · {name} kiểm duyệt lại")
+    if skipped:  # thiếu prompt: tạo bổ sung đúng số (Scene ID) bị thiếu
+        answer = session.ask(content.review_request(prompts, rules, skipped, master) + "\n\nCHỈ kiểm duyệt và viết lại các prompt "
+                             "trên (bạn đã bỏ sót chúng).", status, stop, email,
+                             label=f"Thiếu {len(skipped)} prompt · {name} tạo bổ sung")
         rounds += 1
-        found.update({n: t for n, t in content.parse_english(answer, total, skipped).items() if content.is_english(t)})
+        found.update({n: content.tidy_prompt(t, seconds) for n, t in content.parse_english(answer, total, skipped).items()
+                      if content.is_english(t)})
         issues += [i for i in content.parse_issues(answer) if i not in issues]
     reviewed = [found.get(n) if found.get(n) and content.is_english(found[n]) else prompts[n - 1] for n in numbers]
-    for attempt in range(REGENERATE_ROUNDS):  # prompt còn lỗi sau kiểm duyệt: tự tạo lại riêng prompt đó
-        bad = [n for n in numbers if content.prompt_violations(reviewed[n - 1])]
+    attempts = {n: 0 for n in numbers}
+    for attempt in range(REGENERATE_ROUNDS):  # Kiểm tra → Tự sửa → Kiểm tra lại
+        bad = [n for n in numbers if check(reviewed[n - 1])]
         if not bad:
             break
-        answer = session.ask(content.review_request(reviewed, rules, bad) + "\n\nCHỈ viết lại các prompt trên; prompt còn lỗi: "
-                             + "; ".join(f"{n}: {', '.join(content.prompt_violations(reviewed[n - 1]))}" for n in bad),
+        for n in bad:
+            attempts[n] += 1
+        status(f"Kiểm tra máy: {len(bad)} prompt còn lỗi · {name} sửa (lần {attempt + 1}/{REGENERATE_ROUNDS})")
+        answer = session.ask(content.review_request(reviewed, rules, bad, master)
+                             + "\n\nCHỈ viết lại các prompt trên, sửa đúng các lỗi sau (mỗi prompt một cảnh, tiếng Anh, giữ "
+                             "nhãn trường):\n" + "\n".join(f"{n}: {'; '.join(check(reviewed[n - 1]))}" for n in bad),
                              status, stop, email, label=f"{len(bad)} prompt còn lỗi · {name} tạo lại (lần {attempt + 1})")
         rounds += 1
-        improved = 0
         for n, text in content.parse_english(answer, total, bad).items():
-            if content.is_english(text) and len(content.prompt_violations(text)) < len(content.prompt_violations(reviewed[n - 1])):
+            text = content.tidy_prompt(text, seconds)
+            if len(check(text)) < len(check(reviewed[n - 1])) or (not check(text) and n in bad):
                 reviewed[n - 1] = text
-                improved += 1
-        if not improved:
-            break
         issues += [i for i in content.parse_issues(answer) if i not in issues]
     from . import camera_library
     for n in numbers:  # góc quay đã chọn từ thư viện (3 mốc giây) giữ nguyên, AI không được đổi
@@ -838,9 +850,12 @@ def run_review(session, prompts, rules, lock, status, stop, email="", model=""):
                                                              reviewed[n - 1], count=1) \
                 if camera_library.CAMERA_FIELD.search(reviewed[n - 1]) else reviewed[n - 1]
     final = [content.apply_lock(p, lock or content.DEFAULT_LOCK) for p in reviewed]
-    violations = {n: content.prompt_violations(final[n - 1]) + ([] if found.get(n) else ["AI chưa kiểm duyệt prompt này — bấm Tạo lại"])
+    violations = {n: check(final[n - 1]) + ([] if found.get(n) else ["AI chưa kiểm duyệt prompt này — bấm Tạo lại"])
                   for n in numbers}
-    return {"english": final, "issues": issues, "violations": {n: v for n, v in violations.items() if v},
+    violations = {n: v for n, v in violations.items() if v}
+    return {"english": final, "issues": issues, "violations": violations,
+            "needs_check": [n for n in violations if attempts[n] >= REGENERATE_ROUNDS or not found.get(n)],
+            "attempts": {n: a for n, a in attempts.items() if a},
             "missing": [n for n in numbers if not found.get(n)], "total": total, "rounds": rounds, "reviewed": True}
 
 
@@ -1185,7 +1200,7 @@ class GeminiWebRunner:
                     continue
                 if kind == "promptreview":
                     result = run_review(self.session, lines["prompts"], lines.get("rules", ""), lines.get("lock", ""), status,
-                                        self.stop, email, model)
+                                        self.stop, email, model, lines.get("seconds"))
                     left = sum(1 for v in result["violations"].values() if v)
                     self.set(busy=False, result=result,
                              status=f"Đã kiểm duyệt {result['total']} prompt" + (f" · còn {left} prompt cần xem lại" if left else ""))

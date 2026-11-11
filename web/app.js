@@ -1,7 +1,9 @@
 import { initProduction, loadProduction } from '/production.js';
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let geminiModels=null,geminiChoice='';  // Cài đặt → Gemini API key
+const apiModels={},apiChoice={};  // Cài đặt → API key (Gemini, ChatGPT)
+const API_CARDS={gemini:{p:'geminiApi',state:'api',badge:'geminiBadge',label:'Gemini API',web:'Gemini trên Chrome',use:'Phân tích video'},
+                 chatgpt:{p:'chatgptApi',state:'chatgpt_api',badge:'chatgptBadge',label:'ChatGPT API',web:'ChatGPT trên Chrome',use:'Viết và kiểm duyệt prompt'}};
 let state=null,key='',filter='all',busy=false,pendingBatch=null,toastTimer,visibleJobs=[],mode='text',libraryImages=[];
 const selectedJobs=new Set(),promptImages=new Map();
 let licenseData=null,licenseEditing=null,licensePlan='1y';
@@ -483,7 +485,7 @@ async function startReview(line=null){
   if(!text){toast('Chưa có prompt tiếng Anh để kiểm duyệt.',true);return false;}
   reviewOne=line;
   try{
-    const {id,total}=await api('/api/content/review-prompts',{engine,text,rules:$('reviewRules').value,lock:$('reviewLock').value});
+    const {id,total}=await api('/api/content/review-prompts',{engine,text,rules:$('reviewRules').value,lock:$('reviewLock').value,seconds:content.englishSeconds});
     lastJobError='';
     if(engine==='gemini'){autoJob={id,kind:'promptreview'};renderAuto();}else{chatJob={id,kind:'promptreview'};renderEnglishRun();}
     $('reviewStatus').textContent=`${engineNames[engine]} đang kiểm duyệt ${total} prompt…`;renderReviewList();refresh();return true;
@@ -520,7 +522,7 @@ function renderReviewIssues(){
   renderReviewList();
   const issues=content.reviewIssues||[],violations=Object.entries(content.reviewViolations||{});
   $('reviewIssues').hidden=!issues.length&&!violations.length;
-  $('reviewIssues').innerHTML=(violations.length?`<b>Còn vi phạm (tool kiểm tra)</b><ul>${violations.map(([n,v])=>`<li>Prompt ${esc(n)}: ${esc(v.join(', '))}</li>`).join('')}</ul>`:'')+
+  $('reviewIssues').innerHTML=(violations.length?`<b>⚠ Cần kiểm tra — AI đã tự sửa tối đa 3 lần vẫn còn lỗi (bấm ↻ Tạo lại hoặc sửa tay)</b><ul>${violations.map(([n,v])=>`<li>Prompt ${esc(n)}: ${esc(v.join(', '))}</li>`).join('')}</ul>`:'')+
     (issues.length?`<b>AI đã sửa</b><ul>${issues.slice(0,40).map(i=>`<li>${esc(i)}</li>`).join('')}</ul>`:'');
 }
 // ---- Tự động: link → tải video → Gemini phân tích → prompt tiếng Anh → kiểm duyệt ----
@@ -880,7 +882,7 @@ function renderSettings(force){
     $(id).title=a.checked?`${name}: kiểm tra lần cuối ${new Date(a.checked*1000).toLocaleString('vi-VN')}`:`${name}: tool chưa mở trang lần nào`;
   };
   badge('geminiBadge',web.account,'Gemini');badge('chatgptBadge',chat.account,'ChatGPT');
-  renderGeminiApi(force);
+  renderApiCards(force);
   const shared=state.shared_account||{};
   if(force||document.activeElement!==$('sharedAccount'))$('sharedAccount').checked=Boolean(shared.enabled);
   $('sharedBadge').textContent=shared.enabled?(shared.login_open?'Cửa sổ đăng nhập đang mở':shared.profile_used?'✓ Đang bật':'Đang bật · chưa đăng nhập'):'Đang tắt';
@@ -1427,56 +1429,56 @@ $('licenseRemove').onclick=()=>{if(!confirm('Gỡ key bản quyền khỏi máy 
 $('issuerInitButton').onclick=()=>{if(!confirm('Khởi tạo khóa Super Admin trên máy này?\n\nChỉ làm trên máy của người bán. Khóa ký được lưu trong thư mục dữ liệu: hãy sao lưu và KHÔNG gửi cho ai.'))return;
   action(async()=>{await api('/api/license/init-signing',{confirm:true});await loadLicense();toast('Đã tạo khóa Super Admin. Sao chép khóa công khai để gắn vào app.');});};
 
-// ---------- Gemini API key ----------
-function renderGeminiApi(force){
-  const info=state?.content?.api;if(!info)return;
+// ---------- API key: Gemini (phân tích video) và ChatGPT (viết + kiểm duyệt prompt) ----------
+function renderApiCards(force){for(const engine of Object.keys(API_CARDS))renderApiCard(engine,force);}
+function renderApiCard(engine,force){
+  const c=API_CARDS[engine],p=c.p,info=state?.content?.[c.state];if(!info)return;
   // Chưa có khóa: hiện sẵn ô nhập API key (cách khuyên dùng); chọn tay thì giữ lựa chọn đó.
-  const shown=geminiChoice||(info.configured?info.mode:'api');
-  for(const radio of document.querySelectorAll('input[name=geminiMode]'))radio.checked=radio.value===shown;
-  const apiMode=shown==='api';
-  $('geminiApiBox').hidden=!apiMode;$('geminiWebBox').hidden=apiMode;
-  $('geminiApiRemove').hidden=!info.configured;$('geminiApiTest').disabled=$('geminiApiModels').disabled=!info.configured;
-  if(!$('geminiApiState').dataset.busy)$('geminiApiState').textContent=info.configured?(info.source==='environment'?'✓ Đang dùng khóa từ biến môi trường':'✓ Đã lưu API key (mã hóa trên máy)'):'Chưa có API key';
-  const select=$('geminiApiModel');
-  const options=(geminiModels||[]).slice();
+  const shown=apiChoice[engine]||(info.configured?info.mode:'api'),apiMode=shown==='api';
+  for(const radio of document.querySelectorAll(`input[name=${p}Mode]`))radio.checked=radio.value===shown;
+  $(p+'Box').hidden=!apiMode;$(p+'WebBox').hidden=apiMode;
+  $(p+'Remove').hidden=!info.configured;$(p+'Test').disabled=$(p+'Models').disabled=!info.configured;
+  if(!$(p+'State').dataset.busy)$(p+'State').textContent=info.configured?(info.source==='environment'?'✓ Đang dùng khóa từ biến môi trường':'✓ Đã lưu API key (mã hóa trên máy)'):'Chưa có API key';
+  const select=$(p+'Model'),options=(apiModels[engine]||[]).slice();
   if(!options.some(m=>m.id===info.model))options.unshift({id:info.model,name:info.model});
   const html=options.map(m=>`<option value="${esc(m.id)}">${esc(m.name)}${m.name!==m.id?` · ${esc(m.id)}`:''}</option>`).join('');
   if(select.dataset.html!==html){select.innerHTML=html;select.dataset.html=html;}
   if(force||document.activeElement!==select)select.value=info.model;
-  if(force||document.activeElement!==$('geminiApiThinking'))$('geminiApiThinking').value=info.thinking||'';
-  if(info.mode==='api'){$('geminiBadge').textContent='✓ Gemini API · '+info.model;$('geminiBadge').className='status-chip approved';}
-  else if(apiMode){$('geminiBadge').textContent='Chưa có API key';$('geminiBadge').className='status-chip error';}
+  if(force||document.activeElement!==$(p+'Thinking'))$(p+'Thinking').value=info.thinking||'';
+  if(info.mode==='api'){$(c.badge).textContent=`✓ ${c.label} · ${info.model}`;$(c.badge).className='status-chip approved';}
+  else if(apiMode){$(c.badge).textContent='Chưa có API key';$(c.badge).className='status-chip error';}
 }
-async function saveGeminiApi(body,message){
-  try{state.content.api=await api('/api/gemini-api/settings',body);renderGeminiApi(true);if(message)toast(message);}
+async function saveApi(engine,body,message){
+  try{state.content[API_CARDS[engine].state]=await api(`/api/${engine}-api/settings`,body);renderApiCard(engine,true);if(message)toast(message);}
   catch(error){toast(error.message,true);}
 }
-async function loadGeminiModels(quiet){
-  const status=$('geminiApiState');status.dataset.busy='1';status.textContent='Đang tải danh sách model…';
-  try{geminiModels=(await api('/api/gemini-api/models',{})).models;renderGeminiApi(true);if(!quiet)toast(`API key dùng được ${geminiModels.length} model.`);}
+async function loadApiModels(engine,quiet){
+  const status=$(API_CARDS[engine].p+'State');status.dataset.busy='1';status.textContent='Đang tải danh sách model…';
+  try{apiModels[engine]=(await api(`/api/${engine}-api/models`,{})).models;renderApiCard(engine,true);if(!quiet)toast(`API key dùng được ${apiModels[engine].length} model.`);}
   catch(error){if(!quiet)toast(error.message,true);}
-  finally{delete status.dataset.busy;renderGeminiApi();}
+  finally{delete status.dataset.busy;renderApiCard(engine);}
 }
-document.addEventListener('change',e=>{
-  if(e.target.name==='geminiMode'){
-    geminiChoice=e.target.value;
-    if(e.target.value==='api'&&!state?.content?.api?.configured){renderGeminiApi();return toast('Dán API key rồi bấm Lưu để chuyển sang Gemini API.');}
-    saveGeminiApi({mode:e.target.value},e.target.value==='api'?'Viết content sẽ dùng Gemini API.':'Viết content sẽ dùng Gemini trên Chrome.');
-  }
-  if(e.target.id==='geminiApiModel')saveGeminiApi({model:e.target.value},'Đã chọn model '+e.target.value);
-  if(e.target.id==='geminiApiThinking')saveGeminiApi({thinking:e.target.value},'Đã đặt cấp độ tư duy.');
-});
-$('geminiKeyPage').onclick=()=>api('/api/gemini-api/key-page',{}).then(()=>toast('Đã mở Google AI Studio trong trình duyệt. Bấm Create API key rồi dán vào đây.')).catch(error=>toast(error.message,true));
-$('geminiApiSave').onclick=async()=>{
-  const value=$('geminiApiKey').value.trim();if(!value)return toast('Dán API key vào ô trước.',true);
-  await saveGeminiApi({key:value,mode:'api'},'Đã lưu API key. Viết content sẽ dùng Gemini API.');
-  if(state.content.api.configured){$('geminiApiKey').value='';loadGeminiModels(true);}
-};
-$('geminiApiRemove').onclick=()=>{if(confirm('Xóa API key Gemini khỏi máy này?')){geminiChoice='';saveGeminiApi({remove:true,mode:'web'},'Đã xóa API key. Viết content quay lại dùng Gemini trên Chrome.');}};
-$('geminiApiModels').onclick=()=>loadGeminiModels(false);
-$('geminiApiTest').onclick=async()=>{
-  const status=$('geminiApiState');status.dataset.busy='1';status.textContent='Đang gửi câu hỏi thử…';
-  try{const r=await api('/api/gemini-api/test',{});toast(`API key hoạt động · model ${r.model} trả lời: ${r.answer}`);}
-  catch(error){toast(error.message,true);}
-  finally{delete status.dataset.busy;renderGeminiApi();}
-};
+for(const [engine,c] of Object.entries(API_CARDS)){
+  const p=c.p;
+  document.querySelectorAll(`input[name=${p}Mode]`).forEach(radio=>radio.onchange=()=>{
+    apiChoice[engine]=radio.value;
+    if(radio.value==='api'&&!state?.content?.[c.state]?.configured){renderApiCard(engine);return toast('Dán API key rồi bấm Lưu để chuyển sang '+c.label+'.');}
+    saveApi(engine,{mode:radio.value},`${c.use} sẽ dùng ${radio.value==='api'?c.label:c.web}.`);
+  });
+  $(p+'Model').onchange=e=>saveApi(engine,{model:e.target.value},'Đã chọn model '+e.target.value);
+  $(p+'Thinking').onchange=e=>saveApi(engine,{thinking:e.target.value},'Đã lưu mức suy nghĩ.');
+  $(p+'KeyPage').onclick=()=>api(`/api/${engine}-api/key-page`,{}).then(()=>toast('Đã mở trang lấy API key trong trình duyệt. Tạo khóa rồi dán vào đây.')).catch(error=>toast(error.message,true));
+  $(p+'Save').onclick=async()=>{
+    const value=$(p+'Key').value.trim();if(!value)return toast('Dán API key vào ô trước.',true);
+    await saveApi(engine,{key:value,mode:'api'},`Đã lưu API key. ${c.use} sẽ dùng ${c.label}.`);
+    if(state.content[c.state].configured){$(p+'Key').value='';apiChoice[engine]='';loadApiModels(engine,true);}
+  };
+  $(p+'Remove').onclick=()=>{if(confirm(`Xóa API key ${c.label} khỏi máy này?`)){apiChoice[engine]='';saveApi(engine,{remove:true,mode:'web'},`Đã xóa API key. ${c.use} quay lại dùng ${c.web}.`);}};
+  $(p+'Models').onclick=()=>loadApiModels(engine,false);
+  $(p+'Test').onclick=async()=>{
+    const status=$(p+'State');status.dataset.busy='1';status.textContent='Đang gửi câu hỏi thử…';
+    try{const r=await api(`/api/${engine}-api/test`,{});toast(`API key hoạt động · model ${r.model} trả lời: ${r.answer}`);}
+    catch(error){toast(error.message,true);}
+    finally{delete status.dataset.busy;renderApiCard(engine);}
+  };
+}
