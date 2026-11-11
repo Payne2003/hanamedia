@@ -464,7 +464,7 @@ async function startEnglish(silent){
   try{
     if(engine==='gemini')await saveAutoSettings();
     else await api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()});
-    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked,angles:$('englishAngles').value==='lib'?0:Number($('englishAngles').value),library:$('englishAngles').value==='lib',seconds:Number($('englishSeconds').value)});
+    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked,angles:$('englishAngles').value==='lib'?0:Number($('englishAngles').value),library:$('englishAngles').value==='lib',seconds:Number($('englishSeconds').value),windows:(content.windows||[]).length?content.windows:undefined});
     lastJobError='';
     if(engine==='gemini'){autoJob={id,kind:'english'};renderAuto();}else{chatJob={id};renderEnglishRun();}
     refresh();toast(`Đã gửi ${total} cảnh cho ${engineNames[engine]}.`);return true;

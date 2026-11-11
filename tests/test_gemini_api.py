@@ -157,3 +157,86 @@ class RunnerUsesAPITests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuotaTests(unittest.TestCase):
+    def quota_error(self, metric):
+        body = {"error": {"message": "You exceeded your current quota", "details": [
+            {"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{"quotaId": metric}]},
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "7s"}]}}
+        return lambda url: urllib.error.HTTPError(url, 429, "x", {}, io.BytesIO(json.dumps(body).encode()))
+
+    def run_session(self, errors, model="gemini-3.1-pro-preview"):
+        calls = []
+
+        def fake(request, timeout, handlers=()):
+            calls.append(request.full_url)
+            if errors:
+                raise errors.pop(0)(request.full_url)
+            return Response({"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "OK"}]}}]})
+        session = gemini_api.GeminiAPISession("AIzaTESTKEY", model)
+        waits, status = [], []
+
+        class Stop(threading.Event):
+            def wait(self, timeout=None):
+                waits.append(timeout)
+                return False
+        with mock.patch.object(gemini_api, "opener", return_value=fake):
+            answer = session.ask("Hỏi", status.append, Stop())
+        return answer, calls, waits, status, session
+
+    def test_daily_quota_switches_to_flash_instead_of_retrying(self):
+        answer, calls, waits, status, session = self.run_session([self.quota_error("GenerateRequestsPerDayPerProjectPerModel-FreeTier")])
+        self.assertEqual(answer, "OK")
+        self.assertIn("gemini-3.1-pro-preview:", calls[0])
+        self.assertIn("gemini-flash-latest:", calls[1])
+        self.assertEqual(session.model, "gemini-flash-latest")
+        self.assertNotIn(7, waits)  # không đợi gửi lại vô ích
+        self.assertIn("hết hạn mức trong ngày", " ".join(status))
+
+    def test_per_minute_quota_waits_as_google_suggests(self):
+        answer, calls, waits, status, _ = self.run_session([self.quota_error("GenerateContentInputTokensPerModelPerMinute-FreeTier")])
+        self.assertEqual(answer, "OK")
+        self.assertEqual(len(calls), 2)
+        self.assertIn(9, waits)  # retryDelay 7s + 2
+
+    def test_all_daily_quotas_used_up_gives_clear_message(self):
+        errors = [self.quota_error("GenerateRequestsPerDayPerProjectPerModel-FreeTier")] * 3
+        with self.assertRaises(gemini_api.GeminiAPIError) as caught:
+            self.run_session(errors)
+        self.assertIn("Đợi hạn mức đặt lại", str(caught.exception))
+
+
+class ChunkedTests(unittest.TestCase):
+    def test_video_is_sent_part_by_part_and_results_joined_in_order(self):
+        from runner import gemini_web, reverse_engineer
+        windows = [{"start": i * 10.0, "end": i * 10.0 + 10, "angles": [(0.0, 5.0), (5.0, 10.0)]} for i in range(14)]
+        sent = []
+
+        class Session(gemini_api.GeminiAPISession):
+            def attach_images(self, files, status, stop, email=""):
+                sent.append([Path(f).name for f in files])
+
+            def ask(self, text, status, stop, email="", timeout=1200, label=""):
+                found = re.search(r"gồm đúng (\d+) cảnh", text)
+                if not found:
+                    return ""  # câu hỏi kiểm tra thêm của tool
+                count = int(found.group(1))
+                part = len(sent)
+                if part == 3:
+                    raise gemini_api.GeminiAPIError("API key đã hết hạn mức trong ngày.")
+                return "\n".join(f"Bối cảnh {n}: Đoạn {part} cảnh {n}, góc quay: 0–3s toàn cảnh; 3–5s trung cảnh; 5–10s cận cảnh, "
+                                 f"hành vi nhân vật: Chạy, Nội dung hành động nhân vật: Chạy {n};" for n in range(1, count + 1)) \
+                    + "\n" + gemini_web.END_MARK
+
+        import re
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(reverse_engineer, "cut_clip", side_effect=lambda src, start, length, target, stop=None: Path(target)), \
+                mock.patch.object(reverse_engineer, "contact_sheets", return_value=[]):
+            result = gemini_web.run_chunked(Session("AIzaTESTKEY", "gemini-flash-latest"), "Yêu cầu", Path(folder) / "v.mp4",
+                                            windows, lambda t: None, threading.Event(), folder=Path(folder))
+        self.assertEqual(sent, [["doan-1.mp4"], ["doan-2.mp4"], ["doan-3.mp4"]])  # mỗi đoạn một yêu cầu riêng
+        self.assertEqual(len(result["scenes"]), 12)  # đoạn 3 hết hạn mức: giữ 12 cảnh của 2 đoạn đầu
+        self.assertIn("Đoạn 1 cảnh 1", result["scenes"][0]["setting"])
+        self.assertIn("Đoạn 2 cảnh 1", result["scenes"][6]["setting"])
+        self.assertIn("Dừng ở đoạn 3/3 (từ cảnh 13)", " ".join(result["issues"]))

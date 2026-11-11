@@ -95,6 +95,21 @@ def quick_shots(path, stop=None):
     return detect_shots(path, info["duration"], float(match.group(1)) if match else 0.0, stop), info["duration"]
 
 
+def cut_clip(path, start, length, target, stop=None):
+    """Cắt một đoạn video gốc (giây start, dài length) thành file nhẹ 480p không tiếng để gửi AI từng đoạn.
+    Mã hóa lại (không copy) để đoạn bắt đầu đúng giây, không lệch về khung khóa trước đó."""
+    if stop is not None and stop.is_set():
+        raise video.VideoError("Đã dừng.")
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    result = video.run([video.ffmpeg(), "-v", "error", "-y", "-ss", f"{max(0.0, start):.3f}", "-i", str(path),
+                        "-t", f"{max(0.5, length):.3f}", "-vf", "scale=-2:480", "-an", "-c:v", "libx264",
+                        "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p", str(target)], 600)
+    if result.returncode != 0 or not target.is_file() or target.stat().st_size < 1000:
+        raise video.VideoError(f"Không cắt được đoạn {start:.0f}–{start + length:.0f}s của video gốc.")
+    return target
+
+
 TILE = (320, 180)
 
 
