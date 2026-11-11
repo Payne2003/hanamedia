@@ -287,7 +287,7 @@ function showView(view){
   if(isLicense)loadLicense();
   if(isSettings){applyAutoSettings(true);renderSettings(true);}
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
-  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;renderVideoFile();$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles??'lib');renderEnglishEngine();openCharacters();}
+  if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;renderVideoFile();$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles??'3');renderEnglishEngine();openCharacters();}
   const hash=isProduction?'#production':isContent?'#content':isSettings?'#settings':isMedia?'#media':isCommunity?'#community':isLicense?'#license':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);markSidebar();
 }
@@ -468,8 +468,9 @@ $('englishInput').oninput=()=>{content.englishInput=$('englishInput').value;save
 $('englishStyle').oninput=()=>{content.englishStyle=$('englishStyle').value;saveContent();};
 $('englishAspect').onchange=()=>{content.englishAspect=$('englishAspect').value;saveContent();};
 $('englishSeconds').onchange=()=>{content.englishSeconds=Number($('englishSeconds').value);saveContent();};
-$('englishAngles').onchange=()=>{content.englishAngles=$('englishAngles').value;try{localStorage.setItem('hana-english-angles',String(content.englishAngles));}catch{}};
-try{const saved=localStorage.getItem('hana-english-angles');content.englishAngles=['lib','0','3'].includes(saved)?saved:'lib';}catch{content.englishAngles='lib';}
+// Mặc định đổi góc mỗi 2–3 giây (khóa lưu mới: lựa chọn cũ "Thư viện góc quay" do mặc định trước đây không giữ lại).
+$('englishAngles').onchange=()=>{content.englishAngles=$('englishAngles').value;try{localStorage.setItem('hana-english-angles-v2',String(content.englishAngles));}catch{}};
+try{const saved=localStorage.getItem('hana-english-angles-v2');content.englishAngles=['lib','0','3'].includes(saved)?saved:'3';}catch{content.englishAngles='3';}
 $('englishStructured').onchange=()=>{content.englishStructured=$('englishStructured').checked;saveContent();};
 $('englishFormat').value=content.englishFormat||'detailed';
 $('englishFormat').onchange=()=>{content.englishFormat=$('englishFormat').value;saveContent();};

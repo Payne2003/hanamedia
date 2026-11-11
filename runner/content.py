@@ -676,14 +676,19 @@ def parse_issues(text):
     return issues
 
 
-def angle_plan(seconds, step=3):
-    """Mốc gợi ý chia clip thành các góc 2–3 giây, ví dụ 10s → 0–3s, 3–5s, 5–8s, 8–10s."""
+def angle_spans(seconds, step=3):
+    """Chia clip thành các góc 2–3 giây liền nhau: 10s → (0,3), (3,5), (5,8), (8,10)."""
     marks, at = [0], 0
     while seconds - at > step:
         at += 3 if (seconds - at - 3) != 1 and len(marks) % 2 else 2
         marks.append(at)
     marks.append(seconds)
-    return ", ".join(f"{a:g}–{b:g}s" for a, b in zip(marks, marks[1:]))
+    return list(zip(marks, marks[1:]))
+
+
+def angle_plan(seconds, step=3):
+    """Mốc gợi ý chia clip thành các góc 2–3 giây, ví dụ 10s → 0–3s, 3–5s, 5–8s, 8–10s."""
+    return ", ".join(f"{a:g}–{b:g}s" for a, b in angle_spans(seconds, step))
 
 
 def english_request(lines, numbers=None, style="", aspect="16:9", structured=True, seconds=8, angles=0, shots=False):

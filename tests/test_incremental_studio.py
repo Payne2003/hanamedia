@@ -82,3 +82,29 @@ class WholeVideoTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AngleDefaultTests(unittest.TestCase):
+    def test_detailed_prompts_switch_angle_every_2_3_seconds(self):
+        from runner import content
+        self.assertEqual(content.angle_spans(10), [(0, 3), (3, 5), (5, 8), (8, 10)])
+        sent = []
+
+        class Session:
+            NAME = "ChatGPT"
+            def new_chat(self):
+                pass
+            def wait_ready(self, status, stop, email=""):
+                pass
+            def choose_model(self, name):
+                return name
+            def ask(self, text, status, stop, email="", label=""):
+                sent.append(text)
+                return "SCENE 1:\nGenerate a 10-second ultra-realistic wildlife documentary video at dawn.\n" + content.END_EN
+
+        gemini_web.english_detailed(Session(), ["Bối cảnh 1: hổ đi"], lambda _: None, threading.Event(),
+                                    seconds=10, angles=3)
+        self.assertIn("0–3 SECONDS, 3–5 SECONDS, 5–8 SECONDS, 8–10 SECONDS", sent[0])
+        sent.clear()
+        gemini_web.english_detailed(Session(), ["Bối cảnh 1: hổ đi"], lambda _: None, threading.Event(), seconds=10)
+        self.assertIn("1–3 consecutive camera segments", sent[0])

@@ -1061,7 +1061,7 @@ DETAILED_BATCH = 3  # số cảnh mỗi lần gửi: ít lượt hỏi hơn nhi�
 
 
 def english_detailed(session, lines, status, stop, email="", model="", style="", aspect="16:9",
-                     seconds=content.DEFAULT_SECONDS, windows=None, on_batch=None):
+                     seconds=content.DEFAULT_SECONDS, windows=None, on_batch=None, angles=0):
     """Prompt chi tiết theo mẫu: gửi lần lượt từng nhóm DETAILED_BATCH cảnh (mỗi nhóm một cuộc trò chuyện mới, kèm prompt
     cuối của nhóm trước để nối tiếp). Tool tự sửa số giây và tự thêm mục chuẩn còn thiếu (MOTION/STYLE/NEGATIVE); chỉ
     nhờ AI viết lại (1 lần, gộp cả nhóm) khi còn lỗi tool không tự sửa được. Nhóm nào xong hiện ngay."""
@@ -1073,8 +1073,11 @@ def english_detailed(session, lines, status, stop, email="", model="", style="",
     for number, line in enumerate(lines, 1):
         window = windows[number - 1] if windows else None
         length = content.scene_seconds(window) if shot_mode else seconds
+        # Cảnh theo từng shot (2–3 giây) giữ một góc; cảnh có nhiều góc FFmpeg đo được giữ đúng điểm cắt; còn lại, khi
+        # chọn "Đổi góc mỗi 2–3 giây" thì chia sẵn các góc 2–3 giây liền nhau (vd 10s → 0–3, 3–5, 5–8, 8–10).
         spans = ([(0, length)] if shot_mode else
-                 [(float(a), float(b)) for a, b in window["angles"]] if window and len(window.get("angles") or []) > 1 else None)
+                 [(float(a), float(b)) for a, b in window["angles"]] if window and len(window.get("angles") or []) > 1 else
+                 content.angle_spans(length, angles) if angles and length > angles else None)
         items.append((number, line, length, spans))
     found, issues, rounds = {}, [], 0
     clean = lambda text, length: content.complete_detailed(content.tidy_prompt(text, length))
@@ -1148,7 +1151,7 @@ def run_english(session, lines, status, stop, email="", model="", style="", aspe
     nối tiếp nhân vật, bối cảnh, hướng di chuyển."""
     total = len(lines)
     if structured == "detailed":  # prompt chi tiết theo mẫu: gửi lần lượt từng cảnh
-        return english_detailed(session, lines, status, stop, email, model, style, aspect, seconds, windows, on_batch)
+        return english_detailed(session, lines, status, stop, email, model, style, aspect, seconds, windows, on_batch, angles)
     if total <= PROMPT_BATCH:
         return english_once(session, lines, status, stop, email, model, style, aspect, structured, seconds, angles,
                             library, custom_angles, windows)
