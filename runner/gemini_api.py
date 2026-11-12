@@ -119,20 +119,25 @@ def list_models(key):
     return models
 
 
-FRAME_BUDGET = 600  # số khung hình Gemini xem mỗi video (bằng 1 khung/giây của video 10 phút)
 MAX_FPS = 5
+LOW_RES = "MEDIA_RESOLUTION_LOW"  # video độ phân giải thấp: ~66 token/khung thay vì ~258 (chi tiết lấy từ ảnh khung hình)
+FILE_NOTE = "[Video/ảnh đã gửi ở lượt đầu — không gửi lại để tiết kiệm token; dựa vào phần đã xem và đã viết.]"
 
 
-def video_fps(file):
-    """Số khung hình/giây cho Gemini xem: video càng ngắn càng xem dày (1–5), để không lỡ động tác nhanh."""
-    try:
-        from . import video_tools as video
-        seconds = float(video.probe(file)["duration"] or 0)
-    except Exception:
-        seconds = 0
-    if seconds <= 0:
-        return 1
-    return float(max(1, min(MAX_FPS, int(FRAME_BUDGET / seconds))))
+def video_parts(part, plan=None):
+    """Phần video gửi Gemini. plan = [(giây bắt đầu, giây kết thúc, khung/giây)]: đoạn hành động nhanh xem dày, đoạn
+    tĩnh xem 1 khung/giây (cùng một tệp, mỗi đoạn một phần có startOffset/endOffset). Không có plan: 1 khung/giây."""
+    if not plan:
+        return [dict(part)]
+    parts = []
+    for start, end, fps in plan:
+        item = dict(part)
+        meta = {"startOffset": f"{max(0.0, float(start)):.2f}s", "endOffset": f"{float(end):.2f}s"}
+        if fps and fps != 1:
+            meta["fps"] = float(min(MAX_FPS, fps))
+        item["videoMetadata"] = meta
+        parts.append(item)
+    return parts
 
 
 class GeminiAPISession:
@@ -147,6 +152,9 @@ class GeminiAPISession:
         self.key, self.model, self.thinking, self.max_output = key, model.removeprefix("models/"), thinking, max_output
         self.rpm = int(rpm or 0)  # giới hạn yêu cầu/phút người dùng đặt (0 = không giãn cách)
         self.history, self.pending, self.uploaded = [], [], []
+        self.usage = {"input": 0, "output": 0, "requests": 0}  # token Google báo lại (usageMetadata), cộng dồn cả phiên
+        self.motion_plan = None  # [(bắt đầu, kết thúc, khung/giây)] cho video kế tiếp; None = 1 khung/giây
+        self.low_res = True  # video độ phân giải thấp (tắt tự động nếu model không nhận)
         self.debug_path = None
         self.take_now = None
         self.account_seen = None
@@ -177,7 +185,15 @@ class GeminiAPISession:
 
     def attach_images(self, files, status, stop, email=""):
         for file in files:
-            self.pending.append(self.upload(Path(file), status, stop))
+            part = self.upload(Path(file), status, stop)
+            if str(part.get("fileData", {}).get("mimeType", "")).startswith("video/"):
+                parts = video_parts(part, self.motion_plan)
+                if self.low_res:
+                    for item in parts:
+                        item["mediaResolution"] = {"level": LOW_RES}
+                self.pending += parts
+            else:
+                self.pending.append(part)
 
     def ask(self, text, status, stop, email="", timeout=1200, label="Gemini đang viết"):
         parts = list(self.pending)
@@ -197,11 +213,31 @@ class GeminiAPISession:
         if not answer.strip():
             block = (response.get("promptFeedback") or {}).get("blockReason") or reason or "không rõ"
             raise GeminiAPIError(f"Gemini API không trả nội dung (lý do: {block}).")
-        # Giữ nguyên phần trả lời (cả chữ ký suy nghĩ) để lượt sau "viết tiếp" đúng ngữ cảnh.
-        self.history = contents + [{"role": "model", "parts": content.get("parts") or [{"text": answer}]}]
+        # Giữ nguyên phần trả lời (cả chữ ký suy nghĩ) để lượt sau "viết tiếp" đúng ngữ cảnh — nhưng KHÔNG giữ video/ảnh:
+        # lượt sau chỉ gửi chữ (video chỉ tính token một lần cho mỗi đoạn).
+        self.history = [self.without_files(turn) for turn in contents] + [
+            {"role": "model", "parts": content.get("parts") or [{"text": answer}]}]
+        meta = response.get("usageMetadata") or {}
+        used_in = int(meta.get("promptTokenCount") or 0)
+        used_out = int(meta.get("candidatesTokenCount") or 0) + int(meta.get("thoughtsTokenCount") or 0)
+        self.usage["input"] += used_in
+        self.usage["output"] += used_out
+        self.usage["requests"] += 1
+        if used_in or used_out:
+            status(f"Lượt này {used_in + used_out:,} token · cả lượt chạy {self.tokens():,} token".replace(",", "."))
         if reason == "MAX_TOKENS":
             status("Câu trả lời chạm giới hạn độ dài · tool sẽ nhắn viết tiếp")
         return answer
+
+    def tokens(self):
+        return self.usage["input"] + self.usage["output"]
+
+    @staticmethod
+    def without_files(turn):
+        if turn.get("role") != "user" or not any("fileData" in p for p in turn.get("parts") or []):
+            return turn
+        parts = [p for p in turn["parts"] if "fileData" not in p]
+        return {"role": "user", "parts": [{"text": FILE_NOTE}] + parts}
 
     # ---- gọi API ----
     def config(self, thinking=True):
@@ -224,6 +260,14 @@ class GeminiAPISession:
                 if error.code == 400 and thinking and re.search(r"thinking", error.detail, re.IGNORECASE):
                     thinking = False  # model không hỗ trợ cấp độ tư duy: hỏi lại không kèm (yêu cầu trước bị từ chối)
                     status("Model này không chỉnh được cấp độ tư duy · dùng mặc định của model")
+                    continue
+                if error.code == 400 and re.search(r"media.?resolution", error.detail, re.IGNORECASE):
+                    # Model không nhận chế độ độ phân giải thấp theo từng phần: gửi lại với độ phân giải mặc định.
+                    self.low_res = False
+                    for turn in contents:
+                        for part in turn.get("parts") or []:
+                            part.pop("mediaResolution", None)
+                    status("Model này không nhận chế độ video độ phân giải thấp · dùng mặc định")
                     continue
                 if error.code == 400 and self.max_output > 8192 and re.search(r"max.?output|token", error.detail, re.IGNORECASE):
                     self.max_output = 8192  # model giới hạn độ dài trả lời thấp hơn: hỏi lại với giới hạn của model
@@ -333,15 +377,9 @@ class GeminiAPISession:
             info = http("GET", f"{BASE}/v1beta/{name}", self.key, timeout=30)
         if info.get("state") == "FAILED":
             raise GeminiAPIError(f"Google không xử lý được tệp {file.name}.")
-        part = {"fileData": {"fileUri": uri, "mimeType": info.get("mimeType") or mime}}
         if is_video:
-            # Gemini API mặc định chỉ xem 1 khung hình/giây: cảnh rượt đuổi, đánh nhau, chạy hết tốc lực bị "nhảy cóc"
-            # và dễ bị bỏ sót. Video ngắn thì xem dày hơn (tối đa 5 khung/giây) trong cùng lượng token như video 10 phút.
-            fps = video_fps(file)
-            if fps > 1:
-                part["videoMetadata"] = {"fps": fps}
-            status(f"Đã tải video gốc lên Gemini API · xem {fps:g} khung hình/giây")
-        return part
+            status("Đã tải video lên Gemini API")
+        return {"fileData": {"fileUri": uri, "mimeType": info.get("mimeType") or mime}}
 
     def cleanup(self):
         """Xóa tệp đã tải lên (Google tự xóa sau 48 giờ; xóa sớm cho gọn). Lỗi thì bỏ qua."""

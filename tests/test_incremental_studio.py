@@ -111,12 +111,20 @@ class AngleDefaultTests(unittest.TestCase):
 
 
 class ActionSceneTests(unittest.TestCase):
-    def test_short_videos_are_watched_at_more_frames_per_second(self):
+    def test_only_fast_segments_are_watched_densely(self):
         from unittest import mock
-        from runner import gemini_api
-        for seconds, fps in ((60, 5), (240, 2), (600, 1), (1800, 1), (0, 1)):
-            with mock.patch("runner.video_tools.probe", return_value={"duration": seconds}):
-                self.assertEqual(gemini_api.video_fps(Path("v.mp4")), fps)
+        from runner import reverse_engineer, gemini_api
+        # 30 khung/giây trong 40 giây: 0–10s tĩnh, 10–20s rượt đuổi, 20–30s vừa, 30–40s tĩnh (có một điểm cắt cảnh).
+        levels = [.005] * 300 + [.06] * 300 + [.02] * 300 + [.004] * 299
+        levels[950] = .5
+        times = [i / 30 for i in range(len(levels) + 1)]
+        with mock.patch.object(reverse_engineer, "frame_differences", return_value=(levels, times)):
+            plan = reverse_engineer.motion_plan(Path("doan.mp4"), 40)
+        self.assertEqual([fps for *_, fps in plan], [1, 5, 3, 1])
+        parts = gemini_api.video_parts({"fileData": {"fileUri": "u", "mimeType": "video/mp4"}}, plan)
+        self.assertEqual(len(parts), 4)
+        self.assertEqual(parts[1]["videoMetadata"], {"startOffset": "10.00s", "endOffset": "20.00s", "fps": 5.0})
+        self.assertNotIn("fps", parts[0]["videoMetadata"])  # khúc tĩnh: 1 khung/giây (mặc định)
 
     def test_prompts_keep_full_speed_chases_and_fights(self):
         from runner import content

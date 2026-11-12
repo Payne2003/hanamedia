@@ -69,7 +69,8 @@ class AppServer(ThreadingHTTPServer):
             key, source = "", "missing"
         return {"configured": bool(key), "source": source if key else "missing",
                 "model": self.store.setting(prefix + "_model") or module.DEFAULT_MODEL,
-                "thinking": self.store.setting(prefix + "_thinking") or "",
+                # Gemini chưa chọn mức tư duy: mặc định Trung bình (mức Cao sinh rất nhiều token suy nghĩ khi phân tích video).
+                "thinking": self.store.setting(prefix + "_thinking", "medium" if engine == "gemini" else "") or "",
                 "rpm": self.api_rpm(engine),
                 # Gemini chỉ dùng API key (đã bỏ chế độ điều khiển Gemini trên Chrome): có khóa là dùng API.
                 "mode": "api" if key and (engine == "gemini" or self.store.setting(mode_key, "api") == "api") else "web",

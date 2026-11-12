@@ -95,6 +95,40 @@ def quick_shots(path, stop=None):
     return detect_shots(path, info["duration"], float(match.group(1)) if match else 0.0, stop), info["duration"]
 
 
+MOTION_SEGMENT = 10.0  # giây: chia đoạn video thành từng khúc để đo độ chuyển động
+MOTION_FAST, MOTION_MEDIUM = .035, .018  # sai khác trung vị giữa hai khung liên tiếp (ảnh 32×18, thang 0–1)
+
+
+def motion_plan(path, length, stop=None, segment=MOTION_SEGMENT):
+    """Số khung/giây Gemini nên xem cho từng khúc ~10 giây: khúc chuyển động mạnh (rượt đuổi, đánh nhau, máy lia nhanh)
+    xem 5 khung/giây, khúc vừa 3, khúc tĩnh 1. Dùng trung vị nên vài điểm cắt cảnh không làm khúc bị coi là "nhanh".
+    Trả về [(bắt đầu, kết thúc, khung/giây)] đã gộp các khúc liền nhau cùng mức; lỗi đo thì trả [] (xem 1 khung/giây)."""
+    try:
+        scores, times = frame_differences(path, stop, timeout=300)
+    except Exception:
+        if stop is not None and stop.is_set():
+            raise
+        return []
+    if not scores:
+        return []
+    if len(times) < len(scores) + 1:
+        step = float(length) / max(1, len(scores))
+        times = [i * step for i in range(len(scores) + 1)]
+    plan = []
+    at = 0.0
+    while at < float(length) - .05:
+        end = min(float(length), at + segment)
+        inside = [score for score, time in zip(scores, times[1:]) if at <= time < end]
+        level = statistics.median(inside) if inside else 0
+        fps = 5 if level >= MOTION_FAST else 3 if level >= MOTION_MEDIUM else 1
+        if plan and plan[-1][2] == fps:
+            plan[-1] = (plan[-1][0], round(end, 2), fps)
+        else:
+            plan.append((round(at, 2), round(end, 2), fps))
+        at = end
+    return plan
+
+
 def cut_clip(path, start, length, target, stop=None):
     """Cắt một đoạn video gốc (giây start, dài length) thành file nhẹ 480p không tiếng để gửi AI từng đoạn.
     Mã hóa lại (không copy) để đoạn bắt đầu đúng giây, không lệch về khung khóa trước đó."""
@@ -113,7 +147,7 @@ def cut_clip(path, start, length, target, stop=None):
 TILE = (320, 180)
 
 
-def contact_sheets(path, windows, folder, stop=None, status=lambda text: None, columns=6, max_sheets=8):
+def contact_sheets(path, windows, folder, stop=None, status=lambda text: None, columns=6, max_sheets=8, tile=None):
     """Ảnh khung hình cho Gemini: mỗi hàng một cảnh, mỗi ô một góc máy (khung giữa của góc đó), ô đen = không có góc.
     Gộp thành tối đa `max_sheets` ảnh (Gemini web nhận giới hạn số tệp mỗi tin nhắn). Trả về danh sách ảnh JPG."""
     import math
@@ -126,7 +160,7 @@ def contact_sheets(path, windows, folder, stop=None, status=lambda text: None, c
         windows = [{"start": 0.0, "angles": [(float(w["start"]), float(w["end"])) for w in windows[i:i + columns]]}
                    for i in range(0, len(windows), columns)]
     rows = max(6, math.ceil(len(windows) / max_sheets))
-    width, height = TILE
+    width, height = tile or TILE
     fit = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
     black = folder / "black.jpg"
     video.run([video.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}",
@@ -194,6 +228,27 @@ def detect_shots(path, duration, fps, stop=None):
         shots.append(dict(id=f"{number:03d}", start=round(start, 3), end=round(end, 3), duration=round(end - start, 3),
                           cut_score=round(score, 4) if score is not None else None, cut_confidence=confidence))
     return shots
+
+
+def scene_frames(path, window, folder, stop=None, limit=3):
+    """Vài khung hình nhỏ (384×216) của một cảnh: khung giữa từng góc máy (tối đa `limit`). Dùng khi nhờ AI sửa góc
+    quay của vài cảnh mà không gửi lại cả video."""
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    angles = list(window.get("angles") or [(0.0, float(window["end"]) - float(window["start"]))])
+    if len(angles) > limit:
+        angles = [angles[round(i * (len(angles) - 1) / (limit - 1))] for i in range(limit)] if limit > 1 else angles[:1]
+    frames = []
+    for index, (a, b) in enumerate(angles, 1):
+        if stop is not None and stop.is_set():
+            raise RuntimeError("Đã dừng.")
+        moment = float(window["start"]) + (float(a) + float(b)) / 2
+        target = folder / f"canh-{float(window['start']):.2f}-{index}.jpg"
+        video.run([video.ffmpeg(), "-v", "error", "-y", "-ss", f"{moment:.2f}", "-i", str(path), "-frames:v", "1", "-vf",
+                   "scale=384:216:force_original_aspect_ratio=decrease", "-q:v", "5", str(target)], 60)
+        if target.is_file() and target.stat().st_size:
+            frames.append(target)
+    return frames
 
 
 def shot_frames(path, shot, folder, stop=None, margin=.04, tail=.12):

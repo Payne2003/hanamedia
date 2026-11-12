@@ -364,8 +364,9 @@ function pollAuto(){
   else{content.scenes=result.scenes;content.script=result.original_script;content.issues=result.issues||[];content.windows=Array.isArray(result.windows)?result.windows:[];
     if(Array.isArray(result.subjects))content.scenes.forEach((scene,i)=>{scene.subjects=(result.subjects[i]||[]).map(s=>s.name+(s.count?` ×${s.count}`:'')+(s.detail?` (${s.detail})`:'')).join('; ');});}
   if(result.shots)toast(result.windows?`Video gốc: ${result.shots} cảnh 10 giây · Gemini viết ${result.scenes.length} cảnh · ${result.verified??0} cảnh khớp điểm cắt FFmpeg.`:`Video gốc có ${result.shots} shot · Gemini viết ${result.scenes.length} cảnh.`);
+  const tokenNote=result.tokens?` · dùng ${(result.tokens.input+result.tokens.output).toLocaleString('vi-VN')} token (${result.tokens.requests} lượt gửi)`:'';
   saveContent();renderScenes();if(job.kind!=='review')setStep(2);
-  toast(job.kind==='review'?`Đã kiểm tra: ${result.scenes.length} cảnh · ${result.issues.length} vấn đề.`:`Gemini đã viết ${result.scenes.length} cảnh (${result.rounds} lượt trả lời). Bấm “Kiểm tra thiếu cảnh / lỗi” để rà lại.`);
+  toast(job.kind==='review'?`Đã kiểm tra: ${result.scenes.length} cảnh · ${result.issues.length} vấn đề${tokenNote}.`:`Gemini đã viết ${result.scenes.length} cảnh (${result.rounds} lượt trả lời)${tokenNote}. Bấm “Kiểm tra thiếu cảnh / lỗi” để rà lại.`);
 }
 $('runAuto').onclick=()=>runAuto('generate');
 $('reviewContent').onclick=()=>runAuto('review');
