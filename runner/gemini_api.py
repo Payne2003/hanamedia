@@ -29,6 +29,7 @@ THINKING = {"low": "Thấp", "medium": "Trung bình", "high": "Cao"}
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}")
 YOUTUBE = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?[^\s]*v=|shorts/)|youtu\.be/)[A-Za-z0-9_-]{6,}[^\s]*")
 RETRY_WAIT = (15, 45, 90)  # 429 (giới hạn theo phút): yêu cầu chưa được xử lý, đợi rồi gửi lại
+BUSY_WAIT = (20, 40, 60)  # mọi model đều quá tải: đợi rồi thử lại cả vòng model
 OVERLOAD_WAIT = (5, 15)  # 500/503 (Google quá tải): thử lại nhanh 2 lần rồi đổi sang model khác còn chỗ
 UPLOAD_HOSTS = ("generativelanguage.googleapis.com",)
 
@@ -155,6 +156,7 @@ class GeminiAPISession:
         self.usage = {"input": 0, "output": 0, "requests": 0}  # token Google báo lại (usageMetadata), cộng dồn cả phiên
         self.motion_plan = None  # [(bắt đầu, kết thúc, khung/giây)] cho video kế tiếp; None = 1 khung/giây
         self.low_res = True  # video độ phân giải thấp (tắt tự động nếu model không nhận)
+        self.first_model = self.model
         self.debug_path = None
         self.take_now = None
         self.account_seen = None
@@ -217,6 +219,7 @@ class GeminiAPISession:
         # lượt sau chỉ gửi chữ (video chỉ tính token một lần cho mỗi đoạn).
         self.history = [self.without_files(turn) for turn in contents] + [
             {"role": "model", "parts": content.get("parts") or [{"text": answer}]}]
+        self.overload_tried = set()  # gửi thành công: lần quá tải sau được thử lại mọi model
         meta = response.get("usageMetadata") or {}
         used_in = int(meta.get("promptTokenCount") or 0)
         used_out = int(meta.get("candidatesTokenCount") or 0) + int(meta.get("thoughtsTokenCount") or 0)
@@ -283,6 +286,15 @@ class GeminiAPISession:
                         continue
                     raise GeminiAPIError(str(error) + " Đợi hạn mức đặt lại (khoảng 14–15 giờ chiều giờ Việt Nam), chọn model "
                                          "khác trong Cài đặt, hoặc bật thanh toán cho API key ở Google AI Studio.") from None
+                if error.code == 404 and self.model != self.first_model and self.__dict__.get("overload_tried"):
+                    # Model dự phòng không có với API key này: thử model kế tiếp trong danh sách.
+                    fallback = self.overload_model()
+                    if fallback:
+                        status(f"Không có model {self.model} · thử {fallback}…")
+                        self.model, overloaded = fallback, len(OVERLOAD_WAIT)
+                        url = f"{BASE}/v1beta/models/{quote(self.model, safe='')}:generateContent"
+                        pace = "gemini:" + hashlib.sha256(self.key.encode()).hexdigest()[:12] + ":" + self.model
+                        continue
                 if error.code in (500, 502, 503, 504) and not error.quota:
                     # Google quá tải (không phải do mình gửi nhiều): không bắt mọi yêu cầu khác cùng đợi. Thử lại nhanh;
                     # vẫn quá tải thì đổi sang model dự phòng (mỗi model một cụm máy chủ riêng) thay vì chờ hàng phút.
@@ -293,13 +305,27 @@ class GeminiAPISession:
                         if stop.wait(wait):
                             raise GeminiAPIError("Đã dừng.") from None
                         continue
-                    fallback = self.fallback_model()
+                    fallback = self.overload_model()
                     if fallback:
                         status(f"{self.model} vẫn quá tải · chuyển sang {fallback} để chạy tiếp…")
                         self.model, overloaded = fallback, 0
                         url = f"{BASE}/v1beta/models/{quote(self.model, safe='')}:generateContent"
                         pace = "gemini:" + hashlib.sha256(self.key.encode()).hexdigest()[:12] + ":" + self.model
                         continue
+                    if error.code in (500, 502, 503, 504):
+                        # Mọi model đã thử đều quá tải: lỗi phía Google, không phải do tool hay API key.
+                        if attempt < len(BUSY_WAIT):
+                            wait = BUSY_WAIT[attempt]
+                            attempt += 1
+                            status(f"Tất cả model Gemini đã thử đều đang quá tải (phía Google) · đợi {wait} giây rồi thử "
+                                   f"lại (lần {attempt}/{len(BUSY_WAIT)})…")
+                            self.overload_tried = {self.model}  # đợi xong: được thử lại các model dự phòng từ đầu
+                            overloaded = len(OVERLOAD_WAIT)  # thử ngay 1 lần rồi đổi model, không đợi nhanh lại
+                            if stop.wait(wait):
+                                raise GeminiAPIError("Đã dừng.") from None
+                            continue
+                        raise GeminiAPIError("Máy chủ Gemini của Google đang quá tải ở mọi model đã thử. Các cảnh đã "
+                                             "phân tích được giữ lại; chạy lại sau ít phút để viết phần còn thiếu.") from None
                 if error.code in (429, 500, 502, 503, 504) and attempt < len(RETRY_WAIT):
                     # Giới hạn theo phút / quá tải: đợi (theo gợi ý của Google nếu có) rồi gửi lại.
                     wait = int(error.retry_after + 2) if error.retry_after else (max(RETRY_WAIT[attempt], 60 if RETRY_WAIT[attempt] else 0)
@@ -314,6 +340,19 @@ class GeminiAPISession:
                 raise
 
     FALLBACKS = ("gemini-flash-latest", "gemini-flash-lite-latest")
+    # Quá tải (500/503): mỗi model chạy trên cụm máy chủ riêng, thử lần lượt nhiều model hơn trước khi phải chờ.
+    OVERLOAD_FALLBACKS = ("gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite")
+
+    def overload_model(self):
+        """Model kế tiếp để thử khi model đang dùng quá tải. Danh sách đã thử xóa sau mỗi lần gửi thành công, nên đoạn
+        sau quá tải lại vẫn được đổi model (kể cả quay về model ban đầu)."""
+        tried = self.__dict__.setdefault("overload_tried", set())
+        tried.add(self.model)
+        for name in (self.__dict__.setdefault("first_model", self.model),) + self.OVERLOAD_FALLBACKS:
+            if name not in tried:
+                tried.add(name)
+                return name
+        return None
 
     def fallback_model(self):
         """Model dự phòng khi model đang dùng hết hạn mức: Pro → Flash → Flash-Lite (mỗi model có hạn mức riêng)."""
