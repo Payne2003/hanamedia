@@ -927,3 +927,24 @@ dialog{box-shadow:var(--elev-2)}
 @media(min-width:1500px){.workspace{grid-template-columns:minmax(0,1fr) 400px}}
 @media(max-width:1100px){.workspace{grid-template-columns:minmax(0,1fr) 320px}}
 @media(max-width:880px){.workspace{grid-template-columns:1fr}}
+/* ===== Trang còn lại: Wildlife, Thư viện, Bản quyền, hộp Tài khoản Muse ===== */
+/* Biểu tượng lớn của ô trống */
+.empty>span svg.ic{width:44px;height:44px;margin:0;opacity:.7}
+/* Wildlife: hộp giới thiệu dùng nền trung tính + vạch nhấn (không phủ cả khối màu xanh) */
+.production-notice{background:var(--c-surface-2)!important;border:1px solid var(--c-border)!important;border-left:3px solid var(--c-accent)!important;color:var(--c-text-2)!important;padding:14px 18px!important}
+#productionView form label{margin:14px 0 6px!important}
+#productionView form input,#productionView form select,#productionView form textarea{margin-top:0!important}
+.production-actions{margin-top:8px}
+.production-actions button{flex:1 1 auto}
+/* Tiêu đề trang thống nhất: tiêu đề trên, mô tả phụ bên dưới */
+#licenseView .content-topbar{flex-direction:column;align-items:flex-start;gap:4px}
+#licenseView .content-topbar .crumb{display:none}
+/* Mã máy: dễ đọc, xuống dòng khi hẹp */
+#licenseView code,#licenseView .machine-code{overflow-wrap:anywhere}
+/* Thư viện: tách hai nhóm bộ lọc */
+.media-toolbar .tabs+.tabs,.media-filters .tabs+.tabs{padding-left:12px;margin-left:4px;border-left:1px solid var(--c-border)}
+/* Hộp Tài khoản Muse: ô email vừa phải, không chiếm cả màn */
+#accounts textarea#email{min-height:110px;height:auto}
+#accounts .health-stats>*{border-radius:var(--radius)}
+dialog .dialog-heading button{min-width:40px}
+#productionView{padding:0!important}
