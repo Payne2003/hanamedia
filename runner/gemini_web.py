@@ -763,7 +763,7 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
         result["subjects"] = {}
         for answer in answers:  # dòng "Nhân vật cảnh N" của mọi lượt trả lời (lượt sau ghi đè lượt trước)
             result["subjects"].update(content.parse_subjects(answer))
-        rounds = verify_cameras(session, result, windows, status, stop, email)
+        rounds = verify_cameras(session, result, windows, status, stop, email, files[0] if files else None)
         rounds += verify_subjects(session, result, windows, status, stop, email)
         answers += [""] * rounds
     if shots and len(result["scenes"]) != min(len(shots), content.MAX_SCENES):
@@ -794,6 +794,9 @@ def chunk_windows(windows):
     return chunks + ([current] if current else [])
 
 
+SHEETS_API = {"tile": (240, 135), "max_sheets": 4}  # Gemini API: ảnh khung hình nhỏ và ít tấm hơn (ít token)
+
+
 def run_chunked(session, base, source, windows, status, stop, email="", model="", review=False, folder=None):
     """Gửi lần lượt rồi lấy kết quả lần lượt: cắt video gốc thành từng đoạn CHUNK_SCENES cảnh, mỗi đoạn một cuộc trò
     chuyện mới (không kéo theo video/lịch sử các đoạn trước → ít token mỗi yêu cầu, ít chạm hạn mức), ghép kết quả theo
@@ -812,8 +815,17 @@ def run_chunked(session, base, source, windows, status, stop, email="", model=""
         status(f"Đoạn {index}/{len(chunks)}: cảnh {done + 1}–{done + len(part)} (giây {offset:g}–{offset + length:g}) · cắt video…")
         try:
             clip = reverse_engineer.cut_clip(source, offset, length, folder / f"doan-{index}.mp4", stop)
+            if getattr(session, "api", False):
+                # Tiết kiệm token: khúc tĩnh xem 1 khung/giây, khúc hành động nhanh xem 3–5 (đo bằng FFmpeg).
+                status(f"Đoạn {index}/{len(chunks)}: đo độ chuyển động để chọn số khung hình/giây…")
+                plan = reverse_engineer.motion_plan(clip, length, stop)
+                session.motion_plan = plan
+                fast = sum(b - a for a, b, fps in plan if fps > 1)
+                if fast:
+                    status(f"Đoạn {index}/{len(chunks)}: {fast:g} giây chuyển động nhanh sẽ được xem dày hơn")
             try:
-                sheets = reverse_engineer.contact_sheets(clip, local, folder / f"khung-{index}", stop, status)
+                sheets = reverse_engineer.contact_sheets(clip, local, folder / f"khung-{index}", stop, status,
+                                                         **(SHEETS_API if getattr(session, "api", False) else {}))
             except Exception:
                 if stop.is_set():
                     raise
@@ -843,8 +855,12 @@ def run_chunked(session, base, source, windows, status, stop, email="", model=""
             total["original_script"].append(result["original_script"])
         total["rounds"] += result.get("rounds", 1)
         done += len(part)
-        status(f"Xong đoạn {index}/{len(chunks)} · đã có {done}/{len(windows)} cảnh")
+        used = session.tokens() if hasattr(session, "tokens") else 0
+        status(f"Xong đoạn {index}/{len(chunks)} · đã có {done}/{len(windows)} cảnh"
+               + (f" · đã dùng {used:,} token".replace(",", ".") if used else ""))
     total["original_script"] = "\n\n".join(total["original_script"])
+    if hasattr(session, "usage"):
+        total["tokens"] = dict(session.usage)
     total["windows"] = windows
     total["shots"] = len(windows)
     return total
@@ -995,7 +1011,27 @@ def verify_subjects(session, result, windows, status, stop, email=""):
     return rounds
 
 
-def verify_cameras(session, result, windows, status, stop, email=""):
+FIX_FRAMES_SCENES = 6  # sửa góc quay qua API: gửi khung hình của tối đa 6 cảnh, không gửi lại cả video
+
+
+def fix_frames(session, source, bad, windows, stop):
+    """Gemini API: đính kèm vài khung hình nhỏ của đúng các cảnh cần sửa (video không gửi lại ở lượt sau)."""
+    if not (source and getattr(session, "api", False) and str(source).lower().endswith((".mp4", ".mov", ".mkv", ".webm"))):
+        return
+    from . import reverse_engineer
+    frames = []
+    try:
+        for number in sorted(bad)[:FIX_FRAMES_SCENES]:
+            frames += reverse_engineer.scene_frames(source, windows[number - 1], Path(source).parent / "khung-sua", stop)
+    except Exception:
+        if stop.is_set():
+            raise
+        return
+    if frames:
+        session.attach_images(frames, lambda text: None, stop)
+
+
+def verify_cameras(session, result, windows, status, stop, email="", source=None):
     """Reference Analyst: đối chiếu góc quay từng cảnh với điểm cắt đo được; cảnh nào chưa khớp thì nhờ Gemini viết lại
     đúng cảnh đó (tối đa 2 lượt). Cảnh vẫn chưa khớp được ghi vào mục vấn đề. Trả về số lượt đã hỏi."""
     scenes, rounds = result["scenes"], 0
@@ -1005,6 +1041,7 @@ def verify_cameras(session, result, windows, status, stop, email=""):
         bad = problems()
         if not bad:
             break
+        fix_frames(session, source, bad, windows, stop)
         answer = session.ask(content.fix_cameras_request(bad, windows), status, stop, email,
                              label=f"Kiểm tra liên tục: {len(bad)} cảnh chưa khớp điểm cắt · Gemini đang viết lại (lần {attempt + 1})")
         rounds += 1
@@ -1470,13 +1507,15 @@ class GeminiWebRunner:
                     continue
                 files, windows, shots = prepared
                 # Gemini API: gửi lần lượt từng đoạn ~1 phút (mỗi đoạn một cuộc trò chuyện mới), lấy kết quả lần lượt —
-                # không gửi cả video dài một lần. Mỗi đoạn ngắn nên Gemini xem dày (5 khung/giây), giữ đủ cảnh nhanh.
+                # không gửi cả video dài một lần. Khúc tĩnh xem 1 khung/giây, khúc hành động nhanh xem 3–5 (ít token mà đủ cảnh).
                 if api is not None and windows and files:
                     result = run_chunked(self.session, base, files[0], windows, status, self.stop, email, model,
                                          kind == "review", self.profile.parent / "gemini-uploads" / "doan")
                     result["prompts"] = content.format_prompts(result["scenes"])
                     self.set(busy=False, result=result,
-                             status=f"Xong: {len(result['scenes'])} cảnh, gửi lần lượt {len(chunk_windows(windows))} đoạn")
+                             status=f"Xong: {len(result['scenes'])} cảnh, gửi lần lượt {len(chunk_windows(windows))} đoạn"
+                                    + (f" · tổng {result['tokens']['input'] + result['tokens']['output']:,} token".replace(",", ".")
+                                       if result.get("tokens") else ""))
                     continue
                 result = run_conversation(self.session, prompt, status, self.stop, email, model, kind == "review",
                                           files=files, windows=windows, shots=shots)

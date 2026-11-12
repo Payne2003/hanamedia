@@ -252,3 +252,46 @@ class ChunkedTests(unittest.TestCase):
         self.assertIn("Đoạn 1 cảnh 1", result["scenes"][0]["setting"])
         self.assertIn("Đoạn 2 cảnh 1", result["scenes"][6]["setting"])
         self.assertIn("Dừng ở đoạn 3/3 (từ cảnh 13)", " ".join(result["issues"]))
+
+
+class TokenSavingTests(unittest.TestCase):
+    def test_video_sent_once_low_res_and_usage_counted(self):
+        google = FakeGoogle(answers=("Cảnh 1", "Cảnh 2"))
+        real_call = google.__call__
+
+        def with_usage(request, timeout, handlers=()):
+            response = real_call(request, timeout, handlers)
+            if ":generateContent" in request.full_url:
+                body = json.loads(response.body)
+                body["usageMetadata"] = {"promptTokenCount": 1000, "candidatesTokenCount": 200, "thoughtsTokenCount": 50}
+                response.body = json.dumps(body).encode()
+            return response
+        session = gemini_api.GeminiAPISession("AIzaTESTKEY", "gemini-4-carbon")
+
+        class Quick(threading.Event):
+            def wait(self, timeout=None):
+                return self.is_set()
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(gemini_api, "opener", return_value=with_usage):
+            video = Path(folder) / "doan.mp4"
+            video.write_bytes(b"video")
+            session.motion_plan = [(0, 10, 1), (10, 20, 5)]
+            session.attach_images([video], lambda t: None, Quick())
+            session.ask("Phân tích", lambda t: None, Quick())
+            session.ask("Viết tiếp", lambda t: None, Quick())
+        first, second = google.bodies()
+        videos = [p for p in first["contents"][0]["parts"] if "fileData" in p]
+        self.assertEqual(len(videos), 2)  # hai khúc của cùng một video
+        self.assertEqual(videos[0]["mediaResolution"], {"level": "MEDIA_RESOLUTION_LOW"})
+        self.assertEqual(videos[1]["videoMetadata"]["fps"], 5.0)
+        # Lượt sau: không gửi lại video, chỉ chữ.
+        self.assertFalse(any("fileData" in p for turn in second["contents"] for p in turn["parts"]))
+        self.assertEqual(session.usage, {"input": 2000, "output": 500, "requests": 2})
+
+    def test_model_rejecting_low_res_retries_without_it(self):
+        google = FakeGoogle(errors=[(400, 'Invalid JSON payload received. Unknown name "mediaResolution"')])
+        session = gemini_api.GeminiAPISession("AIzaTESTKEY", "gemini-4-carbon")
+        session.pending = [{"fileData": {"fileUri": "u", "mimeType": "video/mp4"}, "mediaResolution": {"level": "MEDIA_RESOLUTION_LOW"}}]
+        with mock.patch.object(gemini_api, "opener", return_value=google):
+            self.assertEqual(session.ask("Hỏi", lambda t: None, threading.Event()), "Trả lời 1")
+        self.assertNotIn("mediaResolution", google.bodies()[-1]["contents"][0]["parts"][0])
+        self.assertFalse(session.low_res)
