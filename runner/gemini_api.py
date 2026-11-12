@@ -29,6 +29,7 @@ THINKING = {"low": "Thấp", "medium": "Trung bình", "high": "Cao"}
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}")
 YOUTUBE = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?[^\s]*v=|shorts/)|youtu\.be/)[A-Za-z0-9_-]{6,}[^\s]*")
 RETRY_WAIT = (15, 45, 90)  # 429 (giới hạn theo phút): yêu cầu chưa được xử lý, đợi rồi gửi lại
+REQUEST_TIMEOUT = 300  # giây chờ tối đa mỗi lần gửi (trước đây tới 20 phút); quá thì thử lại / đổi model
 BUSY_WAIT = (20, 40, 60)  # mọi model đều quá tải: đợi rồi thử lại cả vòng model
 OVERLOAD_WAIT = (5, 15)  # 500/503 (Google quá tải): thử lại nhanh 2 lần rồi đổi sang model khác còn chỗ
 UPLOAD_HOSTS = ("generativelanguage.googleapis.com",)
@@ -72,15 +73,29 @@ def http(method, url, key="", payload=None, data=None, headers=None, timeout=600
     except APIError:
         raise
     except Exception as error:
+        import http.client
+        import socket
+        reason = getattr(error, "reason", None)
+        if isinstance(error, (TimeoutError, socket.timeout)) or isinstance(reason, (TimeoutError, socket.timeout)):
+            # Google không trả lời trong thời gian cho phép: coi như quá tải để thử lại / đổi model, không dừng hẳn.
+            raise HTTPFailure(504, "Google không trả lời kịp") from None
+        if isinstance(error, (ConnectionResetError, http.client.RemoteDisconnected, http.client.IncompleteRead)) or \
+                isinstance(reason, ConnectionResetError):
+            raise HTTPFailure(503, "kết nối bị ngắt giữa chừng") from None
         raise GeminiAPIError(f"Không kết nối được Gemini API ({type(error).__name__}). Kiểm tra mạng.") from None
+
+
+class Overloaded(GeminiAPIError):
+    """Mọi model đã thử đều quá tải / lỗi máy chủ: phía gọi có thể chia nhỏ yêu cầu rồi gửi lại."""
 
 
 class HTTPFailure(GeminiAPIError):
     MESSAGES = {400: "Gemini API không nhận yêu cầu", 401: "Gemini API không chấp nhận khóa. Kiểm tra lại API key",
                 403: "API key không có quyền dùng Gemini API (hoặc chưa bật API trong dự án)",
                 404: "Không tìm thấy model này. Bấm “Tải danh sách model” và chọn lại",
-                429: "Đã chạm hạn mức/giới hạn tốc độ của API key", 500: "Máy chủ Gemini lỗi tạm thời",
-                503: "Gemini đang quá tải"}
+                429: "Đã chạm hạn mức/giới hạn tốc độ của API key", 500: "Máy chủ Gemini báo lỗi nội bộ (500)",
+                502: "Máy chủ Gemini lỗi tạm thời (502)", 503: "Gemini đang quá tải (503)",
+                504: "Gemini xử lý quá lâu, hết thời gian (504)"}
 
     def __init__(self, code, detail="", details=()):
         self.code, self.detail = code, str(detail or "")[:300]
@@ -157,6 +172,8 @@ class GeminiAPISession:
         self.motion_plan = None  # [(bắt đầu, kết thúc, khung/giây)] cho video kế tiếp; None = 1 khung/giây
         self.low_res = True  # video độ phân giải thấp (tắt tự động nếu model không nhận)
         self.first_model = self.model
+        self.simple_media = False  # Google báo lỗi máy chủ với video có tham số: từ đó gửi video dạng đơn giản
+        self.busy_rounds = None  # số vòng chờ khi mọi model lỗi (None = đủ BUSY_WAIT); 0 = báo Overloaded ngay để chia nhỏ
         self.debug_path = None
         self.take_now = None
         self.account_seen = None
@@ -189,8 +206,8 @@ class GeminiAPISession:
         for file in files:
             part = self.upload(Path(file), status, stop)
             if str(part.get("fileData", {}).get("mimeType", "")).startswith("video/"):
-                parts = video_parts(part, self.motion_plan)
-                if self.low_res:
+                parts = video_parts(part, None if self.simple_media else self.motion_plan)
+                if self.low_res and not self.simple_media:
                     for item in parts:
                         item["mediaResolution"] = {"level": LOW_RES}
                 self.pending += parts
@@ -232,6 +249,26 @@ class GeminiAPISession:
             status("Câu trả lời chạm giới hạn độ dài · tool sẽ nhắn viết tiếp")
         return answer
 
+    def simplify(self, contents):
+        """Bỏ tham số video (khung/giây, khúc, độ phân giải theo phần), gộp các khúc của cùng một video thành một phần.
+        Trả về True nếu có thay đổi."""
+        changed = False
+        for turn in contents:
+            parts, seen = [], set()
+            for part in turn.get("parts") or []:
+                if "fileData" in part and ("videoMetadata" in part or "mediaResolution" in part):
+                    changed = True
+                    uri = part["fileData"].get("fileUri")
+                    if uri in seen:
+                        continue
+                    seen.add(uri)
+                    part = {"fileData": part["fileData"]}
+                parts.append(part)
+            turn["parts"] = parts
+        if changed:
+            self.simple_media, self.low_res = True, False
+        return changed
+
     def tokens(self):
         return self.usage["input"] + self.usage["output"]
 
@@ -258,7 +295,8 @@ class GeminiAPISession:
             pace = "gemini:" + hashlib.sha256(self.key.encode()).hexdigest()[:12] + ":" + self.model
             Pacer.wait(pace, self.rpm, status, stop)  # giãn cách để không vượt giới hạn yêu cầu/phút
             try:
-                return self.call(url, {"contents": contents, "generationConfig": self.config(thinking)}, timeout, stop)
+                return self.call(url, {"contents": contents, "generationConfig": self.config(thinking)},
+                                 min(timeout, REQUEST_TIMEOUT), stop)
             except HTTPFailure as error:
                 if error.code == 400 and thinking and re.search(r"thinking", error.detail, re.IGNORECASE):
                     thinking = False  # model không hỗ trợ cấp độ tư duy: hỏi lại không kèm (yêu cầu trước bị từ chối)
@@ -301,20 +339,27 @@ class GeminiAPISession:
                     if overloaded < len(OVERLOAD_WAIT):
                         wait = OVERLOAD_WAIT[overloaded]
                         overloaded += 1
-                        status(f"Gemini đang quá tải · thử lại sau {wait} giây (lần {overloaded}/{len(OVERLOAD_WAIT)})…")
+                        status(f"{error} Thử lại sau {wait} giây (lần {overloaded}/{len(OVERLOAD_WAIT)})…")
                         if stop.wait(wait):
                             raise GeminiAPIError("Đã dừng.") from None
                         continue
+                    if not self.simple_media and self.simplify(contents):
+                        # Lỗi máy chủ lặp lại có thể do cách gửi video (tham số khung/giây, độ phân giải theo phần):
+                        # gửi lại video dạng đơn giản trước khi đổi model; được thì giữ cách này cho cả lượt chạy.
+                        status("Lỗi máy chủ lặp lại · thử gửi video dạng đơn giản (không tham số khung/giây, độ phân giải)…")
+                        overloaded = len(OVERLOAD_WAIT) - 1
+                        continue
                     fallback = self.overload_model()
                     if fallback:
-                        status(f"{self.model} vẫn quá tải · chuyển sang {fallback} để chạy tiếp…")
+                        status(f"{self.model} vẫn lỗi ({error.code}) · chuyển sang {fallback} để chạy tiếp…")
                         self.model, overloaded = fallback, 0
                         url = f"{BASE}/v1beta/models/{quote(self.model, safe='')}:generateContent"
                         pace = "gemini:" + hashlib.sha256(self.key.encode()).hexdigest()[:12] + ":" + self.model
                         continue
                     if error.code in (500, 502, 503, 504):
                         # Mọi model đã thử đều quá tải: lỗi phía Google, không phải do tool hay API key.
-                        if attempt < len(BUSY_WAIT):
+                        rounds = len(BUSY_WAIT) if self.busy_rounds is None else self.busy_rounds
+                        if attempt < rounds:
                             wait = BUSY_WAIT[attempt]
                             attempt += 1
                             status(f"Tất cả model Gemini đã thử đều đang quá tải (phía Google) · đợi {wait} giây rồi thử "
@@ -324,8 +369,9 @@ class GeminiAPISession:
                             if stop.wait(wait):
                                 raise GeminiAPIError("Đã dừng.") from None
                             continue
-                        raise GeminiAPIError("Máy chủ Gemini của Google đang quá tải ở mọi model đã thử. Các cảnh đã "
-                                             "phân tích được giữ lại; chạy lại sau ít phút để viết phần còn thiếu.") from None
+                        self.overload_tried = set()
+                        raise Overloaded(f"Máy chủ Gemini của Google đang lỗi/quá tải ở mọi model đã thử ({error.code}). "
+                                         "Các cảnh đã phân tích được giữ lại; chạy lại sau ít phút để viết phần còn thiếu.") from None
                 if error.code in (429, 500, 502, 503, 504) and attempt < len(RETRY_WAIT):
                     # Giới hạn theo phút / quá tải: đợi (theo gợi ý của Google nếu có) rồi gửi lại.
                     wait = int(error.retry_after + 2) if error.retry_after else (max(RETRY_WAIT[attempt], 60 if RETRY_WAIT[attempt] else 0)

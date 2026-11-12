@@ -313,3 +313,67 @@ class TokenSavingTests(unittest.TestCase):
             self.assertEqual(session.ask("Hỏi", lambda t: None, threading.Event()), "Trả lời 1")
         self.assertNotIn("mediaResolution", google.bodies()[-1]["contents"][0]["parts"][0])
         self.assertFalse(session.low_res)
+
+
+class OverloadAlgorithmTests(unittest.TestCase):
+    def patched(self):
+        return (mock.patch.object(gemini_api, "RETRY_WAIT", (0, 0, 0)), mock.patch.object(gemini_api, "OVERLOAD_WAIT", (0, 0)),
+                mock.patch.object(gemini_api, "BUSY_WAIT", (0, 0, 0)))
+
+    def test_timeout_is_retried_instead_of_stopping(self):
+        calls = []
+
+        def slow_then_ok(request, timeout, handlers=()):
+            calls.append(timeout)
+            if len(calls) == 1:
+                raise TimeoutError("timed out")
+            return Response({"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "OK"}]}}]})
+        session = gemini_api.GeminiAPISession("AIzaTESTKEY", "gemini-4-carbon")
+        a, b, c = self.patched()
+        with a, b, c, mock.patch.object(gemini_api, "opener", return_value=slow_then_ok):
+            self.assertEqual(session.ask("Hỏi", lambda t: None, threading.Event()), "OK")
+        self.assertLessEqual(calls[0], gemini_api.REQUEST_TIMEOUT)  # không còn chờ 20 phút mỗi lần
+
+    def test_repeated_server_error_with_video_options_retries_simple_video_first(self):
+        google = FakeGoogle(errors=[(500, "Internal error")] * 3)
+        session = gemini_api.GeminiAPISession("AIzaTESTKEY", "gemini-4-carbon")
+        video = {"fileData": {"fileUri": "u", "mimeType": "video/mp4"}}
+        session.pending = [dict(video, videoMetadata={"startOffset": "0s", "endOffset": "10s"}, mediaResolution={"level": "LOW"}),
+                           dict(video, videoMetadata={"startOffset": "10s", "endOffset": "20s", "fps": 5.0})]
+        a, b, c = self.patched()
+        with a, b, c, mock.patch.object(gemini_api, "opener", return_value=google):
+            self.assertEqual(session.ask("Hỏi", lambda t: None, threading.Event()), "Trả lời 1")
+        last = google.bodies()[-1]["contents"][0]["parts"]
+        self.assertEqual(last[0], video)  # một video, không tham số
+        self.assertEqual(len([p for p in last if "fileData" in p]), 1)
+        self.assertEqual(session.model, "gemini-4-carbon")  # chưa phải đổi model
+        self.assertTrue(session.simple_media)
+
+    def test_chunk_failing_everywhere_is_split_in_half(self):
+        from runner import gemini_web
+        windows = [{"start": i * 3.0, "end": i * 3.0 + 3, "angles": [(0.0, 3.0)], "shot": True} for i in range(8)]
+        seen, calls = [], []
+
+        def fake_conversation(session, prompt, status, stop, email, model, review, files=(), windows=None):
+            calls.append(len(windows))
+            if len(windows) > 4:
+                raise gemini_api.Overloaded("quá tải")
+            return {"scenes": [{"setting": "s", "camera": "c", "behavior": "b", "action": f"a{n}"} for n in range(len(windows))],
+                    "issues": [], "rounds": 1}
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(gemini_web, "run_conversation", side_effect=fake_conversation), \
+                mock.patch.object(gemini_web, "SPLIT_PAUSE", 0), \
+                mock.patch("runner.reverse_engineer.cut_clip", side_effect=lambda src, o, l, target, stop=None: target), \
+                mock.patch("runner.reverse_engineer.contact_sheets", return_value=[]):
+            session = types_session()
+            result = gemini_web.run_chunked(session, "Yêu cầu", Path(folder) / "v.mp4", windows, seen.append,
+                                            threading.Event(), folder=folder)
+        self.assertEqual(calls, [8, 4, 4])
+        self.assertEqual(len(result["scenes"]), 8)
+        self.assertTrue(any("chia đôi" in text for text in seen))
+
+
+def types_session():
+    class Session:
+        busy_rounds = None
+    return Session()
