@@ -794,6 +794,9 @@ def chunk_windows(windows):
     return chunks + ([current] if current else [])
 
 
+MIN_SPLIT_SCENES = 2  # đoạn từ 4 cảnh trở lên mới chia đôi khi máy chủ lỗi
+MIN_SPLIT_SECONDS = 12
+SPLIT_PAUSE = 10  # giây nghỉ trước khi gửi lại hai nửa
 SHEETS_API = {"tile": (240, 135), "max_sheets": 4}  # Gemini API: ảnh khung hình nhỏ và ít tấm hơn (ít token)
 
 
@@ -806,10 +809,18 @@ def run_chunked(session, base, source, windows, status, stop, email="", model=""
     chunks = chunk_windows(windows)
     folder = Path(folder or Path(source).parent / "hana-doan")
     total = {"original_script": [], "scenes": [], "issues": [], "subjects": [], "rounds": 0}
-    done = 0
-    for index, part in enumerate(chunks, 1):
+    done, index, pending = 0, 0, list(chunks)
+    from .gemini_api import Overloaded
+    while pending:
+        part = pending.pop(0)
+        index += 1
+        chunks = [None] * (index + len(pending))  # tổng số đoạn để hiển thị (tăng khi một đoạn được chia đôi)
         if stop.is_set():
             raise GeminiWebError("Đã dừng.")
+        # Đoạn còn chia đôi được: khi mọi model lỗi thì báo ngay (không chờ lâu) để chia nhỏ rồi gửi lại.
+        splittable = len(part) >= 2 * MIN_SPLIT_SCENES and part[-1]["end"] - part[0]["start"] > MIN_SPLIT_SECONDS
+        if hasattr(session, "busy_rounds"):
+            session.busy_rounds = 0 if splittable else None
         offset, length = part[0]["start"], part[-1]["end"] - part[0]["start"]
         local = [dict(w, start=round(w["start"] - offset, 2), end=round(w["end"] - offset, 2)) for w in part]
         status(f"Đoạn {index}/{len(chunks)}: cảnh {done + 1}–{done + len(part)} (giây {offset:g}–{offset + length:g}) · cắt video…")
@@ -835,6 +846,23 @@ def run_chunked(session, base, source, windows, status, stop, email="", model=""
                     "thời gian tính từ đầu đoạn.")
             prompt = base + "\n\n" + content.scene_section(local, length, len(sheets)) + note
             result = run_conversation(session, prompt, status, stop, email, model, review, files=[clip] + sheets, windows=local)
+        except Overloaded as error:
+            if stop.is_set():
+                raise
+            if splittable:
+                # Thuật toán chia đôi: yêu cầu nhỏ hơn (video ngắn hơn, ít cảnh hơn) dễ được máy chủ nhận hơn khi quá tải.
+                middle = len(part) // 2
+                pending[:0] = [part[:middle], part[middle:]]
+                status(f"Đoạn {index} vẫn lỗi máy chủ · chia đôi thành 2 đoạn nhỏ ({middle} + {len(part) - middle} cảnh), "
+                       f"đợi {SPLIT_PAUSE} giây rồi gửi lại…")
+                index -= 1
+                if stop.wait(SPLIT_PAUSE):
+                    raise GeminiWebError("Đã dừng.") from None
+                continue
+            if not total["scenes"]:
+                raise
+            total["issues"].append(f"Dừng ở đoạn {index}/{len(chunks)} (từ cảnh {done + 1}): {error}")
+            break
         except Exception as error:
             if stop.is_set() or not total["scenes"]:
                 raise
