@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 
-def main(output=None, video=False):
+def main(output=None, video=False, plugin=False):
     import tkinter as tk
     from tkinter import filedialog
     try:
@@ -16,7 +16,8 @@ def main(output=None, video=False):
         folder = filedialog.askopenfilename(title="Chọn video gốc",
                                             filetypes=[("Video", "*.mp4 *.mov *.mkv *.webm *.m4v *.avi"), ("Tất cả", "*.*")])
     else:
-        folder = filedialog.askdirectory(title="Chọn thư mục lưu video HANA MEDIA", mustexist=True)
+        folder = filedialog.askdirectory(title="Chọn thư mục plugin (có plugin.json / skills)" if plugin
+                                         else "Chọn thư mục lưu video HANA MEDIA", mustexist=True)
     root.destroy()
     if output:  # bản cài đặt chạy không có cửa sổ dòng lệnh: trả kết quả qua file
         Path(output).write_text(folder or "", encoding="utf-8")
@@ -26,4 +27,4 @@ def main(output=None, video=False):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(video="--video" in sys.argv))
+    raise SystemExit(main(video="--video" in sys.argv, plugin="--plugin" in sys.argv))

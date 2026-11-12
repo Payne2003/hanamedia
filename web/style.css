@@ -948,3 +948,10 @@ dialog{box-shadow:var(--elev-2)}
 #accounts .health-stats>*{border-radius:var(--radius)}
 dialog .dialog-heading button{min-width:40px}
 #productionView{padding:0!important}
+
+/* Plugin viết prompt */
+.plugin-row{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap;padding:12px 14px;margin:8px 0;border:1px dashed var(--c-border-strong);border-radius:var(--radius);background:var(--c-surface-2)}
+.plugin-row>div:first-child{display:grid;gap:2px;min-width:0;flex:1 1 260px}
+.plugin-row small{color:var(--c-text-3);font-size:var(--fs-xs);overflow-wrap:anywhere}
+.plugin-row.loaded{border-style:solid;border-color:var(--c-accent)}
+.plugin-actions{display:flex;gap:8px;flex-wrap:wrap}

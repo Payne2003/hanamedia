@@ -100,6 +100,33 @@ class AppServer(ThreadingHTTPServer):
             raise ValueError("Chưa có API key Gemini. Vào Cài đặt → Gemini, bấm “Lấy API key”, dán khóa rồi bấm Lưu.")
         return gemini_api.GeminiAPISession(key, info["model"], info["thinking"], rpm=info["rpm"])
 
+    def plugin_public(self):
+        plugin = content.PLUGIN
+        if not plugin:
+            return None
+        return {k: plugin.get(k) for k in ("name", "description", "skills", "files", "chars", "truncated", "folder")}
+
+    def pick_directory(self, frozen_flag, script_args):
+        """Mở hộp chọn thư mục của hệ điều hành (tiến trình riêng). Trả về đường dẫn hoặc "" nếu bấm Hủy."""
+        if not self.folder_lock.acquire(blocking=False):
+            raise ValueError("Cửa sổ chọn thư mục đang mở.")
+        try:
+            if frozen():
+                answer = DATA / ".folder-choice.txt"
+                answer.unlink(missing_ok=True)
+                result = subprocess.run([sys.executable, frozen_flag, str(answer)], timeout=300)
+                folder = answer.read_text(encoding="utf-8").strip() if answer.is_file() else ""
+                answer.unlink(missing_ok=True)
+            else:
+                result = subprocess.run([sys.executable, str(ROOT / "folder_picker.py"), *script_args],
+                                        capture_output=True, timeout=300, encoding="utf-8")
+                folder = (result.stdout or "").strip()
+            if result.returncode:
+                raise ValueError("Không mở được hộp chọn thư mục. Chạy tool trên máy có giao diện màn hình.")
+            return folder
+        finally:
+            self.folder_lock.release()
+
     def gemini_writer(self):
         """Phiên Gemini API dùng cho bước viết/kiểm duyệt prompt (model, cấp độ tư duy, giới hạn/phút của thẻ Gemini)."""
         info = self.api_public("gemini")
@@ -118,6 +145,11 @@ class AppServer(ThreadingHTTPServer):
         if store.setting("gemini_api_key"):  # Chế độ Gemini API đã bỏ: không giữ khóa API cũ trên máy.
             store.save_setting("gemini_api_key", "")
         self.data_dir = Path(store.path).parent
+        try:  # plugin viết prompt đã nạp lần trước (bản sao lưu trong thư mục dữ liệu)
+            saved = self.data_dir / "prompt-plugin.json"
+            content.set_plugin(json.loads(saved.read_text(encoding="utf-8")) if saved.is_file() else None)
+        except (OSError, ValueError):
+            content.set_plugin(None)
         self.license = licensing.LicenseManager(store, self.data_dir)
         try:  # hết hạn trong lúc đang chạy: bộ chạy ngừng nhận tác vụ mới (tác vụ đang chạy vẫn làm xong)
             engine.license_ok = lambda: self.license.allows("create_jobs")
@@ -509,6 +541,7 @@ class Handler(BaseHTTPRequestHandler):
             data["content"] = {"version": content.VERSION,
                                "support": self.server.support.status(),
                                "api": self.server.api_public("gemini"),
+                               "plugin": self.server.plugin_public(),
                                "chatgpt_api": self.server.api_public("chatgpt"),
                                "web": dict(self.server.gemini_web.snapshot(),
                                            email=self.server.store.setting("gemini_web_email") or "",
@@ -1053,6 +1086,28 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/content/camera-custom":
                 store.save_setting("camera_custom", str(body.get("text") or "")[:20000])
                 return self.reply({"ok": True, "count": camera_count(store.setting("camera_custom") or "")})
+            elif path == "/api/content/plugin":
+                from runner import prompt_plugin
+                saved = self.server.data_dir / "prompt-plugin.json"
+                action = body.get("action")
+                if action == "remove":
+                    saved.unlink(missing_ok=True)
+                    content.set_plugin(None)
+                    return self.reply({"ok": True, "plugin": None})
+                if action == "pick":
+                    folder = self.server.pick_directory("--pick-plugin", ["--plugin"])
+                    if not folder:
+                        return self.reply({"ok": True, "plugin": self.server.plugin_public()})
+                elif action == "reload":
+                    folder = (content.PLUGIN or {}).get("folder") or ""
+                    if not folder:
+                        raise ValueError("Chưa nạp plugin.")
+                else:
+                    raise ValueError("Thao tác không hợp lệ.")
+                plugin = prompt_plugin.load(folder)
+                saved.write_text(json.dumps(plugin, ensure_ascii=False), encoding="utf-8")
+                content.set_plugin(plugin)
+                return self.reply({"ok": True, "plugin": self.server.plugin_public()})
             elif path == "/api/content/review-rules":
                 store.save_setting("review_rules", str(body.get("rules") or "").strip()[:6000])
                 store.save_setting("review_lock", str(body.get("lock") or "").strip()[:2000])
@@ -1255,11 +1310,12 @@ def stop_runner(server, engine, instance, wait=None):
 
 
 def main():
-    for flag in ("--pick-folder", "--pick-video"):  # bản cài đặt: HanaMedia.exe --pick-… mở hộp chọn thư mục / video
+    for flag in ("--pick-folder", "--pick-video", "--pick-plugin"):  # bản cài đặt: HanaMedia.exe --pick-… mở hộp chọn
         if flag in sys.argv:
             import folder_picker
             index = sys.argv.index(flag)
-            return folder_picker.main(sys.argv[index + 1] if len(sys.argv) > index + 1 else None, video=flag == "--pick-video")
+            return folder_picker.main(sys.argv[index + 1] if len(sys.argv) > index + 1 else None, video=flag == "--pick-video",
+                                      plugin=flag == "--pick-plugin")
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-open", action="store_true")

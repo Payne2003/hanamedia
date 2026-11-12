@@ -1138,3 +1138,24 @@ def continue_review(after, numbers):
     rest = [n for n in numbers if n > after]
     return (f"Continue with prompt {rest[0] if rest else after + 1} to prompt {numbers[-1]}, same format (\"N. …\", one line "
             f"each), do not repeat earlier prompts. Then write {END_EN}.")
+
+
+# ---- Plugin viết prompt (runner/prompt_plugin.py): đặt ở đầu mọi yêu cầu viết / kiểm duyệt prompt ----
+PLUGIN = None
+
+
+def set_plugin(plugin):
+    global PLUGIN
+    PLUGIN = plugin or None
+
+
+def _with_plugin(build):
+    def wrapped(*args, **kwargs):
+        from .prompt_plugin import block
+        return block(PLUGIN) + build(*args, **kwargs)
+    wrapped.__name__, wrapped.__doc__ = build.__name__, build.__doc__
+    return wrapped
+
+
+for _name in ("english_request", "detailed_request", "detailed_batch_request", "review_request"):
+    globals()[_name] = _with_plugin(globals()[_name])
