@@ -1236,7 +1236,7 @@ class RebalanceTests(unittest.TestCase):
         with self.store.connect() as db:
             return {r["id"]: r["assigned_account_id"] for r in db.execute("SELECT id, assigned_account_id FROM jobs WHERE status='waiting'")}
 
-    def test_idle_account_takes_unsent_prompts_from_a_busy_account(self):
+    def test_idle_account_waits_instead_of_taking_prompts_of_a_running_account(self):
         first, account = self.store.claim(2)  # A nhận prompt đầu tiên
         second, other = self.store.claim(2)
         self.assertNotEqual(account["id"], other["id"])
@@ -1246,12 +1246,13 @@ class RebalanceTests(unittest.TestCase):
             job, acc = self.store.claim(2)
             self.assertEqual(acc["id"], other["id"])
             self.store.finish(job["id"], output="x.mp4")
-        # B hết prompt của mình: nhận prompt CHỜ của A (A vẫn bận), không đụng prompt A đang chạy.
+        # B hết prompt của mình: CHỜ, không nhận prompt của A (A đang chạy). Prompt chờ của A vẫn thuộc A.
+        self.assertIsNone(self.store.claim(2))
+        self.assertTrue(all(owner == account["id"] for owner in self.assigned().values()))
+        # A chạy xong thì A tự chạy prompt tiếp theo của mình.
+        self.store.finish(first["id"], output="x.mp4")
         job, acc = self.store.claim(2)
-        self.assertEqual(acc["id"], other["id"])
-        self.assertNotEqual(job["id"], first["id"])
-        with self.store.connect() as db:
-            self.assertEqual(db.execute("SELECT status, account_id FROM jobs WHERE id=?", (first["id"],)).fetchone()["account_id"], account["id"])
+        self.assertEqual(acc["id"], account["id"])
 
     def test_prompt_with_user_chosen_account_is_never_moved(self):
         jobs = [j["id"] for j in self.store.snapshot()["jobs"]]

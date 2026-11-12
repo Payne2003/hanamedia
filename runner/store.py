@@ -669,9 +669,10 @@ class Store:
                      AND (SELECT count(*) FROM jobs r WHERE r.status='running' AND r.account_id=a.id) < MAX(a.threads, 1)
                      AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.status='running' AND r.account_id=a.id AND r.submitted=0)))
                 WHERE j.status='waiting' ORDER BY j.created,j.rowid LIMIT 1"""
+            # Prompt đã chia cho tài khoản nào thì chỉ tài khoản đó chạy: tài khoản khác làm xong phần mình thì CHỜ, không
+            # nhận prompt của tài khoản đang chạy (không mở thêm tab chạy chen). Tài khoản bị tắt/hết lượt thì plan_waiting
+            # vẫn chia lại prompt của nó như cũ.
             pair = db.execute(pick, (room,)).fetchone()
-            if not pair and room and self.rebalance(db):
-                pair = db.execute(pick, (room,)).fetchone()
             if not pair:
                 return None
             job = dict(db.execute("SELECT * FROM jobs WHERE id=?", (pair["job_id"],)).fetchone())
@@ -690,28 +691,6 @@ class Store:
             job["account_id"] = account["id"]
             job["progress"] = 3
             return job, account
-
-    def rebalance(self, db):
-        """Tài khoản rảnh mà hết prompt của mình: nhận một prompt CHƯA GỬI (đang chờ) từ tài khoản còn nhiều prompt chờ nhất,
-        lấy từ cuối hàng đợi của tài khoản đó. Không chuyển prompt người dùng đã tự chọn tài khoản. Trả về True nếu đã chuyển."""
-        free = db.execute("""SELECT a.id, a.budget FROM accounts a WHERE a.enabled=1 AND a.video_blocked=0 AND a.state IN ('new','ready')
-                             AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.status='waiting' AND j.assigned_account_id=a.id)
-                             ORDER BY a.rowid""").fetchall()
-        moved = False
-        for account in free:
-            donor = db.execute("""SELECT j.assigned_account_id AS id, COUNT(*) AS waiting FROM jobs j
-                                  WHERE j.status='waiting' AND j.assigned_manual=0 AND j.assigned_account_id IS NOT NULL
-                                  AND j.assigned_account_id!=? GROUP BY j.assigned_account_id
-                                  ORDER BY waiting DESC LIMIT 1""", (account["id"],)).fetchone()
-            if not donor:
-                break
-            job = db.execute("""SELECT id FROM jobs WHERE status='waiting' AND assigned_manual=0 AND assigned_account_id=?
-                                AND cost<=?+0.000001 ORDER BY created DESC, rowid DESC LIMIT 1""",
-                             (donor["id"], account["budget"])).fetchone()
-            if job:
-                db.execute("UPDATE jobs SET assigned_account_id=? WHERE id=?", (account["id"], job["id"]))
-                moved = True
-        return moved
 
     def plan_waiting(self):
         """Balance unassigned prompts across eligible accounts and retain each assignment."""
