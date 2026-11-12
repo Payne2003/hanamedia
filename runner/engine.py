@@ -630,7 +630,7 @@ class Engine:
             if not (first_now and attempt == 1):
                 time.sleep(self.chase_wait)
             try:
-                return browser.fetch_existing(job["id"], url)
+                return browser.fetch_existing(job["id"], url, prompt=job.get("prompt"))
             except MuseFailure as again:
                 if not again.pending:
                     raise
@@ -651,7 +651,7 @@ class Engine:
             target = self.download_dir(job, folder)
             browser = self.session(job, account, headless, target)
             browser.set_download_directory(target)
-            file = browser.fetch_existing(job["id"], job["source_url"])
+            file = browser.fetch_existing(job["id"], job["source_url"], prompt=job.get("prompt"))
             final = self.place(job, target, file, folder)
             self.store.finish(job["id"], output=str(final))
             if job.get("resolution") or self.store.batch_stitch(job["batch"]):

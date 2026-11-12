@@ -44,11 +44,8 @@ class OptionsTests(unittest.TestCase):
     def test_request_spec_goes_into_muse_message(self):
         spec = video_tools.request_spec("16:9", 8, "4K")
         self.assertEqual(spec, "Thông số video: tỉ lệ khung 16:9, thời lượng 8 giây, độ phân giải 4K (Ultra HD, 3840×2160).")
-        message = compose_request("Dê leo vách đá", "job1", True, spec)
-        self.assertEqual(message.split("\n\n"), ["Tạo video dựa trên các ảnh tham chiếu đã đính kèm theo yêu cầu sau và trả "
-                                                 "về file video để tải xuống:", "Dê leo vách đá", spec, INDEPENDENT,
-                                                 "Mã tác vụ: job1"])
-        self.assertNotIn("Thông số", compose_request("x", "j"))  # không chọn thông số: gửi như trước
+        # Tin nhắn gửi Muse chỉ còn prompt (ảnh đính kèm riêng): không lời dặn, thông số hay mã tác vụ.
+        self.assertEqual(compose_request("Dê leo vách đá", "job1", True, spec), "Dê leo vách đá")
         self.assertEqual(video_tools.request_spec("", 0, ""), "")
 
     def test_target_sizes(self):
