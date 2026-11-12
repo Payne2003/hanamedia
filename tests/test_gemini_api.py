@@ -62,7 +62,8 @@ class FakeGoogle:
 class GeminiAPISessionTests(unittest.TestCase):
     def run_with(self, google, steps):
         with mock.patch.object(gemini_api, "opener", return_value=google), mock.patch.object(gemini_api, "RETRY_WAIT", (0, 0, 0)), \
-                mock.patch.object(gemini_api, "OVERLOAD_WAIT", (0, 0)):
+                mock.patch.object(gemini_api, "OVERLOAD_WAIT", (0, 0)), \
+                mock.patch.object(gemini_api, "BUSY_WAIT", (0, 0, 0)):
             return steps()
 
     def test_video_uploaded_once_then_multi_turn_conversation_keeps_history(self):
@@ -123,6 +124,23 @@ class GeminiAPISessionTests(unittest.TestCase):
         self.assertEqual(len(urls), 4)  # 1 lần đầu + 2 lần thử lại nhanh, rồi đổi model
         self.assertIn("gemini-flash-latest", urls[-1])
         self.assertTrue(any("chuyển sang gemini-flash-latest" in text for text in seen))
+
+    def test_every_model_overloaded_rotates_then_reports_google_side(self):
+        google = FakeGoogle(errors=[(503, "The model is overloaded")] * 100)
+        session = gemini_api.GeminiAPISession("AIzaTESTKEY", "gemini-3-pro-preview")
+        seen = []
+        with self.assertRaises(gemini_api.GeminiAPIError) as caught:
+            self.run_with(google, lambda: session.ask("Hỏi", seen.append, threading.Event()))
+        self.assertIn("quá tải ở mọi model", str(caught.exception))
+        models = {url.split("/models/")[1].split(":")[0] for m, url, h, b in google.calls if ":generateContent" in url}
+        self.assertEqual(models, {"gemini-3-pro-preview", *gemini_api.GeminiAPISession.OVERLOAD_FALLBACKS})
+        self.assertTrue(any("phía Google" in text for text in seen))
+
+    def test_missing_fallback_model_is_skipped(self):
+        google = FakeGoogle(errors=[(503, "overloaded"), (503, "overloaded"), (503, "overloaded"), (404, "model not found")])
+        session = gemini_api.GeminiAPISession("AIzaTESTKEY", "gemini-3-pro-preview")
+        self.assertEqual(self.run_with(google, lambda: session.ask("Hỏi", lambda t: None, threading.Event())), "Trả lời 1")
+        self.assertEqual(session.model, "gemini-2.5-flash")
 
     def test_bad_key_is_reported_clearly(self):
         google = FakeGoogle(errors=[(401, "API key not valid")])
