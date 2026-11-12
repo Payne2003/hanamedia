@@ -974,10 +974,12 @@ function renderSettings(force){
   if(force||document.activeElement!==$('sharedAccount'))$('sharedAccount').checked=Boolean(shared.enabled);
   $('sharedBadge').textContent=shared.enabled?(shared.login_open?'Cửa sổ đăng nhập đang mở':shared.profile_used?'✓ Đang bật':'Đang bật · chưa đăng nhập'):'Đang tắt';
   $('sharedBadge').className='status-chip '+(shared.enabled?(shared.profile_used?'approved':'review'):'');
-  $('sharedLogin').hidden=$('sharedHint').hidden=!shared.enabled;$('sharedLogin').disabled=Boolean(shared.login_open);
+  $('sharedLogin').hidden=$('sharedHint').hidden=!shared.enabled;
+  $('sharedAccount').closest('.shared-card').hidden=!shared.enabled;  // Gemini chỉ dùng API: thẻ tài khoản chung chỉ hiện khi đang bật$('sharedLogin').disabled=Boolean(shared.login_open);
   for(const id of ['loginAuto','loginChatgpt']){$(id).textContent=shared.enabled?'Đăng nhập bằng tài khoản chung (ở trên)':{loginAuto:'Đăng nhập Google · Gemini (mở Chrome thường)',loginChatgpt:'Đăng nhập ChatGPT'}[id];}
   const seen=web.account?.logged_in?(web.account.email||'đã đăng nhập'):'';
-  $('geminiAccountLine').innerHTML=`Tài khoản Gemini: <b>${esc(email||seen||'chưa đăng nhập')}</b>${model?` · model ${esc(model)}`:''} · <button type="button" class="text-button" data-open-settings>⚙ Đổi trong Cài đặt</button>`;
+  {const g=state.content.api||{};  // Gemini chỉ chạy bằng API key
+  $('geminiAccountLine').innerHTML=(g.configured?`Gemini API: <b>✓ ${esc(g.model||'')}</b>`:'Gemini API: <b>chưa có API key</b>')+` · <button type="button" class="text-button" data-open-settings>Đổi trong Cài đặt</button>`;}
   if(force||document.activeElement!==$('chatgptModel'))$('chatgptModel').value=chat.model||'';
   const accounts=state.accounts||[],ready=accounts.filter(a=>a.state==='ready').length,attention=accounts.filter(a=>a.state==='attention').length;
   $('museBadge').textContent=`${accounts.length} tài khoản`;
@@ -1262,7 +1264,7 @@ function renderFixedCharacters(){
 }
 function renderNickOptions(){
   const select=$('vAccount'),want=select.dataset.want??select.value;delete select.dataset.want;
-  const options='<option value="">🔄 Xoay vòng nick</option>'+state.accounts.map((a,i)=>`<option value="${a.id}">Nick ${i+1} · ${esc(a.email)}${a.state==='ready'?'':a.state==='attention'?' (cần kiểm tra)':''}</option>`).join('');
+  const options='<option value="">Xoay vòng nick</option>'+state.accounts.map((a,i)=>`<option value="${a.id}">Nick ${i+1} · ${esc(a.email)}${a.state==='ready'?'':a.state==='attention'?' (cần kiểm tra)':''}</option>`).join('');
   if(select.dataset.sig!==options){select.innerHTML=options;select.dataset.sig=options;}
   select.value=state.accounts.some(a=>a.id===want)?want:'';
 }
