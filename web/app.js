@@ -248,7 +248,7 @@ const sceneFields=[['setting','Bối cảnh'],['camera','Góc quay'],['behavior'
 const defaultBrief='Phân tích video gốc và chia thành từng cảnh 10 giây theo đúng thứ tự thời gian. Mỗi cảnh liệt kê từng góc máy theo mốc giây (cỡ cảnh, góc máy, chuyển động máy), mô tả bối cảnh, hành vi và hành động nhân vật đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
 const oldBrief='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 15 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.';
 let content={brief:defaultBrief,video:'',videoFile:'',language:'vi',script:'',scenes:[],issues:[],englishInput:'',englishStyle:'',englishAspect:'16:9',englishStructured:true,englishSeconds:10,windows:[],englishAngles:0,englishIssues:[],english:'',englishMissing:[],englishEngine:'chatgpt',englishChatgpt:'',englishChatgptMissing:[]};
-try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,reviewed:saved.reviewed===true,reviewViolations:saved.reviewViolations&&typeof saved.reviewViolations==='object'?saved.reviewViolations:{},reviewIssues:Array.isArray(saved.reviewIssues)?saved.reviewIssues:[],brief:saved.brief&&saved.brief!==oldBrief?saved.brief:content.brief,windows:Array.isArray(saved.windows)?saved.windows:[],video:saved.video||'',videoFile:typeof saved.videoFile==='string'?saved.videoFile:'',videoFrom:typeof saved.videoFrom==='string'?saved.videoFrom:'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,englishFormat:saved.englishFormat==='labels'?'labels':'detailed',englishSeconds:[5,8,10].includes(Number(saved.englishSeconds))?Number(saved.englishSeconds):10,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:'chatgpt',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
+try{const saved=JSON.parse(localStorage.getItem('hana-content')||'{}');content={...content,reviewed:saved.reviewed===true,reviewViolations:saved.reviewViolations&&typeof saved.reviewViolations==='object'?saved.reviewViolations:{},reviewIssues:Array.isArray(saved.reviewIssues)?saved.reviewIssues:[],brief:saved.brief&&saved.brief!==oldBrief?saved.brief:content.brief,windows:Array.isArray(saved.windows)?saved.windows:[],video:'',videoFile:typeof saved.videoFile==='string'?saved.videoFile:'',videoFrom:typeof saved.videoFrom==='string'?saved.videoFrom:'',language:saved.language||'vi',script:saved.script||'',scenes:Array.isArray(saved.scenes)?saved.scenes:[],issues:Array.isArray(saved.issues)?saved.issues:[],englishInput:saved.englishInput||'',englishStyle:saved.englishStyle||'',englishAspect:['16:9','9:16','1:1'].includes(saved.englishAspect)?saved.englishAspect:'16:9',englishStructured:saved.englishStructured!==false,englishFormat:saved.englishFormat==='labels'?'labels':'detailed',englishSeconds:[5,8,10].includes(Number(saved.englishSeconds))?Number(saved.englishSeconds):10,english:saved.english||'',englishMissing:Array.isArray(saved.englishMissing)?saved.englishMissing:[],englishEngine:'chatgpt',englishChatgpt:saved.englishChatgpt||'',englishChatgptMissing:Array.isArray(saved.englishChatgptMissing)?saved.englishChatgptMissing:[],englishSources:Array.isArray(saved.englishSources)?saved.englishSources:null,englishChatgptSources:Array.isArray(saved.englishChatgptSources)?saved.englishChatgptSources:null};}catch{}
 // Bản nháp còn đúng câu mẫu cũ (8 giây) thì đổi sang câu mẫu mới (15 giây).
 if(content.brief==='Phân tích video gốc và chia thành từng cảnh theo đúng thứ tự thời gian. Mỗi cảnh khoảng 8 giây, mô tả đủ chi tiết để tạo lại bằng AI video. Giữ nhân vật, trang phục và bối cảnh nhất quán giữa các cảnh.')content.brief=defaultBrief;
 const saveContent=()=>{try{localStorage.setItem('hana-content',JSON.stringify(content));}catch{}};
@@ -302,7 +302,7 @@ $('contentVideo').oninput=()=>{content.video=$('contentVideo').value.trim();
 // Đính kèm FILE video gốc cho Gemini (xem đủ từng khung hình thay vì đọc link); tool còn đo điểm cắt để Gemini viết đủ cảnh.
 function renderVideoFile(){
   const file=content.videoFile;$('contentClearVideo').hidden=!file;
-  $('contentVideoFile').textContent=file?`📎 Gemini sẽ xem file: ${file.split(/[\\/]/).pop()} · tool đo điểm cắt để viết đủ cảnh`:'Chưa đính kèm file. Tải video từ link hoặc chọn file để Gemini xem đủ từng cảnh (chính xác hơn đọc link).';
+  $('contentVideoFile').textContent=file?`📎 Gemini sẽ xem file: ${file.split(/[\\/]/).pop()} · tool đo điểm cắt để viết đủ cảnh`:'Chưa có video gốc. Bấm “Chọn file video gốc trên máy”.';
 }
 let contentDownloadTimer=null;
 async function pollContentDownload(){
@@ -562,8 +562,8 @@ function pipeStep(name,stateName){const li=document.querySelector(`#pipelineStep
 async function waitJobs(){while(autoJob||chatJob){await sleep(1000);}if(lastJobError)throw Error(lastJobError);}
 async function runPipelineFlow(){
   if(pipeline)return;
-  const link=$('contentVideo').value.trim();
-  if(!link&&!content.videoFile)return toast('Dán link video YouTube (hoặc chọn file video) trước.',true);
+  const link='';  // đã bỏ nhập link: chỉ dùng file video trên máy
+  if(!content.videoFile)return toast('Chọn file video gốc trên máy trước.',true);
   if(!content.brief.trim()){content.brief=defaultBrief;$('contentBrief').value=defaultBrief;saveContent();}
   pipeline={step:''};$('pipelineSteps').hidden=false;['download','cut','script','prompt','review'].forEach(s=>pipeStep(s));renderAuto();
   let current='download';
@@ -604,7 +604,7 @@ async function runPipelineFlow(){
 }
 $('runPipeline').onclick=runPipelineFlow;
 // Dán link là tự chạy (bật/tắt bằng ô "Tự chạy ngay khi dán link", nhớ trên máy).
-try{$('autoStart').checked=localStorage.getItem('hana-auto-start')!=='0';}catch{}
+$('autoStart').checked=false;  // đã bỏ nhập link nên không còn tự chạy khi dán link
 $('autoStart').onchange=()=>{try{localStorage.setItem('hana-auto-start',$('autoStart').checked?'1':'0');}catch{}};
 function autoStartFromLink(){
   const link=$('contentVideo').value.trim();
