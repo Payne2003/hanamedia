@@ -28,7 +28,8 @@ DEFAULT_MODEL = "gemini-flash-latest"
 THINKING = {"low": "Thấp", "medium": "Trung bình", "high": "Cao"}
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}")
 YOUTUBE = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?[^\s]*v=|shorts/)|youtu\.be/)[A-Za-z0-9_-]{6,}[^\s]*")
-RETRY_WAIT = (15, 45, 90)  # 429/500/503: yêu cầu chưa được xử lý, đợi rồi gửi lại
+RETRY_WAIT = (15, 45, 90)  # 429 (giới hạn theo phút): yêu cầu chưa được xử lý, đợi rồi gửi lại
+OVERLOAD_WAIT = (5, 15)  # 500/503 (Google quá tải): thử lại nhanh 2 lần rồi đổi sang model khác còn chỗ
 UPLOAD_HOSTS = ("generativelanguage.googleapis.com",)
 
 
@@ -211,7 +212,7 @@ class GeminiAPISession:
 
     def generate(self, contents, status, stop, timeout):
         url = f"{BASE}/v1beta/models/{quote(self.model, safe='')}:generateContent"
-        thinking, attempt = True, 0
+        thinking, attempt, overloaded = True, 0, 0
         while True:
             if stop.is_set():
                 raise GeminiAPIError("Đã dừng.")
@@ -238,13 +239,31 @@ class GeminiAPISession:
                         continue
                     raise GeminiAPIError(str(error) + " Đợi hạn mức đặt lại (khoảng 14–15 giờ chiều giờ Việt Nam), chọn model "
                                          "khác trong Cài đặt, hoặc bật thanh toán cho API key ở Google AI Studio.") from None
-                if error.code in (429, 500, 503) and attempt < len(RETRY_WAIT):
+                if error.code in (500, 502, 503, 504) and not error.quota:
+                    # Google quá tải (không phải do mình gửi nhiều): không bắt mọi yêu cầu khác cùng đợi. Thử lại nhanh;
+                    # vẫn quá tải thì đổi sang model dự phòng (mỗi model một cụm máy chủ riêng) thay vì chờ hàng phút.
+                    if overloaded < len(OVERLOAD_WAIT):
+                        wait = OVERLOAD_WAIT[overloaded]
+                        overloaded += 1
+                        status(f"Gemini đang quá tải · thử lại sau {wait} giây (lần {overloaded}/{len(OVERLOAD_WAIT)})…")
+                        if stop.wait(wait):
+                            raise GeminiAPIError("Đã dừng.") from None
+                        continue
+                    fallback = self.fallback_model()
+                    if fallback:
+                        status(f"{self.model} vẫn quá tải · chuyển sang {fallback} để chạy tiếp…")
+                        self.model, overloaded = fallback, 0
+                        url = f"{BASE}/v1beta/models/{quote(self.model, safe='')}:generateContent"
+                        pace = "gemini:" + hashlib.sha256(self.key.encode()).hexdigest()[:12] + ":" + self.model
+                        continue
+                if error.code in (429, 500, 502, 503, 504) and attempt < len(RETRY_WAIT):
                     # Giới hạn theo phút / quá tải: đợi (theo gợi ý của Google nếu có) rồi gửi lại.
                     wait = int(error.retry_after + 2) if error.retry_after else (max(RETRY_WAIT[attempt], 60 if RETRY_WAIT[attempt] else 0)
                                                                                if error.quota else RETRY_WAIT[attempt])
                     attempt += 1
                     status(f"{error} Gửi lại sau {wait} giây (lần {attempt}/{len(RETRY_WAIT)})…")
-                    Pacer.cool_down(pace, wait)  # yêu cầu kế tiếp (kể cả của phiên khác) cũng đợi
+                    if error.code == 429:
+                        Pacer.cool_down(pace, wait)  # giới hạn theo phút: yêu cầu kế tiếp (kể cả phiên khác) cũng đợi
                     if stop.wait(wait):
                         raise GeminiAPIError("Đã dừng.") from None
                     continue
