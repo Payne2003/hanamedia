@@ -130,16 +130,19 @@ return false;
 
 INDEPENDENT = ("Đây là yêu cầu độc lập: chỉ làm đúng nội dung tin nhắn này, không dùng nhân vật, bối cảnh hay nội dung "
                "của các tin nhắn trước, không đề xuất cảnh tiếp theo. Khi trả video, ghi lại dòng mã tác vụ bên dưới.")
+MARKER_CHARS = 80
 
 
-def compose_request(prompt, job_id, use_images=False, spec=""):
-    """spec: dòng thông số (tỉ lệ khung, thời lượng, độ phân giải) — xem video_tools.request_spec."""
-    instruction = ("Tạo video dựa trên các ảnh tham chiếu đã đính kèm theo yêu cầu sau và trả về file video để tải xuống:"
-                   if use_images else "Tạo video theo yêu cầu sau và trả về file video để tải xuống:")
-    # Muse giữ MỘT cuộc trò chuyện dài cho mỗi tài khoản và nhớ các tin nhắn trước (từng tự đề xuất "cảnh 3" từ cảnh
-    # trước): dặn rõ yêu cầu này độc lập, và nhắc lại mã tác vụ trong câu trả lời để tool nhận đúng video của prompt.
-    return (instruction + "\n\n" + prompt + ("\n\n" + spec if spec else "") + "\n\n" + INDEPENDENT
-            + "\n\nMã tác vụ: " + job_id)
+def prompt_marker(prompt):
+    """Dấu nhận dạng tin nhắn của tác vụ trong cuộc trò chuyện Muse: đoạn đầu của chính prompt (không còn gửi kèm
+    "Mã tác vụ")."""
+    return re.sub(r"\s+", " ", str(prompt or "")).strip()[:MARKER_CHARS].strip()
+
+
+def compose_request(prompt, job_id="", use_images=False, spec=""):
+    """Tin nhắn gửi Muse: CHỈ prompt (ảnh nhân vật đính kèm riêng). Không thêm lời dặn, thông số hay mã tác vụ.
+    job_id/use_images/spec giữ để tương thích lời gọi cũ."""
+    return str(prompt or "").strip()
 
 
 # Muse trả lời bằng chữ thay vì tạo video. Chỉ đọc câu trả lời NẰM SAU mã tác vụ của chính prompt vừa gửi.
@@ -820,7 +823,7 @@ return false;
                 const marker=arguments[0];
                 for (const log of document.querySelectorAll('[role="log"]')) {
                   const ps=[...log.querySelectorAll('p')];
-                  let i=-1; ps.forEach((p,k)=>{ if (p.innerText.includes(marker)) i=k; });
+                  let i=-1; ps.forEach((p,k)=>{ if (p.innerText.replace(/\\s+/g,' ').includes(marker)) i=k; });
                   if (i>=0) {
                     const rest=ps.slice(i+1), next=rest.findIndex(p=>p.innerText.includes('Mã tác vụ:'));
                     return (next>=0 ? rest.slice(0,next) : rest).map(p=>p.innerText).join(' ').slice(0,4000);
@@ -845,12 +848,15 @@ return false;
         except Exception:
             pass
 
-    def fetch_existing(self, job_id, url, timeout=90):
+    def fetch_existing(self, job_id, url, timeout=90, prompt=None):
         """Mở lại cuộc trò chuyện đã gửi và tải video đã xong của tác vụ này. KHÔNG gửi lại prompt."""
         self.phase("Mở lại cuộc trò chuyện Muse của tác vụ")
         self.driver.get(url)
-        marker = "Mã tác vụ: " + job_id
-        found = self.find_in_history(marker)
+        marker = "Mã tác vụ: " + job_id  # tác vụ gửi bằng bản cũ (có mã tác vụ)
+        found = self.find_in_history(marker, timeout=60 if prompt else 180)
+        if not found and prompt:
+            marker = prompt_marker(prompt)
+            found = self.find_in_history(marker)
         if not found:
             raise MuseFailure("Không thấy prompt của tác vụ này trong cuộc trò chuyện Muse đã lưu.")
         files_before = set(self.downloads.iterdir())
@@ -867,7 +873,7 @@ return false;
 const marker=arguments[0];
 const log=document.querySelector('[role="log"]');
 if (!log) return 'wait';
-if ([...log.querySelectorAll('p,span,div')].some(e=>e.childElementCount===0 && (e.innerText||'').includes(marker))) return 'found';
+if ([...log.querySelectorAll('p,span,div')].some(e=>e.childElementCount===0 && (e.innerText||'').replace(/\s+/g,' ').includes(marker))) return 'found';
 let box=log;
 while (box && box!==document.body && !(box.scrollHeight>box.clientHeight+20 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box=box.parentElement;
 box=box && box!==document.body ? box : document.scrollingElement;
@@ -946,8 +952,8 @@ return before>0 ? 'scrolled' : 'top';
             box = self.wait(self.composer, 10, "Ảnh đã chọn nhưng không tìm thấy lại ô prompt trên Muse.")
         before = {self.card_key(c) for c in self.video_cards()}
         files_before = set(self.downloads.iterdir())
-        marker = "Mã tác vụ: " + job_id
-        request = compose_request(prompt, job_id, bool(images), spec)
+        marker = prompt_marker(prompt)
+        request = compose_request(prompt)
         with self.exclusive():  # tab khác không được chen vào giữa lúc gõ và gửi prompt
             self.type_and_send(box, request, prompt, marker, images, before_submit, automatic)
         return self.finish_generation(marker, before, files_before, automatic, timeout)
@@ -1002,9 +1008,26 @@ if (turn) {
   const id=turn.getAttribute('data-message-turn-id');
   const parts=[...root.querySelectorAll('[data-message-turn-id]')].filter(e=>e.getAttribute('data-message-turn-id')===id);
   const text=parts.map(e=>e.innerText||'').join('\n');
-  if (text.includes('Mã tác vụ:')) return text.includes(marker);
+  if (marker.startsWith('Mã tác vụ:') && text.includes('Mã tác vụ:')) return text.includes(marker);
 }
 const leaves=[...root.querySelectorAll('p,div,span')].filter(e => e.childElementCount===0 && (e.innerText||'').includes('Mã tác vụ:'));
+const follows=(a,b)=>Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+if (!marker.startsWith('Mã tác vụ:')) {
+  // Bản mới: tin nhắn chỉ có prompt; dấu nhận dạng = đoạn đầu prompt. Lấy lần xuất hiện CUỐI (prompt gửi lại),
+  // video phải nằm sau nó và trước tin nhắn người dùng kế tiếp (cùng kiểu khung tin nhắn).
+  const own=[...root.querySelectorAll('p,div,span')].filter(e => e.childElementCount===0 && (e.innerText||'').replace(/\s+/g,' ').includes(marker)).pop();
+  if (!own || !follows(own,node)) return false;
+  const myTurn=own.closest('[data-message-turn-id]');
+  if (myTurn) {
+    const role=myTurn.getAttribute('data-message-role');  // khung tin nhắn người dùng (Muse ghi role="user")
+    const sameKind=t => role ? t.getAttribute('data-message-role')===role : t.className===myTurn.className;
+    const later=[...root.querySelectorAll('[data-message-turn-id]')].filter(t => t!==myTurn && !t.contains(node)
+      && sameKind(t) && t.getAttribute('data-message-turn-id')!==myTurn.getAttribute('data-message-turn-id')
+      && follows(myTurn,t) && follows(t,node));
+    if (later.length) return false;
+  }
+  return !leaves.some(e => follows(own,e) && follows(e,node));
+}
 const mine=leaves.filter(e => e.innerText.includes(marker)).pop();
 if (!mine || !(mine.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
 return !leaves.some(e => e!==mine && !e.innerText.includes(marker)

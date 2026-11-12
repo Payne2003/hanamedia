@@ -395,7 +395,7 @@ class StoreTests(unittest.TestCase):
                 before_submit()
                 raise MuseFailure("Muse chưa trả video.", pending=True)
 
-            def fetch_existing(self, job_id, url):
+            def fetch_existing(self, job_id, url, prompt=None):
                 calls["fetch"] += 1
                 if calls["fetch"] < 3:
                     raise MuseFailure("Muse vẫn chưa xong.", pending=True)
@@ -445,7 +445,7 @@ class StoreTests(unittest.TestCase):
                 before_submit()
                 raise MuseFailure("Muse chưa trả video sau 45 phút.", pending=True)
 
-            def fetch_existing(self, job_id, url):
+            def fetch_existing(self, job_id, url, prompt=None):
                 calls["fetch"].append(url)
                 if not calls["ready"]:
                     raise MuseFailure("Muse vẫn chưa xong.", pending=True)
@@ -588,7 +588,7 @@ class StoreTests(unittest.TestCase):
                 self.driver.window_handles = []  # Chrome tắt ngang
                 raise RuntimeError("invalid session id: session deleted as the browser has closed the connection")
 
-            def fetch_existing(self, job_id, url):
+            def fetch_existing(self, job_id, url, prompt=None):
                 assert url == "https://muse.ai/c/after-submit"
                 file = self.downloads / "x.mp4"
                 file.write_bytes(b"v")
@@ -947,11 +947,12 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(otp_codes("Ngày 202611 tài khoản 999999. Dùng mã 123456 để đăng nhập"), {"123456"})
         self.assertEqual(otp_codes("123456"), set())
 
-    def test_request_has_unique_scene_marker(self):
-        self.assertTrue(compose_request("Biển", "unique-scene").endswith("Mã tác vụ: unique-scene"))
-        image_request = compose_request("Biển", "image-scene", use_images=True)
-        self.assertIn("ảnh tham chiếu đã đính kèm", image_request)
-        self.assertTrue(image_request.endswith("Mã tác vụ: image-scene"))
+    def test_request_is_only_the_prompt(self):
+        from runner.muse import prompt_marker
+        self.assertEqual(compose_request("  Biển xanh  ", "unique-scene"), "Biển xanh")
+        self.assertEqual(compose_request("Biển", "image-scene", use_images=True), "Biển")  # ảnh đính kèm riêng
+        long = "Generate a 3-second   ultra-realistic\nvideo " + "of a snow leopard " * 20
+        self.assertEqual(prompt_marker(long), " ".join(long.split())[:80].strip())
 
     def test_image_attach_does_not_depend_on_muse_file_input_persistence(self):
         class FileInput:

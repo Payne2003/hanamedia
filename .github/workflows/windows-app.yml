@@ -102,7 +102,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-latest
+          - runner: macos-15  # chip Apple; ghi rõ phiên bản (macos-latest hay phải chờ máy lâu)
             suffix: mac
           - runner: macos-15-intel
             suffix: mac-intel

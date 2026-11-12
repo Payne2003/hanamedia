@@ -31,6 +31,14 @@ OLD_STYLE = '<div role="log">' + "".join([  # Muse không nhắc lại mã: dùn
     turn("assistant", "a2", '<div id="vb"><video></video></div>'),
 ]) + "</div>"
 
+PROMPT_ONLY = '<div role="log">' + "".join([  # bản mới: tin nhắn chỉ có prompt, không mã tác vụ
+    turn("user", "u1", "<p>Generate a 3-second video of a snow leopard walking along a ledge.</p>"),
+    turn("assistant", "a1", "<p>Đang tạo video…</p>"),
+    turn("assistant", "a1b", '<div id="va"><video></video></div>'),
+    turn("user", "u2", "<p>Generate a 2-second video of a goat jumping.</p>"),
+    turn("assistant", "a2", '<div id="vb"><video></video></div>'),
+]) + "</div>"
+
 
 @unittest.skipUnless(sync_playwright and CHROME, "Cần Playwright + Chromium")
 class SegmentTests(unittest.TestCase):
@@ -54,6 +62,15 @@ class SegmentTests(unittest.TestCase):
     def test_without_echo_position_rule_still_applies(self):
         self.assertTrue(self.belongs(OLD_STYLE, "va", "Mã tác vụ: AAA"))
         self.assertFalse(self.belongs(OLD_STYLE, "vb", "Mã tác vụ: AAA"))
+
+    def test_prompt_marker_finds_the_video_of_that_prompt(self):
+        from runner.muse import prompt_marker
+        leopard = prompt_marker("Generate a 3-second video of a snow leopard walking along a ledge.")
+        goat = prompt_marker("Generate a 2-second   video of a goat jumping.")
+        self.assertTrue(self.belongs(PROMPT_ONLY, "va", leopard))  # bỏ qua lượt chữ "Đang tạo video…" ở giữa
+        self.assertFalse(self.belongs(PROMPT_ONLY, "vb", leopard))  # video sau prompt kế tiếp không phải của nó
+        self.assertTrue(self.belongs(PROMPT_ONLY, "vb", goat))
+        self.assertFalse(self.belongs(PROMPT_ONLY, "va", goat))
 
 
 if __name__ == "__main__":

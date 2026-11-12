@@ -350,7 +350,7 @@ function renderAuto(){
   renderEnglishRun();
 }
 function pollAuto(){
-  const web=state?.content?.web;applyAutoSettings();renderRunnerVersion();loadReviewRules();
+  const web=state?.content?.web;applyAutoSettings();renderPlugin();renderRunnerVersion();loadReviewRules();
   if(!autoJob||!web){renderAuto();return;}
   if(web.id===autoJob.id&&web.busy)applyPartial('gemini',autoJob,web);
   if(web.id!==autoJob.id||web.busy){renderAuto();return;}
@@ -474,6 +474,19 @@ $('englishAngles').onchange=()=>{content.englishAngles=$('englishAngles').value;
 try{const saved=localStorage.getItem('hana-english-angles-v2');content.englishAngles=['lib','0','3'].includes(saved)?saved:'3';}catch{content.englishAngles='3';}
 $('englishStructured').onchange=()=>{content.englishStructured=$('englishStructured').checked;saveContent();};
 $('englishFormat').value=content.englishFormat||'detailed';
+// Plugin viết prompt: thư mục skill (plugin.json + skills/…/SKILL.md) → AI viết / kiểm duyệt prompt theo hướng dẫn đó.
+function renderPlugin(){
+  const p=state?.content?.plugin;$('pluginRow').classList.toggle('loaded',Boolean(p));
+  $('pluginReload').hidden=$('pluginRemove').hidden=!p;$('pluginPick').textContent=p?'Đổi plugin':'Chọn thư mục plugin';
+  $('pluginInfo').textContent=p?`✓ ${p.name} · ${p.files.length} tệp hướng dẫn · ${p.chars.toLocaleString('vi-VN')} ký tự${p.truncated?' (đã cắt bớt tài liệu phụ)':''} · dùng cho mọi lần viết và kiểm duyệt prompt`:'Chưa nạp · chọn thư mục plugin (có plugin.json, skills/…/SKILL.md) tải từ GPT/Codex để AI viết prompt theo hướng dẫn của plugin.';
+}
+async function pluginAction(action,label){
+  try{const r=await api('/api/content/plugin',{action});if(state?.content)state.content.plugin=r.plugin;renderPlugin();if(r.plugin&&action!=='remove')toast(`${label}: ${r.plugin.name} (${r.plugin.files.length} tệp).`);else if(action==='remove')toast('Đã gỡ plugin viết prompt.');}
+  catch(error){toast(error.message,true);}
+}
+$('pluginPick').onclick=()=>pluginAction('pick','Đã nạp plugin');
+$('pluginReload').onclick=()=>pluginAction('reload','Đã nạp lại plugin');
+$('pluginRemove').onclick=()=>{if(confirm('Gỡ plugin viết prompt?'))pluginAction('remove');};
 $('englishFormat').onchange=()=>{content.englishFormat=$('englishFormat').value;saveContent();};
 $('englishOutput').oninput=()=>{content[englishKey(content.englishEngine)[0]]=$('englishOutput').value;saveContent();renderEnglish();renderReviewList();};
 $('chatgptModel').onchange=()=>api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()}).then(refresh).catch(error=>toast(error.message,true));
