@@ -61,6 +61,7 @@ class FakeGoogle:
 
 class GeminiAPISessionTests(unittest.TestCase):
     def run_with(self, google, steps):
+        gemini_api.BUSY_MODELS.clear()
         with mock.patch.object(gemini_api, "opener", return_value=google), mock.patch.object(gemini_api, "RETRY_WAIT", (0, 0, 0)), \
                 mock.patch.object(gemini_api, "OVERLOAD_WAIT", (0, 0)), \
                 mock.patch.object(gemini_api, "BUSY_WAIT", (0, 0, 0)):
@@ -114,16 +115,23 @@ class GeminiAPISessionTests(unittest.TestCase):
         self.assertIn("thinkingConfig", bodies[0]["generationConfig"])
         self.assertNotIn("thinkingConfig", bodies[-1]["generationConfig"])
 
-    def test_overloaded_model_switches_to_fallback_quickly(self):
-        google = FakeGoogle(errors=[(503, "The model is overloaded")] * 3)
+    def test_503_switches_model_immediately_and_remembers_busy_model(self):
+        google = FakeGoogle(errors=[(503, "This model is currently experiencing high demand")])
         session = gemini_api.GeminiAPISession("AIzaTESTKEY", "gemini-3-pro-preview")
         seen = []
         answer = self.run_with(google, lambda: session.ask("Hỏi", seen.append, threading.Event()))
         self.assertEqual(answer, "Trả lời 1")
         urls = [url for method, url, headers, body in google.calls if ":generateContent" in url]
-        self.assertEqual(len(urls), 4)  # 1 lần đầu + 2 lần thử lại nhanh, rồi đổi model
+        self.assertEqual(len(urls), 2)  # không thử lại model đang quá đông, đổi ngay
         self.assertIn("gemini-flash-latest", urls[-1])
         self.assertTrue(any("chuyển sang gemini-flash-latest" in text for text in seen))
+        # Phiên sau (đoạn / lượt chạy tiếp theo) không bắt đầu bằng model vừa quá tải.
+        later = gemini_api.GeminiAPISession("AIzaTESTKEY", "gemini-3-pro-preview")
+        google2 = FakeGoogle()
+        with mock.patch.object(gemini_api, "opener", return_value=google2):
+            later.ask("Hỏi tiếp", lambda t: None, threading.Event())
+        first = [url for m, url, h, b in google2.calls if ":generateContent" in url][0]
+        self.assertNotIn("gemini-3-pro-preview", first)
 
     def test_every_model_overloaded_rotates_then_reports_google_side(self):
         google = FakeGoogle(errors=[(503, "The model is overloaded")] * 100)
@@ -137,10 +145,10 @@ class GeminiAPISessionTests(unittest.TestCase):
         self.assertTrue(any("phía Google" in text for text in seen))
 
     def test_missing_fallback_model_is_skipped(self):
-        google = FakeGoogle(errors=[(503, "overloaded"), (503, "overloaded"), (503, "overloaded"), (404, "model not found")])
+        google = FakeGoogle(errors=[(503, "overloaded"), (404, "model not found")])
         session = gemini_api.GeminiAPISession("AIzaTESTKEY", "gemini-3-pro-preview")
         self.assertEqual(self.run_with(google, lambda: session.ask("Hỏi", lambda t: None, threading.Event())), "Trả lời 1")
-        self.assertEqual(session.model, "gemini-2.5-flash")
+        self.assertEqual(session.model, "gemini-2.5-flash")  # flash-latest không có (404): bỏ qua, dùng model kế tiếp
 
     def test_bad_key_is_reported_clearly(self):
         google = FakeGoogle(errors=[(401, "API key not valid")])
@@ -317,6 +325,7 @@ class TokenSavingTests(unittest.TestCase):
 
 class OverloadAlgorithmTests(unittest.TestCase):
     def patched(self):
+        gemini_api.BUSY_MODELS.clear()
         return (mock.patch.object(gemini_api, "RETRY_WAIT", (0, 0, 0)), mock.patch.object(gemini_api, "OVERLOAD_WAIT", (0, 0)),
                 mock.patch.object(gemini_api, "BUSY_WAIT", (0, 0, 0)))
 
