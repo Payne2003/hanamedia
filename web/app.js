@@ -477,8 +477,7 @@ $('englishFormat').value=content.englishFormat||'detailed';
 // Plugin viết prompt: thư mục skill (plugin.json + skills/…/SKILL.md) → AI viết / kiểm duyệt prompt theo hướng dẫn đó.
 function renderPlugin(){
   const p=state?.content?.plugin;$('pluginRow').classList.toggle('loaded',Boolean(p));
-  // Đã nạp plugin: plugin quyết định văn phong, độ dài, góc máy, cấu trúc prompt → ẩn các ô đó; tỷ lệ khung lấy theo Studio.
-  document.querySelectorAll('.plugin-hide').forEach(el=>el.hidden=Boolean(p));
+  // Các ô phong cách / thời lượng / góc máy / tỷ lệ / kiểu prompt đã bỏ khỏi giao diện (dùng mặc định; tỷ lệ theo Studio).
   $('pluginReload').hidden=$('pluginRemove').hidden=!p;$('pluginPick').textContent=p?'Đổi plugin':'Chọn thư mục plugin';
   $('pluginInfo').textContent=p?`✓ ${p.name} · ${p.files.length} tệp hướng dẫn · ${p.chars.toLocaleString('vi-VN')} ký tự${p.truncated?' (đã cắt bớt tài liệu phụ)':''} · dùng cho mọi lần viết và kiểm duyệt prompt`:'Chưa nạp · chọn thư mục plugin (có plugin.json, skills/…/SKILL.md) tải từ GPT/Codex để AI viết prompt theo hướng dẫn của plugin.';
 }
@@ -510,7 +509,7 @@ async function startEnglish(silent){
     if(engine==='gemini')await saveAutoSettings();
     else await api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()});
     const plugged=Boolean(state?.content?.plugin);  // đã nạp plugin: không ép phong cách / góc máy của tool
-    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:plugged?'':$('englishStyle').value,aspect:plugged?($('vAspect').value||'16:9'):$('englishAspect').value,structured:$('englishStructured').checked,format:$('englishFormat').value,angles:plugged||$('englishAngles').value==='lib'?0:Number($('englishAngles').value),library:!plugged&&$('englishAngles').value==='lib',seconds:Number($('englishSeconds').value),windows:(content.windows||[]).length?content.windows:undefined});
+    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:'',aspect:$('vAspect').value||'16:9',structured:$('englishStructured').checked,format:'detailed',angles:plugged?0:3,library:false,seconds:10,windows:(content.windows||[]).length?content.windows:undefined});
     lastJobError='';
     if(engine==='gemini'){autoJob={id,kind:'english'};renderAuto();}else{chatJob={id,kind:'english'};renderEnglishRun();}
     studioRun={engine,batch:crypto.randomUUID(),sent:0,next:0,ordinals:{},prompts:{},added:0};
@@ -617,10 +616,7 @@ async function runPipelineFlow(){
     $('englishInput').value=contentPrompts().join('\n');content.englishInput=$('englishInput').value;saveContent();
     if(!await startEnglish(true))throw Error('Không chạy được bước viết prompt.');
     await waitJobs();
-    pipeStep('prompt','done');current='review';pipeStep('review','active');
-    if(!await startReview())throw Error('Không chạy được bước kiểm duyệt.');
-    await waitJobs();
-    pipeStep('review','done');setStep(4);
+    pipeStep('prompt','done');setStep(4);  // đã bỏ bước kiểm duyệt: viết xong là xong (prompt đã vào Studio theo nhóm)
     await syncReviewedToStudio();
   }catch(error){pipeStep(current,'failed');toast(`Dừng ở bước “${document.querySelector(`#pipelineSteps [data-pipe="${current}"]`).textContent}”: ${error.message}`,true);}
   finally{pipeline=null;renderAuto();}
@@ -668,7 +664,7 @@ function queueEnglishGroup(engine,lines,upto,final){
     if(!picked.length&&!(final&&run.added))return;
     const group=picked.length?picked:[[run.lastIndex,run.prompts[run.lastIndex],run.lastSource||'',run.lastScene||null]];
     const start=picked.length?run.next:run.ordinals[run.lastIndex];
-    const options={...videoOptions(),duration:0,aspect:state?.content?.plugin?$('vAspect').value:(content.englishAspect||$('vAspect').value)};
+    const options={...videoOptions(),duration:0,aspect:$('vAspect').value};
     try{
       await api('/api/jobs',{prompts:group.map(g=>g[1]),cost:Number($('cost').value)||1,mode:'text',batch:run.batch,append:start,more:!final,
         images:group.map(()=>[]),sources:group.map(g=>g[2]),scene_ids:group.map(g=>g[3]),options});
@@ -710,7 +706,7 @@ async function sendEnglishToStudio(auto){
   rememberSources(pairs);
   // Đưa thẳng từng prompt vào hàng đợi Studio (không qua khung nhập), kèm ảnh nhân vật đã chọn và độ phân giải.
   // Thời lượng để trống: mỗi prompt đã ghi đúng số giây của cảnh (Generate a N-second…), không ép một số chung.
-  const options={...videoOptions(),duration:0,aspect:state?.content?.plugin?$('vAspect').value:(content.englishAspect||$('vAspect').value)};
+  const options={...videoOptions(),duration:0,aspect:$('vAspect').value};
   const cost=Number($('cost').value)||1,button=$('useEnglish');button.disabled=true;
   try{
     await api('/api/jobs',{prompts,cost,mode:'text',batch:crypto.randomUUID(),images:prompts.map(()=>[]),
