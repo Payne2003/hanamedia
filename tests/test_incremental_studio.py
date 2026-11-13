@@ -120,11 +120,11 @@ class ActionSceneTests(unittest.TestCase):
         times = [i / 30 for i in range(len(levels) + 1)]
         with mock.patch.object(reverse_engineer, "frame_differences", return_value=(levels, times)):
             plan = reverse_engineer.motion_plan(Path("doan.mp4"), 40)
-        self.assertEqual([fps for *_, fps in plan], [1, 5, 3, 1])
+        self.assertEqual([fps for *_, fps in plan], [0.5, 5, 3, 0.5])  # khúc tĩnh: 1 khung mỗi 2 giây
         parts = gemini_api.video_parts({"fileData": {"fileUri": "u", "mimeType": "video/mp4"}}, plan)
         self.assertEqual(len(parts), 4)
         self.assertEqual(parts[1]["videoMetadata"], {"startOffset": "10.00s", "endOffset": "20.00s", "fps": 5.0})
-        self.assertNotIn("fps", parts[0]["videoMetadata"])  # khúc tĩnh: 1 khung/giây (mặc định)
+        self.assertEqual(parts[0]["videoMetadata"]["fps"], 0.5)
 
     def test_prompts_keep_full_speed_chases_and_fights(self):
         from runner import content

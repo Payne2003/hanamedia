@@ -96,7 +96,8 @@ def quick_shots(path, stop=None):
 
 
 MOTION_SEGMENT = 10.0  # giây: chia đoạn video thành từng khúc để đo độ chuyển động
-MOTION_FAST, MOTION_MEDIUM = .035, .018  # sai khác trung vị giữa hai khung liên tiếp (ảnh 32×18, thang 0–1)
+MOTION_FAST, MOTION_MEDIUM = .035, .018
+STATIC_FPS = 0.5  # khúc gần như đứng yên: 1 khung mỗi 2 giây là đủ (ảnh khung hình đã có chi tiết) → bớt một nửa token  # sai khác trung vị giữa hai khung liên tiếp (ảnh 32×18, thang 0–1)
 
 
 def motion_plan(path, length, stop=None, segment=MOTION_SEGMENT):
@@ -120,7 +121,7 @@ def motion_plan(path, length, stop=None, segment=MOTION_SEGMENT):
         end = min(float(length), at + segment)
         inside = [score for score, time in zip(scores, times[1:]) if at <= time < end]
         level = statistics.median(inside) if inside else 0
-        fps = 5 if level >= MOTION_FAST else 3 if level >= MOTION_MEDIUM else 1
+        fps = 5 if level >= MOTION_FAST else 3 if level >= MOTION_MEDIUM else STATIC_FPS
         if plan and plan[-1][2] == fps:
             plan[-1] = (plan[-1][0], round(end, 2), fps)
         else:

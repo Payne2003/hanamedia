@@ -48,8 +48,11 @@ class PromptPluginTests(unittest.TestCase):
                         content.review_request(["Generate a 10-second video."], "rules")):
             self.assertTrue(request.startswith("PROMPT-WRITING PLUGIN «Wildlife Prompt Pro»"))
             self.assertIn("600mm", request)
+        from runner.prompt_example import DETAILED_EXAMPLE
+        self.assertNotIn(DETAILED_EXAMPLE[:200], content.detailed_batch_request([(1, "x", 10, None)], 1))  # có plugin: bỏ bài mẫu
         content.set_plugin(None)
         self.assertFalse(content.detailed_request("x", 1, 1, 10).startswith("PROMPT-WRITING"))
+        self.assertIn(DETAILED_EXAMPLE[:200], content.detailed_batch_request([(1, "x", 10, None)], 1))
 
     def test_folder_without_skill_is_refused(self):
         with tempfile.TemporaryDirectory() as folder:

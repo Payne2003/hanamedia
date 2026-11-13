@@ -889,6 +889,14 @@ ACTION_INTENSITY = (
     "real top speed of the action (e.g. \"full sprint at maximum speed\").")
 
 
+def example_section(header, example):
+    """Bài mẫu prompt chi tiết (~4.400 ký tự). Đã nạp plugin viết prompt thì bỏ: plugin quyết định văn phong và mức chi
+    tiết, gửi thêm bài mẫu chỉ tốn token (và có thể kéo prompt về văn phong mẫu)."""
+    if PLUGIN:
+        return "Follow the PROMPT-WRITING PLUGIN above for wording and level of detail."
+    return header + example
+
+
 def detailed_request(line, number, total, seconds, spans=None, previous="", aspect="16:9", style=""):
     """Yêu cầu viết prompt chi tiết cho MỘT cảnh (gửi lần lượt từng cảnh)."""
     from .prompt_example import DETAILED_EXAMPLE
@@ -929,8 +937,8 @@ def detailed_request(line, number, total, seconds, spans=None, previous="", aspe
         "Rules: use only facts from the scene description (and the previous prompt for continuity); never invent other "
         "animals, places or events; keep predator/prey roles and directions. Write ONLY the prompt — no title, no "
         "numbering, no markdown, no comments — starting with \"Generate\".\n\n"
-        "EXAMPLE OF THE REQUIRED STRUCTURE AND LEVEL OF DETAIL (a different scene — do NOT copy its animal, place or "
-        "action):\n" + DETAILED_EXAMPLE)
+        + example_section("EXAMPLE OF THE REQUIRED STRUCTURE AND LEVEL OF DETAIL (a different scene — do NOT copy its "
+                          "animal, place or action):\n", DETAILED_EXAMPLE))
 
 
 def flatten_prompt(text):
@@ -1005,8 +1013,8 @@ def detailed_batch_request(items, total, previous="", aspect="16:9", style=""):
         "Rules: use only facts from the scene descriptions; never invent other animals, places or events; keep predator/prey "
         "roles and directions. Start each prompt with a line \"SCENE N:\" (its number), then the prompt starting with "
         f"\"Generate\". No markdown, no comments. After the last prompt write exactly: {END_EN}\n\n"
-        "EXAMPLE OF THE REQUIRED STRUCTURE AND LEVEL OF DETAIL FOR ONE SCENE (a different scene — do NOT copy its animal, "
-        "place or action):\n" + DETAILED_EXAMPLE)
+        + example_section("EXAMPLE OF THE REQUIRED STRUCTURE AND LEVEL OF DETAIL FOR ONE SCENE (a different scene — do "
+                          "NOT copy its animal, place or action):\n", DETAILED_EXAMPLE))
 
 
 SCENE_HEADER = re.compile(r"^[\s*#>_]*SCENE\s+(\d+)\s*[:.\-—–)]*[\s*]*$|^[\s*#>_]*SCENE\s+(\d+)\s*[:—–-]\s*(?=Generate)",
