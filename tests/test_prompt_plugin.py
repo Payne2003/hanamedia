@@ -55,3 +55,13 @@ class PromptPluginTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaises(prompt_plugin.PluginError):
                 prompt_plugin.load(folder)
+
+
+class PickerRoutingTests(unittest.TestCase):
+    def test_installed_app_routes_every_picker_flag(self):
+        import re
+        root = Path(__file__).resolve().parent.parent
+        app_flags = set(re.findall(r'"(--pick-[a-z]+)"', (root / "app.py").read_text(encoding="utf-8")))
+        import desktop
+        self.assertEqual(set(desktop.PICK_FLAGS), app_flags)  # thiếu cờ nào thì bản cài đặt không mở được hộp chọn
+        self.assertIn("--pick-plugin", app_flags)
