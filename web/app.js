@@ -480,9 +480,15 @@ function renderPlugin(){
   $('pluginReload').hidden=$('pluginRemove').hidden=!p;$('pluginPick').textContent=p?'Đổi plugin':'Chọn thư mục plugin';
   $('pluginInfo').textContent=p?`✓ ${p.name} · ${p.files.length} tệp hướng dẫn · ${p.chars.toLocaleString('vi-VN')} ký tự${p.truncated?' (đã cắt bớt tài liệu phụ)':''} · dùng cho mọi lần viết và kiểm duyệt prompt`:'Chưa nạp · chọn thư mục plugin (có plugin.json, skills/…/SKILL.md) tải từ GPT/Codex để AI viết prompt theo hướng dẫn của plugin.';
 }
-async function pluginAction(action,label){
-  try{const r=await api('/api/content/plugin',{action});if(state?.content)state.content.plugin=r.plugin;renderPlugin();if(r.plugin&&action!=='remove')toast(`${label}: ${r.plugin.name} (${r.plugin.files.length} tệp).`);else if(action==='remove')toast('Đã gỡ plugin viết prompt.');}
-  catch(error){toast(error.message,true);}
+async function pluginAction(action,label,extra={}){
+  try{const r=await api('/api/content/plugin',{action,...extra});if(state?.content)state.content.plugin=r.plugin;renderPlugin();if(r.plugin&&action!=='remove')toast(`${label}: ${r.plugin.name} (${r.plugin.files.length} tệp).`);else if(action==='remove')toast('Đã gỡ plugin viết prompt.');}
+  catch(error){
+    if(action==='pick'&&/hộp chọn thư mục/.test(error.message)){  // không mở được hộp chọn: cho dán đường dẫn
+      const path=prompt('Không mở được hộp chọn thư mục.\nDán đường dẫn thư mục plugin (thư mục có plugin.json), ví dụ:\nC:\\Users\\Ten\\Downloads\\plugin');
+      if(path&&path.trim())return pluginAction('path','Đã nạp plugin',{path:path.trim()});
+    }
+    toast(error.message,true);
+  }
 }
 $('pluginPick').onclick=()=>pluginAction('pick','Đã nạp plugin');
 $('pluginReload').onclick=()=>pluginAction('reload','Đã nạp lại plugin');

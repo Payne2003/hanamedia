@@ -84,10 +84,13 @@ def self_check():
     return code
 
 
+PICK_FLAGS = ("--pick-folder", "--pick-video", "--pick-plugin")  # phải khớp với app.main()
+
+
 def main():
     if "--self-check" in sys.argv:
         return self_check()
-    if "--pick-folder" in sys.argv or "--pick-video" in sys.argv:
+    if any(flag in sys.argv for flag in PICK_FLAGS):  # hộp chọn thư mục / video / plugin (tiến trình riêng)
         import app
         return app.main()
     import app

@@ -1098,6 +1098,10 @@ class Handler(BaseHTTPRequestHandler):
                     folder = self.server.pick_directory("--pick-plugin", ["--plugin"])
                     if not folder:
                         return self.reply({"ok": True, "plugin": self.server.plugin_public()})
+                elif action == "path":  # dự phòng khi hộp chọn thư mục không mở được: người dùng dán đường dẫn
+                    folder = str(body.get("path") or "").strip().strip('"')
+                    if not folder:
+                        raise ValueError("Dán đường dẫn thư mục plugin.")
                 elif action == "reload":
                     folder = (content.PLUGIN or {}).get("folder") or ""
                     if not folder:
