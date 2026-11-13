@@ -67,6 +67,12 @@ class TabRouter:
             if self.free:
                 handle = self.free.pop(0)
             else:
+                if handles and self.current not in handles:
+                    # Tab đang chọn đã bị đóng / treo: chuyển sang một tab còn sống trước, để tab mới mở CÙNG cửa sổ
+                    # (không bật thêm một cửa sổ Chrome mới cho cùng tài khoản).
+                    alive = sorted(handles)[0]
+                    self.original(SWITCH, {"handle": alive})
+                    self.current = alive
                 handle = self.original(NEW_WINDOW, {"type": "tab"})["value"]["handle"]
             self.busy.add(handle)
             self.local.handle = self.local.acquired = handle

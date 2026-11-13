@@ -432,6 +432,26 @@ class MuseBrowser:
     def composer(self):
         return self.named("textarea,input,[role='textbox']", {"Nhắn tin"})
 
+    # Muse mở lại cuộc trò chuyện cũ khi vào muse.ai (mọi prompt dồn vào một cuộc trò chuyện dài, trang ngày càng nặng,
+    # Muse còn chạy song song các yêu cầu cũ): bấm nút "Mới" / "New chat" để có cuộc trò chuyện trống.
+    JS_NEW_CHAT = r"""
+const names=/^(mới|new|new chat|chat mới|đoạn chat mới|cuộc trò chuyện mới|trò chuyện mới)$/i;
+const labels=/new chat|chat mới|trò chuyện mới|đoạn chat mới|cuộc trò chuyện mới/i;
+const items=[...document.querySelectorAll('button,a,[role="button"]')].filter(e => e.offsetParent!==null);
+const hit=items.find(e => names.test((e.innerText||'').trim())) ||
+          items.find(e => labels.test((e.getAttribute('aria-label')||'') + ' ' + (e.getAttribute('title')||'')));
+if (!hit) return false;
+hit.click();
+return true;
+"""
+
+    def turn_count(self):
+        try:
+            return int(self.driver.execute_script(
+                "return document.querySelectorAll('[role=\"log\"] [data-message-turn-id]').length") or 0)
+        except Exception:
+            return 0
+
     def new_chat(self):
         """Mở cuộc trò chuyện Muse mới cho mỗi prompt: prompt sau không dùng ngữ cảnh/ảnh của prompt trước."""
         self.driver.get("https://muse.ai")
@@ -439,6 +459,19 @@ class MuseBrowser:
             self.wait(lambda: self.composer(), 60, "Không mở được cuộc trò chuyện Muse mới. Kiểm tra phiên Muse.")
         except MuseFailure as error:  # prompt chưa gửi: bộ chạy tự đưa lại hàng đợi
             raise MuseFailure(str(error), unsent=True) from None
+        if self.turn_count():  # trang hiện lại cuộc trò chuyện cũ: bấm "Mới"
+            try:
+                clicked = self.driver.execute_script(self.JS_NEW_CHAT)
+            except Exception:
+                clicked = False
+            if clicked:
+                until = time.monotonic() + 15
+                while time.monotonic() < until and self.turn_count():
+                    time.sleep(0.5)
+                try:
+                    self.wait(lambda: self.composer(), 30, "Không mở được cuộc trò chuyện Muse mới.")
+                except MuseFailure as error:
+                    raise MuseFailure(str(error), unsent=True) from None
 
     def session_ready(self):
         host = urlparse(self.driver.current_url).hostname or ""
