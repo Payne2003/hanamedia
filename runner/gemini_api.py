@@ -30,7 +30,9 @@ MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}")
 YOUTUBE = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?[^\s]*v=|shorts/)|youtu\.be/)[A-Za-z0-9_-]{6,}[^\s]*")
 RETRY_WAIT = (15, 45, 90)  # 429 (giới hạn theo phút): yêu cầu chưa được xử lý, đợi rồi gửi lại
 REQUEST_TIMEOUT = 300  # giây chờ tối đa mỗi lần gửi (trước đây tới 20 phút); quá thì thử lại / đổi model
-BUSY_WAIT = (20, 40, 60)  # mọi model đều quá tải: đợi rồi thử lại cả vòng model
+BUSY_WAIT = (20, 40, 60)
+BUSY_COOLDOWN = 600  # model vừa báo 503 "high demand": tránh dùng nó trong 10 phút (cả ở đoạn / lượt chạy sau)
+BUSY_MODELS = {}  # model -> thời điểm (time.monotonic) hết bị tránh; dùng chung mọi phiên trong app  # mọi model đều quá tải: đợi rồi thử lại cả vòng model
 OVERLOAD_WAIT = (5, 15)  # 500/503 (Google quá tải): thử lại nhanh 2 lần rồi đổi sang model khác còn chỗ
 UPLOAD_HOSTS = ("generativelanguage.googleapis.com",)
 
@@ -83,6 +85,14 @@ def http(method, url, key="", payload=None, data=None, headers=None, timeout=600
                 isinstance(reason, ConnectionResetError):
             raise HTTPFailure(503, "kết nối bị ngắt giữa chừng") from None
         raise GeminiAPIError(f"Không kết nối được Gemini API ({type(error).__name__}). Kiểm tra mạng.") from None
+
+
+def model_busy(model):
+    until = BUSY_MODELS.get(model)
+    if until and until > time.monotonic():
+        return True
+    BUSY_MODELS.pop(model, None)
+    return False
 
 
 class Overloaded(GeminiAPIError):
@@ -289,6 +299,12 @@ class GeminiAPISession:
     def generate(self, contents, status, stop, timeout):
         url = f"{BASE}/v1beta/models/{quote(self.model, safe='')}:generateContent"
         thinking, attempt, overloaded = True, 0, 0
+        if model_busy(self.model):
+            fallback = self.overload_model()
+            if fallback:
+                status(f"{self.model} vừa báo quá tải ít phút trước · dùng {fallback}…")
+                self.model = fallback
+                url = f"{BASE}/v1beta/models/{quote(self.model, safe='')}:generateContent"
         while True:
             if stop.is_set():
                 raise GeminiAPIError("Đã dừng.")
@@ -334,8 +350,12 @@ class GeminiAPISession:
                         pace = "gemini:" + hashlib.sha256(self.key.encode()).hexdigest()[:12] + ":" + self.model
                         continue
                 if error.code in (500, 502, 503, 504) and not error.quota:
-                    # Google quá tải (không phải do mình gửi nhiều): không bắt mọi yêu cầu khác cùng đợi. Thử lại nhanh;
-                    # vẫn quá tải thì đổi sang model dự phòng (mỗi model một cụm máy chủ riêng) thay vì chờ hàng phút.
+                    # Google quá tải (không phải do mình gửi nhiều): không bắt mọi yêu cầu khác cùng đợi.
+                    if error.code == 503:
+                        # 503 "high demand" = model đang quá đông: thử lại chính nó vài giây sau hầu như vô ích. Ghi nhớ
+                        # model này đang quá tải (10 phút) và đổi NGAY sang model khác còn chỗ.
+                        BUSY_MODELS[self.model] = time.monotonic() + BUSY_COOLDOWN
+                        overloaded = len(OVERLOAD_WAIT)
                     if overloaded < len(OVERLOAD_WAIT):
                         wait = OVERLOAD_WAIT[overloaded]
                         overloaded += 1
@@ -343,7 +363,7 @@ class GeminiAPISession:
                         if stop.wait(wait):
                             raise GeminiAPIError("Đã dừng.") from None
                         continue
-                    if not self.simple_media and self.simplify(contents):
+                    if error.code != 503 and not self.simple_media and self.simplify(contents):
                         # Lỗi máy chủ lặp lại có thể do cách gửi video (tham số khung/giây, độ phân giải theo phần):
                         # gửi lại video dạng đơn giản trước khi đổi model; được thì giữ cách này cho cả lượt chạy.
                         status("Lỗi máy chủ lặp lại · thử gửi video dạng đơn giản (không tham số khung/giây, độ phân giải)…")
@@ -394,10 +414,11 @@ class GeminiAPISession:
         sau quá tải lại vẫn được đổi model (kể cả quay về model ban đầu)."""
         tried = self.__dict__.setdefault("overload_tried", set())
         tried.add(self.model)
-        for name in (self.__dict__.setdefault("first_model", self.model),) + self.OVERLOAD_FALLBACKS:
-            if name not in tried:
-                tried.add(name)
-                return name
+        names = [n for n in (self.__dict__.setdefault("first_model", self.model),) + self.OVERLOAD_FALLBACKS if n not in tried]
+        names.sort(key=model_busy)  # model không vừa báo quá tải lên trước
+        if names:
+            tried.add(names[0])
+            return names[0]
         return None
 
     def fallback_model(self):
