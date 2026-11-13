@@ -268,7 +268,8 @@ class ChunkedTests(unittest.TestCase):
                     + "\n" + gemini_web.END_MARK
 
         import re
-        with tempfile.TemporaryDirectory() as folder, \
+        with mock.patch.object(gemini_web, "CHUNK_SECONDS", 60), \
+                tempfile.TemporaryDirectory() as folder, \
                 mock.patch.object(reverse_engineer, "cut_clip", side_effect=lambda src, start, length, target, stop=None: Path(target)), \
                 mock.patch.object(reverse_engineer, "contact_sheets", return_value=[]):
             result = gemini_web.run_chunked(Session("AIzaTESTKEY", "gemini-flash-latest"), "Yêu cầu", Path(folder) / "v.mp4",

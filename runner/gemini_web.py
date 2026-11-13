@@ -779,7 +779,7 @@ def run_conversation(session, prompt, status, stop, email="", model="", review=F
 
 
 CHUNK_SCENES = 6  # Gemini API: gửi lần lượt từng đoạn ~60 giây (6 cảnh 10 giây), lấy kết quả từng đoạn
-CHUNK_SECONDS = 60
+CHUNK_SECONDS = 90  # ít đoạn hơn → lời dặn (lặp lại ở mỗi đoạn) gửi ít lần hơn; đoạn quá tải vẫn tự chia đôi
 CHUNK_MAX_SCENES = 20  # cảnh theo góc quay ngắn (2–3 giây): tối đa 20 cảnh mỗi đoạn
 
 
@@ -1122,7 +1122,7 @@ def run_characters(session, script, scenes, status, stop, email="", model=""):
 
 
 DETAILED_FIXES = 1  # prompt còn lỗi tool không tự sửa được (thiếu CONTINUITY/MAIN ACTION/CAMERA, còn tiếng Việt…): nhờ viết lại 1 lần
-DETAILED_BATCH = 3  # số cảnh mỗi lần gửi: ít lượt hỏi hơn nhiều so với từng cảnh, mỗi câu trả lời vẫn vừa sức
+DETAILED_BATCH = 6  # số cảnh mỗi lần gửi (bài mẫu + quy tắc chỉ gửi một lần cho 6 cảnh → ít token): ít lượt hỏi hơn nhiều so với từng cảnh, mỗi câu trả lời vẫn vừa sức
 
 
 def english_detailed(session, lines, status, stop, email="", model="", style="", aspect="16:9",

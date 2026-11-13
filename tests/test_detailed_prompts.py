@@ -50,8 +50,10 @@ class BatchOfScenesTests(unittest.TestCase):
 
         windows = content.shot_windows([dict(start=0, end=10), dict(start=10, end=13), dict(start=13, end=16),
                                         dict(start=16, end=19)], 19)
-        result = gemini_web.run_english(Session(), ["C1", "C2", "C3", "C4"], lambda t: None, threading.Event(),
-                                        structured="detailed", windows=windows, on_batch=lambda p: partials.append(p["done"]))
+        from unittest import mock
+        with mock.patch.object(gemini_web, "DETAILED_BATCH", 3):  # kiểm tra cách chia nhóm với nhóm 3 cảnh
+            result = gemini_web.run_english(Session(), ["C1", "C2", "C3", "C4"], lambda t: None, threading.Event(),
+                                            structured="detailed", windows=windows, on_batch=lambda p: partials.append(p["done"]))
         self.assertEqual(len(sent), 4)
         self.assertIn("SCENES 1–3 of 4", sent[0])
         self.assertIn("You skipped SCENE 3", sent[1])
