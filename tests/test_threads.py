@@ -245,3 +245,24 @@ class LostVideoTests(unittest.TestCase):
             self.assertEqual(jobs[lost["id"]]["status"], "error")
             self.assertIn("Lấy video", jobs[lost["id"]]["error"])
             self.assertEqual(jobs[kept["id"]]["status"], "done")
+
+
+class ClosedTabTests(unittest.TestCase):
+    def test_new_tab_opens_in_a_living_window_when_current_tab_was_closed(self):
+        driver = FakeDriver()
+        driver.handles, driver.current = ["T1", "T2"], "T2"
+        router = TabRouter(driver)
+        router.acquire()  # luồng 1 giữ T2
+        router.release()
+        driver.handles.remove("T2")  # tab bị đóng / treo (vd hết RAM)
+        router.free = []
+        seen = []
+        original = router.original  # lệnh gửi thẳng tới ChromeDriver (router đã thay driver.execute)
+
+        def spy(command, params=None):
+            seen.append((command, driver.current))
+            return original(command, params)
+        router.original = spy
+        handle, fresh = router.acquire()
+        self.assertTrue(fresh)
+        self.assertIn(("newWindow", "T1"), seen)  # chuyển sang tab còn sống trước rồi mới mở tab mới
