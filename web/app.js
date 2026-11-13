@@ -477,6 +477,8 @@ $('englishFormat').value=content.englishFormat||'detailed';
 // Plugin viết prompt: thư mục skill (plugin.json + skills/…/SKILL.md) → AI viết / kiểm duyệt prompt theo hướng dẫn đó.
 function renderPlugin(){
   const p=state?.content?.plugin;$('pluginRow').classList.toggle('loaded',Boolean(p));
+  // Đã nạp plugin: plugin quyết định văn phong, độ dài, góc máy, cấu trúc prompt → ẩn các ô đó (giữ Tỷ lệ khung hình).
+  document.querySelectorAll('.plugin-hide').forEach(el=>el.hidden=Boolean(p));
   $('pluginReload').hidden=$('pluginRemove').hidden=!p;$('pluginPick').textContent=p?'Đổi plugin':'Chọn thư mục plugin';
   $('pluginInfo').textContent=p?`✓ ${p.name} · ${p.files.length} tệp hướng dẫn · ${p.chars.toLocaleString('vi-VN')} ký tự${p.truncated?' (đã cắt bớt tài liệu phụ)':''} · dùng cho mọi lần viết và kiểm duyệt prompt`:'Chưa nạp · chọn thư mục plugin (có plugin.json, skills/…/SKILL.md) tải từ GPT/Codex để AI viết prompt theo hướng dẫn của plugin.';
 }
@@ -507,7 +509,8 @@ async function startEnglish(silent){
   try{
     if(engine==='gemini')await saveAutoSettings();
     else await api('/api/content/chatgpt-settings',{model:$('chatgptModel').value.trim()});
-    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked,format:$('englishFormat').value,angles:$('englishAngles').value==='lib'?0:Number($('englishAngles').value),library:$('englishAngles').value==='lib',seconds:Number($('englishSeconds').value),windows:(content.windows||[]).length?content.windows:undefined});
+    const plugged=Boolean(state?.content?.plugin);  // đã nạp plugin: không ép phong cách / góc máy của tool
+    const {id,total}=await api('/api/content/english-run',{engine,text:$('englishInput').value,style:plugged?'':$('englishStyle').value,aspect:$('englishAspect').value,structured:$('englishStructured').checked,format:$('englishFormat').value,angles:plugged||$('englishAngles').value==='lib'?0:Number($('englishAngles').value),library:!plugged&&$('englishAngles').value==='lib',seconds:Number($('englishSeconds').value),windows:(content.windows||[]).length?content.windows:undefined});
     lastJobError='';
     if(engine==='gemini'){autoJob={id,kind:'english'};renderAuto();}else{chatJob={id,kind:'english'};renderEnglishRun();}
     studioRun={engine,batch:crypto.randomUUID(),sent:0,next:0,ordinals:{},prompts:{},added:0};
