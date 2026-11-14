@@ -10,6 +10,7 @@ import secrets
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -727,6 +728,85 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             self.server.folder_lock.release()
 
+    def claude_bridge(self, path, body):
+        """Workflow Claude (hanamedia-wildlife-workflow): gửi video vào input/, đọc kết quả trong output/ của thư mục chung."""
+        from runner import claude_bridge as bridge
+        store = self.server.store
+        folder = Path(store.setting("claude_folder") or bridge.default_folder())
+        imported = store.setting("claude_imported") or {}
+
+        def status():
+            exists = folder.is_dir()
+            return {"folder": str(folder), "exists": exists, "auto": store.setting("claude_auto", True) is not False,
+                    "cuts": store.setting("claude_cuts", True) is not False,
+                    "pending": bridge.pending(folder) if exists else [],
+                    "results": bridge.results(folder, imported) if exists else []}
+
+        if path == "/api/claude/status":
+            return self.reply(status())
+        if path == "/api/claude/settings":
+            if "auto" in body:
+                store.save_setting("claude_auto", body.get("auto") is not False)
+            if "cuts" in body:
+                store.save_setting("claude_cuts", body.get("cuts") is not False)
+            return self.reply(status())
+        if path == "/api/claude/folder":
+            action = body.get("action")
+            if action == "open":
+                bridge.ensure(folder)
+                if not open_folder(folder):
+                    raise ValueError("Máy này không mở được thư mục tự động. Đường dẫn: " + str(folder))
+                return self.reply(status())
+            if action == "pick":
+                chosen = self.server.pick_directory("--pick-folder", [])
+                if not chosen:
+                    return self.reply(status())
+            elif action == "reset":
+                chosen = str(bridge.default_folder())
+            elif action == "path":
+                chosen = str(body.get("path") or "").strip().strip('"')
+            else:
+                raise ValueError("Thao tác không hợp lệ.")
+            if not chosen:
+                raise ValueError("Chọn thư mục HanaMedia.")
+            root = Path(chosen).expanduser()
+            if root.name.lower() in ("input", "output") and root.parent.name:
+                root = root.parent  # lỡ chọn input/ hoặc output/ thì dùng thư mục cha
+            bridge.ensure(root)
+            store.save_setting("claude_folder", str(root))
+            folder = root
+            return self.reply(status())
+        if path == "/api/claude/send":
+            video = str(body.get("path") or "").strip() or self.pick_video()
+            if not video:
+                return self.reply(dict(status(), sent=None))
+            cuts = None
+            if store.setting("claude_cuts", True) is not False:
+                from runner import reverse_engineer
+                try:
+                    shots, _duration = reverse_engineer.quick_shots(Path(video))
+                    cuts = [float(s["start"]) for s in shots or [] if float(s["start"]) > 0]
+                except Exception:
+                    cuts = None  # không đo được: để Claude tự dò điểm cắt
+            sent = bridge.send(folder, video, cuts)
+            return self.reply(dict(status(), sent=sent))
+        if path == "/api/claude/read":
+            file = str(body.get("path") or "")
+            if not bridge.inside(folder, file):
+                raise ValueError("File kết quả không nằm trong thư mục output của HanaMedia.")
+            data = bridge.parse(file)
+            return self.reply({"name": data["name"], "batch": bridge.batch_id(file), "signature": bridge.signature(file),
+                               "prompts": [bridge.studio_prompt(s) for s in data["scenes"]],
+                               "scenes": [s["scene"] for s in data["scenes"]]})
+        if path == "/api/claude/mark":
+            sig = str(body.get("signature") or "")
+            if not re.fullmatch(r"[a-f0-9]{20}", sig):
+                raise ValueError("Mã kết quả không hợp lệ.")
+            imported[sig] = int(time.time())
+            store.save_setting("claude_imported", dict(sorted(imported.items(), key=lambda kv: kv[1])[-300:]))
+            return self.reply({"ok": True})
+        return self.reply({"error": "Không tìm thấy."}, 404)
+
     def do_POST(self):
         if not self.allowed(True):
             return self.reply({"error": "Yêu cầu không hợp lệ. Mở tool tại địa chỉ 127.0.0.1."}, 403)
@@ -1112,6 +1192,8 @@ class Handler(BaseHTTPRequestHandler):
                 saved.write_text(json.dumps(plugin, ensure_ascii=False), encoding="utf-8")
                 content.set_plugin(plugin)
                 return self.reply({"ok": True, "plugin": self.server.plugin_public()})
+            elif path.startswith("/api/claude/"):
+                return self.claude_bridge(path, body)
             elif path == "/api/content/review-rules":
                 store.save_setting("review_rules", str(body.get("rules") or "").strip()[:6000])
                 store.save_setting("review_lock", str(body.get("lock") or "").strip()[:2000])

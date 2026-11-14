@@ -955,3 +955,17 @@ dialog .dialog-heading button{min-width:40px}
 .plugin-row small{color:var(--c-text-3);font-size:var(--fs-xs);overflow-wrap:anywhere}
 .plugin-row.loaded{border-style:solid;border-color:var(--c-accent)}
 .plugin-actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* Workflow Claude */
+.claude-flow{padding:14px 16px;margin:0 0 12px;display:grid;gap:10px;border:1px solid var(--c-accent)}
+.claude-head{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-3);flex-wrap:wrap}
+.claude-head h2{margin:0;font-size:var(--fs-md,1rem)}.claude-head h2 small{display:block;font-weight:400;color:var(--c-text-3);font-size:var(--fs-xs)}
+.claude-head p{margin:4px 0 0;color:var(--c-text-2);font-size:var(--fs-xs);overflow-wrap:anywhere}
+.claude-actions{display:flex;gap:7px;flex-wrap:wrap}
+.claude-steps{margin:0;padding-left:20px;display:grid;gap:4px;color:var(--c-text-2);font-size:var(--fs-sm,.9rem)}
+.claude-steps code{background:var(--c-surface-2);padding:1px 5px;border-radius:4px}
+.link-button{background:none;border:none;color:var(--c-accent);padding:0 4px;cursor:pointer;text-decoration:underline;font-size:inherit}
+.claude-options{display:flex;gap:16px;flex-wrap:wrap;font-size:var(--fs-sm,.9rem)}.claude-options label{display:flex;gap:6px;align-items:center}
+.claude-list{display:grid;gap:6px}.claude-list:empty{display:none}
+.claude-item{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;border-radius:var(--radius);background:var(--c-surface-2);font-size:var(--fs-sm,.9rem)}
+.claude-item small{color:var(--c-text-3)}.claude-item.wait{opacity:.85}.claude-item .ok{color:var(--c-success,#3ecf8e)}.claude-item .bad{color:var(--c-danger,#f87171)}

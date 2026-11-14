@@ -353,6 +353,14 @@
         <button type="button" data-step="5"><span>4</span>Tổng quan</button>
       </nav>
       <div id="runnerOutdated" class="content-error" role="alert" hidden><b>Bộ chạy đang chạy bản cũ.</b> Đóng cửa sổ đen CHAY_WINDOWS.cmd (hoặc nhấn Ctrl+C trong đó), mở lại CHAY_WINDOWS.cmd rồi tải lại trang này bằng Ctrl+F5.</div>
+      <section class="claude-flow card" id="claudeFlow" aria-label="Workflow Claude">
+        <div class="claude-head"><div><h2>Workflow Claude <small>hanamedia-wildlife-workflow · không dùng Gemini / ChatGPT</small></h2>
+          <p id="claudeFolderInfo">Thư mục chung: …</p></div>
+          <div class="claude-actions"><button id="claudeSend" type="button" class="primary"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg> Chọn video gửi sang Claude</button><button id="claudeOpen" type="button">Mở thư mục</button><button id="claudeFolder" type="button">Đổi thư mục</button></div></div>
+        <ol class="claude-steps"><li>Bấm <b>Chọn video gửi sang Claude</b>: tool chép video vào <code>input/</code> (kèm điểm cắt cảnh tool đo bằng FFmpeg).</li><li>Mở <b>Claude desktop</b>, kết nối thư mục này (lần đầu), gõ: <code id="claudeCommand">Chạy hanamedia-wildlife-workflow</code> <button id="claudeCopyCommand" type="button" class="link-button">Chép câu lệnh</button></li><li>Claude ghi kết quả vào <code>output/</code> → tool tự đưa từng prompt vào hàng đợi Studio, đúng thứ tự và đúng số giây từng cảnh.</li></ol>
+        <div class="claude-options"><label><input id="claudeAuto" type="checkbox" checked> Có kết quả là tự đưa vào Studio</label><label><input id="claudeCuts" type="checkbox" checked> Gửi kèm điểm cắt cảnh của tool</label></div>
+        <div id="claudeList" class="claude-list"></div>
+      </section>
       <div class="content-columns">
         <div class="content-input card" data-step-panel="1">
           <section class="content-step first"><h3><span>1</span>Đầu vào · Gemini Pro</h3>

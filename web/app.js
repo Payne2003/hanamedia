@@ -717,6 +717,49 @@ async function sendEnglishToStudio(auto){
   }catch(error){toast((auto?'Chưa tự đưa được vào Studio: ':'')+error.message,true);}
   finally{button.disabled=false;}
 }
+// ---- Workflow Claude (hanamedia-wildlife-workflow): video → input/, Claude ghi output/ → tự vào hàng đợi Studio ----
+let claude=null,claudeBusy=false;const claudeImporting=new Set();
+function renderClaude(){
+  if(!claude)return;
+  $('claudeFolderInfo').textContent=`Thư mục chung: ${claude.folder}${claude.exists?'':' (chưa tạo — bấm Mở thư mục để tạo)'} · Claude desktop phải được kết nối đúng thư mục này.`;
+  $('claudeAuto').checked=claude.auto;$('claudeCuts').checked=claude.cuts;
+  const waiting=claude.pending.map(p=>`<div class="claude-item wait"><span>⏳ <b>${esc(p.video)}</b> <small>đang chờ Claude chạy workflow${p.cuts?' · có điểm cắt của tool':''}</small></span></div>`);
+  const done=claude.results.map(r=>`<div class="claude-item"><span>${r.error?'<b class="bad">✕</b>':r.imported?'<b class="ok">✓</b>':'🆕'} <b>${esc(r.name)}</b> <small>${r.error?esc(r.error):`${r.scenes} cảnh${r.duration?` · ${Number(r.duration).toLocaleString('vi-VN')} giây`:''}${r.cut_source==='hanamedia'?' · điểm cắt của tool':r.cut_source==='auto'?' · Claude tự dò điểm cắt':''} · ${esc(r.file)}${r.imported?' · đã vào Studio':''}`}</small></span>${r.error?'':`<button type="button" data-claude-import="${esc(r.path)}" data-claude-sig="${r.signature}" data-again="${r.imported?1:0}">${r.imported?'Đưa lại vào Studio':'→ Đưa vào Studio'}</button>`}</div>`);
+  $('claudeList').innerHTML=waiting.concat(done).join('');
+}
+async function claudeCall(path,body={}){claude=await api(path,body);renderClaude();return claude;}
+async function claudeImport(path,sig,auto=false,again=false){
+  if(claudeImporting.has(sig))return;claudeImporting.add(sig);
+  try{
+    const r=await api('/api/claude/read',{path});const prompts=r.prompts;const batch=again?crypto.randomUUID():r.batch;
+    const options={...videoOptions(),duration:0,aspect:$('vAspect').value},cost=Number($('cost').value)||1;
+    for(let start=0;start<prompts.length;start+=200){
+      const group=prompts.slice(start,start+200);
+      await api('/api/jobs',{prompts:group,cost,mode:'text',batch,append:start,more:start+200<prompts.length,
+        images:group.map(()=>[]),sources:group.map(()=>'claude:'+r.name),scene_ids:group.map(()=>null),options});
+    }
+    await api('/api/claude/mark',{signature:r.signature});
+    await claudeCall('/api/claude/status');await refresh();
+    toast(`${auto?'Claude xong · đã tự ':'Đã '}đưa ${prompts.length} prompt của "${r.name}" vào hàng đợi Studio, đúng thứ tự cảnh. Bấm ▶ Chạy để tạo video.`);
+  }catch(error){toast(`Chưa đưa được kết quả Claude vào Studio: ${error.message}`,true);}
+  finally{claudeImporting.delete(sig);}
+}
+async function pollClaude(){
+  if(!key||claudeBusy)return;
+  try{await claudeCall('/api/claude/status');}catch{return;}
+  if(claude.auto)for(const r of claude.results)if(!r.imported&&!r.error&&Date.now()/1000-r.updated>3)await claudeImport(r.path,r.signature,true);
+}
+setInterval(pollClaude,6000);setTimeout(pollClaude,1500);
+$('claudeSend').onclick=async()=>{const b=$('claudeSend');b.disabled=true;claudeBusy=true;const label=b.innerHTML;b.textContent='Đang chép video và đo điểm cắt…';
+  try{const r=await claudeCall('/api/claude/send');if(r.sent)toast(`Đã gửi "${r.sent.name}" vào thư mục input${r.sent.cuts!=null?` (kèm ${r.sent.cuts} điểm cắt)`:''}. Mở Claude desktop và gõ: Chạy hanamedia-wildlife-workflow`);}
+  catch(error){toast(error.message,true);}finally{b.disabled=false;b.innerHTML=label;claudeBusy=false;}};
+$('claudeOpen').onclick=()=>claudeCall('/api/claude/folder',{action:'open'}).catch(e=>toast(e.message,true));
+$('claudeFolder').onclick=async()=>{try{await claudeCall('/api/claude/folder',{action:'pick'});toast('Đã đổi thư mục chung. Nhớ kết nối đúng thư mục này trong Claude desktop.');}
+  catch(error){const path=prompt('Không mở được hộp chọn thư mục.\nDán đường dẫn thư mục HanaMedia (thư mục chứa input và output):');if(path&&path.trim())claudeCall('/api/claude/folder',{action:'path',path:path.trim()}).catch(e=>toast(e.message,true));}};
+$('claudeAuto').onchange=e=>claudeCall('/api/claude/settings',{auto:e.target.checked}).catch(err=>toast(err.message,true));
+$('claudeCuts').onchange=e=>claudeCall('/api/claude/settings',{cuts:e.target.checked}).catch(err=>toast(err.message,true));
+$('claudeCopyCommand').onclick=()=>navigator.clipboard.writeText($('claudeCommand').textContent).then(()=>toast('Đã chép câu lệnh. Dán vào Claude desktop.')).catch(()=>toast('Chọn và chép câu lệnh.',true));
+$('claudeList').onclick=e=>{const b=e.target.closest('[data-claude-import]');if(b)claudeImport(b.dataset.claudeImport,b.dataset.claudeSig,false,b.dataset.again==='1');};
 function orderedPrompts(list){
   const first={};for(const j of list){const t=Number(j.created)||0;if(!(j.batch in first)||t<first[j.batch])first[j.batch]=t;}
   return [...list].sort((a,b)=>(first[a.batch]-first[b.batch])||String(a.batch).localeCompare(String(b.batch))||(Number(a.ordinal)||0)-(Number(b.ordinal)||0)||(Number(a.created)||0)-(Number(b.created)||0)).map(j=>String(j.prompt||'').trim()).filter(Boolean);
