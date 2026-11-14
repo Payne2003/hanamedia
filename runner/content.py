@@ -1148,6 +1148,70 @@ def continue_review(after, numbers):
             f"each), do not repeat earlier prompts. Then write {END_EN}.")
 
 
+# ---- Viết prompt theo định dạng của PLUGIN (vd "SCENE 155 (duration 2.8 seconds) | ENVIRONMENT: … | CAMERA: …") ----
+PLUGIN_HEADER = re.compile(r"^[\s*#>_`]*SCENE\s+(\d+)\b", re.IGNORECASE | re.MULTILINE)
+PLUGIN_DURATION = re.compile(r"(\b(?:duration|thời lượng)\s*[:=]?\s*)(\d+(?:[.,]\d+)?)(\s*(?:seconds?|secs?|s\b|giây))",
+                             re.IGNORECASE)
+
+
+def fmt_seconds(value):
+    value = round(float(value), 1)
+    return f"{value:g}"
+
+
+def plugin_batch_request(items, total, previous="", aspect="16:9", style=""):
+    """Yêu cầu cho nhiều cảnh khi đã nạp plugin: plugin quyết định cấu trúc và văn phong; tool chỉ ràng buộc số cảnh,
+    số giây chính xác và cách tách từng prompt. items: [(số cảnh, mô tả, số giây, spans)]."""
+    scenes = "\n\n".join(f"SCENE {number} — exact duration {fmt_seconds(seconds)} seconds:\n{line}"
+                          for number, line, seconds, _ in items)
+    continuity = ("PREVIOUS SCENE PROMPT (the first scene below continues directly from it):\n" + previous + "\n\n"
+                  ) if previous else ""
+    return (
+        f"Write the English video prompts for SCENES {items[0][0]}–{items[-1][0]} of {total}, following the "
+        "PROMPT-WRITING PLUGIN above for structure, fields, wording and level of detail.\n\n"
+        "SCENE DESCRIPTIONS (Vietnamese analysis of the source video — the only source of facts):\n\n"
+        + scenes + "\n\n" + continuity +
+        "Output rules (needed so the tool can read your answer):\n"
+        "- One prompt per scene, in scene order. Each prompt starts with \"SCENE N\" using the scene number given above.\n"
+        "- Use EXACTLY the duration given for each scene (keep the decimal, e.g. 2.8 seconds) everywhere the prompt states "
+        "a duration.\n"
+        f"- Aspect ratio {aspect}. Each whole prompt on ONE line (separate its fields with \" | \", no line breaks inside a "
+        "prompt). English only. No markdown, no comments.\n"
+        f"- After the last prompt write exactly: {END_EN}")
+
+
+def parse_plugin(answer, numbers):
+    """{số cảnh: prompt một dòng} từ câu trả lời theo định dạng plugin (mỗi prompt bắt đầu bằng "SCENE N")."""
+    text = str(answer or "").replace("\r", "").split(END_EN)[0]
+    text = re.sub(r"```[a-z]*", "", text)
+    marks = list(PLUGIN_HEADER.finditer(text))
+    found = {}
+    for index, mark in enumerate(marks):
+        number = int(mark.group(1))
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
+        block = re.sub(r"\s*\n+\s*", " | ", text[mark.start():end].strip())
+        block = re.sub(r"(\s*\|\s*)+", " | ", re.sub(r"[*#`]+", "", block)).strip(" |")
+        if number in numbers and number not in found and len(block) > 40:
+            found[number] = block
+    return found
+
+
+def fix_plugin_seconds(prompt, seconds):
+    """Mọi chỗ prompt ghi thời lượng ("duration 3 seconds", "Duration 2.8 seconds") đặt đúng số giây đo được."""
+    if not seconds:
+        return prompt
+    return PLUGIN_DURATION.sub(lambda m: m.group(1) + fmt_seconds(seconds) + m.group(3), str(prompt or ""))
+
+
+def plugin_problems(prompt, seconds=None):
+    text = str(prompt or "").strip()
+    if len(text) < 80:
+        return ["Prompt trống hoặc quá ngắn"]
+    if not is_english(re.sub(r"^SCENE\s+\d+", "", text, flags=re.IGNORECASE)):
+        return ["Còn tiếng Việt — viết lại hoàn toàn bằng tiếng Anh"]
+    return []
+
+
 # ---- Plugin viết prompt (runner/prompt_plugin.py): đặt ở đầu mọi yêu cầu viết / kiểm duyệt prompt ----
 PLUGIN = None
 
@@ -1165,5 +1229,5 @@ def _with_plugin(build):
     return wrapped
 
 
-for _name in ("english_request", "detailed_request", "detailed_batch_request", "review_request"):
+for _name in ("english_request", "detailed_request", "detailed_batch_request", "review_request", "plugin_batch_request"):
     globals()[_name] = _with_plugin(globals()[_name])

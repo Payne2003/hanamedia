@@ -137,12 +137,15 @@ class ShortSceneDurationTests(unittest.TestCase):
         from runner.store import prompt_seconds
         self.assertEqual(prompt_seconds("Generate a 2-second ultra-realistic video"), 2)
         self.assertEqual(prompt_seconds("Generate a 3-second video"), 3)
-        self.assertEqual(prompt_seconds("Generate a 7-second video"), 0)  # Muse không có 7 giây: để Muse tự chọn
+        self.assertEqual(prompt_seconds("Generate a 7-second video"), 7)  # tool không còn gửi thông số: giữ đúng số giây
+        self.assertEqual(prompt_seconds("SCENE 155 (duration 2.8 seconds) | ENVIRONMENT: x"), 2.8)  # định dạng plugin
+        self.assertEqual(prompt_seconds("Generate a 12-second video"), 0)  # Muse tối đa 10 giây
         self.assertEqual(prompt_seconds("A tiger walks"), 0)
         with tempfile.TemporaryDirectory() as folder:
             store = Store(Path(folder) / "t.db")
             batch = uuid.uuid4().hex
-            store.enqueue(["Generate a 2-second video of a fox.", "Generate a 10-second video of a fox."], 1, batch)
-            self.assertEqual(sorted(j["duration"] for j in store.snapshot()["jobs"]), [2, 10])
+            store.enqueue(["Generate a 2-second video of a fox.", "Generate a 10-second video of a fox.",
+                           "SCENE 155 (duration 2.8 seconds) | ENVIRONMENT: a wall"], 1, batch)
+            self.assertEqual(sorted(j["duration"] for j in store.snapshot()["jobs"]), [2, 2.8, 10])
             store.enqueue(["Generate a 2-second video of a deer."], 1, uuid.uuid4().hex, options={"duration": 5})
             self.assertIn(5, [j["duration"] for j in store.snapshot()["jobs"]])
