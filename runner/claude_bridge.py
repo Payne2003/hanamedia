@@ -424,3 +424,65 @@ def inside(folder, path):
     root = (Path(folder).expanduser() / "output").resolve()
     target = Path(path).resolve()
     return target.is_file() and target.is_relative_to(root)
+
+
+# ---- Không gian Agent 3D: tiến độ từng video qua các agent (đọc từ tệp trong input/ và output/) ----
+AGENTS = (
+    {"id": "tool", "name": "HanaMedia Tool", "role": "Chuẩn bị: chép video, đo điểm cắt, tờ ảnh, chuyển động, bảng gộp"},
+    {"id": "analyst", "name": "Agent Phân tích", "skill": "phan-tich-video-doi-thu", "role": "Video gốc → bảng cảnh tiếng Việt"},
+    {"id": "writer", "name": "Agent Viết prompt", "skill": "wildlife-motion-prompt-meta", "role": "Bảng cảnh → prompt 8–10 giây cho Meta Muse"},
+    {"id": "conductor", "name": "Agent Điều phối", "skill": "hanamedia-wildlife-workflow", "role": "Nối hai agent, xuất file cho tool"},
+    {"id": "studio", "name": "Studio · Muse", "role": "Hàng đợi tạo video trên Muse"},
+)
+
+
+def progress(folder, imported=None, jobs=None):
+    """Mỗi video: trạng thái từng agent (waiting / working / done / error). jobs: {batch: {status: số}} của Studio."""
+    root = Path(folder).expanduser()
+    imported, jobs = imported or {}, jobs or {}
+    names = {}
+    if (root / "input").is_dir():
+        for path in (root / "input").iterdir():
+            if path.is_file() and path.suffix.lower() in VIDEO_TYPES:
+                names.setdefault(short_name(path.name), {})["video"] = path
+    if (root / "output").is_dir():
+        for path in (root / "output").iterdir():
+            if path.is_dir():
+                names.setdefault(path.name, {})["out"] = path
+    board = []
+    for name, found in names.items():
+        video, out = found.get("video"), found.get("out") or root / "output" / name
+        has = lambda pattern: out.is_dir() and any(out.glob(pattern))
+        analysis = has("phan-tich-canh_*.md")
+        prompts = has("Wildlife_Prompts_EN_*.txt")
+        final = has("hanamedia_*.json")
+        started = out.is_dir() and any(out.iterdir())
+        stages = {}
+        stages["tool"] = "done" if video or analysis else "waiting"
+        stages["analyst"] = "done" if analysis else "working" if started else "waiting"
+        stages["writer"] = "done" if prompts else "working" if analysis or has("groups_*.json") else "waiting"
+        stages["conductor"] = "done" if final or (prompts and not video) else "working" if started else "waiting"
+        files = result_files(root)
+        result = next((f for f in files if f.parent.name == name), None)
+        studio = {"total": 0, "done": 0, "running": 0, "error": 0, "waiting": 0}
+        if result is not None:
+            counts = jobs.get(batch_id(result), {})
+            for key in studio:
+                studio[key] = sum(counts.values()) if key == "total" else counts.get(key, 0)
+            sig_done = imported.get(signature(result)) or imported.get(folder_key(result))
+            if studio["total"] and studio["done"] + studio["error"] >= studio["total"]:
+                stages["studio"] = "error" if studio["error"] and not studio["done"] else "done"
+            elif studio["running"] or studio["total"]:
+                stages["studio"] = "working"
+            else:
+                stages["studio"] = "working" if sig_done else "waiting"
+        else:
+            stages["studio"] = "waiting"
+        updated = max((p.stat().st_mtime for p in [video, out] if p and p.exists()), default=0)
+        order = ["tool", "analyst", "writer", "conductor", "studio"]
+        done = sum(1 for k in order if stages[k] == "done")
+        board.append({"name": name, "video": video.name if video else "", "stages": stages, "studio": studio,
+                      "percent": round(100 * (done + 0.5 * sum(1 for k in order if stages[k] == "working")) / len(order)),
+                      "updated": updated})
+    board.sort(key=lambda item: -item["updated"])
+    return board[:40]

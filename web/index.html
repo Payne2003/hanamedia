@@ -14,7 +14,8 @@
     <a class="brand" href="/"><img class="logo logo-img" src="/logo.png" alt="" width="40" height="40"><span>HANA MEDIA<small>AI Video Studio</small></span></a>
     <nav class="primary-nav">
       <button type="button" class="active" data-nav="studio" id="navStudio"><i><svg class="ic" aria-hidden="true"><use href="#i-home"/></svg></i>Studio · Video Queue<b id="sideRuns" class="nav-badge" hidden>0</b></button>
-      <button type="button" data-nav="production" id="navProduction"><i><svg class="ic" aria-hidden="true"><use href="#i-film"/></svg></i>Wildlife · Sản xuất phim</button>
+      <button type="button" data-nav="agents" id="navAgents"><i><svg class="ic" aria-hidden="true"><use href="#i-sparkles"/></svg></i>Không gian Agent 3D</button>
+      <button type="button" data-nav="production" id="navProduction" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-film"/></svg></i>Wildlife · Sản xuất phim</button>
       <button type="button" data-nav="content" id="openContent"><i><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg></i>Content Studio</button>
       <button type="button" data-nav="media" id="openLibrary"><i><svg class="ic" aria-hidden="true"><use href="#i-images"/></svg></i>Thư viện Video &amp; Ảnh</button>
       <button type="button" id="accountsButton"><i><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg></i>Tài khoản Muse <b id="accountCount" class="nav-badge">0</b></button>
@@ -81,6 +82,18 @@
       </aside>
     </div>
     </div>
+    <section id="agentsView" class="agents-page" hidden aria-labelledby="agentsTitle">
+      <div class="agents-top card"><div><h1 id="agentsTitle">Không gian Agent 3D</h1><p>Mỗi kỹ năng là một AI agent. Theo dõi từng video đi qua các agent: Tool → Phân tích → Viết prompt → Điều phối → Studio · Muse.</p></div>
+        <div class="agents-actions"><button id="agentsSend" type="button" class="primary"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg> Gửi video cho agent</button><button id="agentsSpin" type="button" aria-pressed="true">⟳ Tự xoay</button><button id="agentsReset" type="button">Góc nhìn mặc định</button><button id="agentsCommand" type="button">Chép lệnh chạy workflow</button></div></div>
+      <div class="agents-layout">
+        <div class="space3d card" id="space3d" aria-label="Không gian 3D các agent (kéo để xoay, cuộn để phóng to)"><div class="world" id="world"><div class="floor"></div><div id="conveyor"></div><div id="stations"></div><div id="tokens"></div></div>
+          <div class="space-hint">Kéo để xoay · cuộn chuột để phóng to / thu nhỏ</div><div class="space-legend"><span class="lg waiting">Chờ</span><span class="lg working">Đang làm</span><span class="lg done">Xong</span></div></div>
+        <aside class="agent-cards" id="agentCards"></aside>
+      </div>
+      <section class="workflow-board card"><div class="board-head"><h2>Bảng workflow</h2><small id="boardFolder"></small></div>
+        <div class="board-scroll"><table class="board"><thead><tr id="boardHead"></tr></thead><tbody id="boardRows"></tbody></table></div>
+        <div id="boardEmpty" class="empty-small">Chưa có video nào. Bấm <b>Gửi video cho agent</b>, rồi mở Claude desktop / Codex trong thư mục HanaMedia và gõ: <code>Chạy hanamedia-wildlife-workflow</code></div></section>
+    </section>
     <section id="productionView" hidden aria-labelledby="productionTitle">
       <div class="production-heading"><div><div class="eyebrow">HANA MEDIA / WILDLIFE</div><h1 id="productionTitle">Trung tâm sản xuất phim</h1><p class="detail">Một dự án, Scene ID xuyên suốt và lịch sử của từng công đoạn.</p></div><button id="productionRefresh" type="button"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg> Cập nhật</button></div>
       <p class="production-notice">Một video gốc → phim AI động vật 8–9 phút, dựng bằng CapCut, chỉ tiếng tự nhiên (không thoại, không nhạc, không phụ đề). Agent chạy ngay trên máy này bằng Gemini / ChatGPT / Claude bạn đã đăng nhập, hoặc API riêng; bạn duyệt ở mỗi điểm kiểm tra. QC kỹ thuật dùng FFmpeg; đánh giá khung hình mẫu, timeline và âm thanh cần bạn kiểm tra. Âm thanh mục tiêu: tiếng tự nhiên, không lời thoại, nhạc hay phụ đề.</p>
