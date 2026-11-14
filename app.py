@@ -745,6 +745,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/claude/status":
             return self.reply(status())
+        if path == "/api/claude/board":
+            counts = {}
+            for job in store.snapshot()["jobs"]:
+                counts.setdefault(job.get("batch"), {}).setdefault(job.get("status"), 0)
+                counts[job["batch"]][job["status"]] += 1
+            return self.reply({"folder": str(folder), "agents": bridge.AGENTS,
+                               "board": bridge.progress(folder, imported, counts) if folder.is_dir() else []})
         if path == "/api/claude/settings":
             if "auto" in body:
                 store.save_setting("claude_auto", body.get("auto") is not False)

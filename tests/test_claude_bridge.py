@@ -132,6 +132,30 @@ class ClaudeBridgeTests(unittest.TestCase):
         self.assertEqual([g["end"] for g in long], [10.0, 18.0, 25.0])  # còn 15 giây: cắt ở 8 giây, phần cuối 7 giây kéo thành 8
         self.assertTrue(long[0]["segments"][0]["split"])
 
+    def test_progress_board_stages(self):
+        (self.root / "input").mkdir(parents=True)
+        for name in ("a", "b", "c"):
+            (self.root / "input" / f"{name}.mp4").write_bytes(b"x")
+        out_b = self.root / "output" / "b"
+        out_b.mkdir(parents=True)
+        (out_b / "phan-tich-canh_b.md").write_text("x", encoding="utf-8")
+        out_c = self.root / "output" / "c"
+        out_c.mkdir(parents=True)
+        (out_c / "phan-tich-canh_c.md").write_text("x", encoding="utf-8")
+        prompt = out_c / "Wildlife_Prompts_EN_c.txt"
+        prompt.write_text("SCENE 1 | Duration 9 seconds | a\n", encoding="utf-8")
+        (out_c / "hanamedia_c.json").write_text(json.dumps({"scenes": [{"prompt": "SCENE 1 | a", "duration": 9}]}),
+                                                encoding="utf-8")
+        result = bridge.result_files(self.root)
+        batch = bridge.batch_id([r for r in result if r.parent.name == "c"][0])
+        board = {b["name"]: b for b in bridge.progress(self.root, {}, {batch: {"done": 1}})}
+        self.assertEqual(board["a"]["stages"], {"tool": "done", "analyst": "waiting", "writer": "waiting",
+                                                "conductor": "waiting", "studio": "waiting"})
+        self.assertEqual(board["b"]["stages"]["analyst"], "done")
+        self.assertEqual(board["b"]["stages"]["writer"], "working")
+        self.assertEqual(set(board["c"]["stages"].values()), {"done"})
+        self.assertEqual(board["c"]["percent"], 100)
+
 
 if __name__ == "__main__":
     unittest.main()

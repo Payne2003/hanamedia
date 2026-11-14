@@ -279,21 +279,23 @@ $('downloadContentXlsx').onclick=async()=>{try{const r=await fetch('/api/content
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
   if(view==='community')view='studio';  // mục Cộng đồng đã bỏ
+  if(view==='production')view='agents';  // mục Wildlife · Sản xuất phim đã bỏ: thay bằng Không gian Agent 3D
+  const isAgents=view==='agents';$('agentsView').hidden=!isAgents;if(isAgents)openAgents();else closeAgents();
   const isProduction=view==='production',isContent=view==='content',isSettings=view==='settings',isMedia=view==='media',isCommunity=view==='community',isLicense=view==='license';
   $('productionView').hidden=!isProduction;if(isProduction)loadProduction();
-  $('jobView').hidden=true;$('studioView').hidden=isProduction||isContent||isSettings||isMedia||isCommunity||isLicense;$('communityView').hidden=!isCommunity;$('licenseView').hidden=!isLicense;$('contentView').hidden=!isContent;$('settingsView').hidden=!isSettings;$('mediaView').hidden=!isMedia;
+  $('jobView').hidden=true;$('studioView').hidden=isAgents||isProduction||isContent||isSettings||isMedia||isCommunity||isLicense;$('communityView').hidden=!isCommunity;$('licenseView').hidden=!isLicense;$('contentView').hidden=!isContent;$('settingsView').hidden=!isSettings;$('mediaView').hidden=!isMedia;
   if(isMedia)loadMedia();
   if(isCommunity)renderCommunity();
   if(isLicense)loadLicense();
   if(isSettings){applyAutoSettings(true);renderSettings(true);}
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
   if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;renderVideoFile();$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles??'3');renderEnglishEngine();openCharacters();}
-  const hash=isProduction?'#production':isContent?'#content':isSettings?'#settings':isMedia?'#media':isCommunity?'#community':isLicense?'#license':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
+  const hash=isAgents?'#agents':isProduction?'#production':isContent?'#content':isSettings?'#settings':isMedia?'#media':isCommunity?'#community':isLicense?'#license':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);markSidebar();
 }
 document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>showView(b.dataset.nav));
 $('closeContent').onclick=()=>showView('studio');
-window.addEventListener('hashchange',()=>{if(/^#job=/.test(location.hash))return;showView(location.hash==='#production'?'production':location.hash==='#content'?'content':location.hash==='#settings'?'settings':location.hash==='#media'?'media':location.hash==='#community'?'community':location.hash==='#license'?'license':'studio');});
+window.addEventListener('hashchange',()=>{if(/^#job=/.test(location.hash))return;showView(location.hash==='#agents'||location.hash==='#production'?'agents':location.hash==='#content'?'content':location.hash==='#settings'?'settings':location.hash==='#media'?'media':location.hash==='#community'?'community':location.hash==='#license'?'license':'studio');});
 $('contentBrief').oninput=()=>{content.brief=$('contentBrief').value;saveContent();};
 $('contentVideo').oninput=()=>{content.video=$('contentVideo').value.trim();
   // File tải từ link cũ: đổi link thì bỏ file để không gửi nhầm video của lần trước cho Gemini.
@@ -761,6 +763,75 @@ $('claudeCuts').onchange=e=>claudeCall('/api/claude/settings',{cuts:e.target.che
 $('claudePack').onchange=e=>claudeCall('/api/claude/settings',{pack:e.target.checked}).catch(err=>toast(err.message,true));
 $('claudeCopyCommand').onclick=()=>navigator.clipboard.writeText($('claudeCommand').textContent).then(()=>toast('Đã chép câu lệnh. Dán vào Claude desktop hoặc Codex.')).catch(()=>toast('Chọn và chép câu lệnh.',true));
 $('claudeList').onclick=e=>{const b=e.target.closest('[data-claude-import]');if(b)claudeImport(b.dataset.claudeImport,b.dataset.claudeSig,false,b.dataset.again==='1');};
+// ---- Không gian Agent 3D: mỗi kỹ năng một agent, video đi qua từng trạm (CSS 3D, không cần thư viện) ----
+const AGENT_POS={tool:[-450,110],analyst:[-225,-95],writer:[0,105],conductor:[225,-95],studio:[450,110]};
+const AGENT_COLOR={tool:'#7dd3fc',analyst:'#a78bfa',writer:'#f472b6',conductor:'#fbbf24',studio:'#34d399'};
+const AGENT_ICON={tool:'🛠️',analyst:'🔍',writer:'✍️',conductor:'🎛️',studio:'🎬'};
+const AGENT_ORDER=['tool','analyst','writer','conductor','studio'];
+const STAGE_TEXT={waiting:'Chờ',working:'Đang làm',done:'Xong',error:'Lỗi'};
+let agentsData=null,agentsTimer=null,agentsRaf=0,agentsBuilt=false;const cam={rx:58,rz:-22,zoom:1,spin:true};let camDrag=null;
+function boxFaces(){return '<i class="fc top"></i><i class="fc front"></i><i class="fc back"></i><i class="fc left"></i><i class="fc right"></i>';}
+function buildSpace(){
+  if(agentsBuilt)return;agentsBuilt=true;
+  $('stations').innerHTML=AGENT_ORDER.map(id=>`<div class="station" data-agent="${id}"><div class="ring"></div><div class="beam"></div><div class="box">${boxFaces()}</div><div class="bill"><b>${AGENT_ICON[id]}</b><span class="nm"></span><small class="st"></small></div></div>`).join('');
+  $('stations').querySelectorAll('.station').forEach(el=>{const id=el.dataset.agent,[x,y]=AGENT_POS[id];el.style.transform=`translate3d(${x}px,${y}px,0)`;el.style.setProperty('--c',AGENT_COLOR[id]);});
+  const segs=[];for(let i=0;i<AGENT_ORDER.length-1;i++){const [x1,y1]=AGENT_POS[AGENT_ORDER[i]],[x2,y2]=AGENT_POS[AGENT_ORDER[i+1]];segs.push({x1,y1,len:Math.hypot(x2-x1,y2-y1),ang:Math.atan2(y2-y1,x2-x1)*180/Math.PI,from:AGENT_ORDER[i],to:AGENT_ORDER[i+1]});}
+  $('conveyor').innerHTML=segs.map(g=>`<div class="seg" data-to="${g.to}"></div>`).join('');
+  $('conveyor').querySelectorAll('.seg').forEach((el,i)=>{const g=segs[i];el.style.width=g.len+'px';el.style.transform=`translate3d(${g.x1}px,${g.y1}px,1px) rotateZ(${g.ang}deg)`;});
+  const space=$('space3d');
+  space.addEventListener('pointerdown',e=>{camDrag={x:e.clientX,y:e.clientY};space.setPointerCapture(e.pointerId);cam.spin=false;renderSpin();});
+  space.addEventListener('pointermove',e=>{if(!camDrag)return;cam.rz+=(e.clientX-camDrag.x)*.35;cam.rx=Math.max(20,Math.min(80,cam.rx-(e.clientY-camDrag.y)*.25));camDrag={x:e.clientX,y:e.clientY};applyCam();});
+  space.addEventListener('pointerup',()=>{camDrag=null;});space.addEventListener('pointercancel',()=>{camDrag=null;});
+  space.addEventListener('wheel',e=>{e.preventDefault();cam.zoom=Math.max(.5,Math.min(1.8,cam.zoom*(e.deltaY<0?1.08:.93)));applyCam();},{passive:false});
+}
+function applyCam(){
+  $('world').style.transform=`translate(-50%,-50%) scale(${cam.zoom}) rotateX(${cam.rx}deg) rotateZ(${cam.rz}deg)`;
+  const face=`rotateZ(${-cam.rz}deg) rotateX(${-cam.rx}deg)`;
+  document.querySelectorAll('#world .bill').forEach(b=>{b.style.transform=`translateZ(${b.dataset.z||150}px) ${face} translate(-50%,-100%)`;});
+}
+function renderSpin(){$('agentsSpin').setAttribute('aria-pressed',String(cam.spin));$('agentsSpin').classList.toggle('active',cam.spin);}
+function spinLoop(){agentsRaf=0;if($('agentsView').hidden)return;if(cam.spin){cam.rz+=.06;applyCam();}agentsRaf=requestAnimationFrame(spinLoop);}
+function currentStage(item){return AGENT_ORDER.find(id=>item.stages[id]!=='done')||'studio';}
+function renderAgents(){
+  const data=agentsData;if(!data)return;
+  const board=data.board||[],agents=Object.fromEntries((data.agents||[]).map(a=>[a.id,a]));
+  $('boardFolder').textContent=`Thư mục chung: ${data.folder}`;
+  // trạm agent
+  for(const id of AGENT_ORDER){
+    const working=board.filter(b=>b.stages[id]==='working').length,done=board.filter(b=>b.stages[id]==='done').length,error=board.filter(b=>b.stages[id]==='error').length;
+    const el=document.querySelector(`.station[data-agent="${id}"]`);if(!el)continue;
+    el.classList.toggle('working',working>0);el.classList.toggle('done',!working&&done>0);el.classList.toggle('error',error>0);
+    el.querySelector('.nm').textContent=agents[id]?.name||id;
+    el.querySelector('.st').textContent=working?`Đang làm ${working} video`:done?`Đã xong ${done}`:'Đang chờ';
+  }
+  document.querySelectorAll('#conveyor .seg').forEach(seg=>{const to=seg.dataset.to;seg.classList.toggle('flow',board.some(b=>b.stages[to]==='working'));});
+  // video đang ở trạm nào
+  const groups={};board.slice(0,15).forEach(item=>{(groups[currentStage(item)]??=[]).push(item);});
+  $('tokens').innerHTML=Object.entries(groups).flatMap(([id,items])=>items.map((item,i)=>{const [x,y]=AGENT_POS[id],a=i*1.3+.6,r=70+12*Math.floor(i/5);
+    return `<div class="token ${item.stages[id]}" data-x="${Math.round(x+Math.cos(a)*r)}" data-y="${Math.round(y+Math.sin(a)*r)}"><div class="chip3d"><i class="fc top"></i><i class="fc front"></i><i class="fc back"></i><i class="fc left"></i><i class="fc right"></i></div><div class="bill" data-z="62"><span class="nm">${esc(item.name)}</span><small class="st">${item.percent}%</small></div></div>`;})).join('');
+  $('tokens').querySelectorAll('.token').forEach(t=>{t.style.transform=`translate3d(${t.dataset.x}px,${t.dataset.y}px,0)`;});
+  applyCam();
+  // thẻ agent
+  $('agentCards').innerHTML=AGENT_ORDER.map(id=>{const a=agents[id]||{name:id},working=board.filter(b=>b.stages[id]==='working').length,done=board.filter(b=>b.stages[id]==='done').length;
+    return `<div class="agent-card ${working?'working':done?'done':''}" data-agent="${id}"><span class="dot"></span><div><b>${AGENT_ICON[id]} ${esc(a.name)}</b>${a.skill?`<code>${esc(a.skill)}</code>`:''}<small>${esc(a.role||'')}</small></div><em>${working?`Đang làm ${working}`:done?`Xong ${done}`:'Chờ'}</em></div>`;}).join('');
+  $('agentCards').querySelectorAll('.agent-card').forEach(c=>c.style.setProperty('--c',AGENT_COLOR[c.dataset.agent]));
+  // bảng workflow
+  $('boardHead').innerHTML='<th>Video</th>'+AGENT_ORDER.map(id=>`<th>${AGENT_ICON[id]} ${esc(agents[id]?.name||id)}</th>`).join('')+'<th>Tiến độ</th>';
+  $('boardRows').innerHTML=board.map(item=>`<tr><td><b>${esc(item.name)}</b><small>${esc(item.video||'(không còn video trong input)')}</small></td>${AGENT_ORDER.map(id=>{const st=item.stages[id];let extra='';
+      if(id==='studio'&&item.studio.total)extra=`<small>${item.studio.done}/${item.studio.total} video${item.studio.running?` · ${item.studio.running} đang chạy`:''}${item.studio.error?` · ${item.studio.error} lỗi`:''}</small>`;
+      return `<td><span class="stage ${st}">${STAGE_TEXT[st]||st}</span>${extra}</td>`;}).join('')}<td><div class="meter"><i data-w="${item.percent}"></i></div><small>${item.percent}%</small></td></tr>`).join('');
+  $('boardRows').querySelectorAll('.meter i').forEach(i=>i.style.width=i.dataset.w+'%');
+  $('boardEmpty').hidden=board.length>0;
+}
+async function pollAgents(){if($('agentsView').hidden||!key)return;try{agentsData=await api('/api/claude/board',{});renderAgents();}catch(error){}}
+function fitZoom(){return Math.max(.5,Math.min(1,($('space3d').clientWidth||1100)/1180));}
+let agentsFitted=false;
+function openAgents(){buildSpace();if(!agentsFitted){agentsFitted=true;cam.zoom=fitZoom();}applyCam();renderSpin();pollAgents();clearInterval(agentsTimer);agentsTimer=setInterval(pollAgents,3000);if(!agentsRaf)agentsRaf=requestAnimationFrame(spinLoop);}
+function closeAgents(){clearInterval(agentsTimer);agentsTimer=null;if(agentsRaf){cancelAnimationFrame(agentsRaf);agentsRaf=0;}}
+$('agentsSpin').onclick=()=>{cam.spin=!cam.spin;renderSpin();};
+$('agentsReset').onclick=()=>{Object.assign(cam,{rx:58,rz:-22,zoom:fitZoom()});applyCam();};
+$('agentsSend').onclick=()=>$('claudeSend').click();
+$('agentsCommand').onclick=()=>navigator.clipboard.writeText('Chạy hanamedia-wildlife-workflow').then(()=>toast('Đã chép lệnh. Dán vào Claude desktop hoặc Codex (mở thư mục HanaMedia).')).catch(()=>toast('Chép không được.',true));
 function orderedPrompts(list){
   const first={};for(const j of list){const t=Number(j.created)||0;if(!(j.batch in first)||t<first[j.batch])first[j.batch]=t;}
   return [...list].sort((a,b)=>(first[a.batch]-first[b.batch])||String(a.batch).localeCompare(String(b.batch))||(Number(a.ordinal)||0)-(Number(b.ordinal)||0)||(Number(a.created)||0)-(Number(b.created)||0)).map(j=>String(j.prompt||'').trim()).filter(Boolean);
@@ -775,7 +846,7 @@ $('downloadEnglish').onclick=()=>{const blob=new Blob([$('englishOutput').value]
 let studioJob=null,studioEditing=false,studioImages=[],studioMode='text';
 const statusLabel={waiting:'Chờ',running:'Đang chạy',done:'Xong',error:'Lỗi'};
 function jobViewShown(){return !$('jobView').hidden;}
-function setJobView(show){$('jobView').hidden=!show;if(show){$('productionView').hidden=true;$('studioView').hidden=true;$('communityView').hidden=true;$('licenseView').hidden=true;$('contentView').hidden=true;$('mediaView').hidden=true;document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav==='studio'));window.scrollTo(0,0);}}
+function setJobView(show){$('jobView').hidden=!show;if(show){$('agentsView').hidden=true;closeAgents();$('productionView').hidden=true;$('studioView').hidden=true;$('communityView').hidden=true;$('licenseView').hidden=true;$('contentView').hidden=true;$('mediaView').hidden=true;document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav==='studio'));window.scrollTo(0,0);}}
 async function openJob(id){
   try{
     const response=await fetch('/api/job/'+id+(charPrefs.projectId?'?project='+charPrefs.projectId:''));const data=await response.json();if(!response.ok)throw Error(data.error||'Không mở được prompt.');
@@ -1020,7 +1091,8 @@ function renderOverview(){
 }
 function markSidebar(){
   const production=!$('productionView').hidden,content=!$('contentView').hidden,settings=!$('settingsView').hidden,media=!$('mediaView').hidden,community=!$('communityView').hidden,licensePage=!$('licenseView').hidden;
-  $('navProduction').classList.toggle('active',production);$('navStudio').classList.toggle('active',!production&&!content&&!settings&&!media&&!community&&!licensePage);$('navCommunity').classList.toggle('active',community);$('navLicense').classList.toggle('active',licensePage);$('openLibrary').classList.toggle('active',media);$('navSettings').classList.toggle('active',settings);$('openContent').classList.toggle('active',content);
+  const agents=!$('agentsView').hidden;$('navAgents').classList.toggle('active',agents);
+  $('navProduction').classList.toggle('active',production);$('navStudio').classList.toggle('active',!agents&&!production&&!content&&!settings&&!media&&!community&&!licensePage);$('navCommunity').classList.toggle('active',community);$('navLicense').classList.toggle('active',licensePage);$('openLibrary').classList.toggle('active',media);$('navSettings').classList.toggle('active',settings);$('openContent').classList.toggle('active',content);
 }
 document.querySelectorAll('.stepper [data-step]').forEach(b=>b.onclick=()=>setStep(Number(b.dataset.step)));
 document.addEventListener('click',e=>{const go=e.target.closest('[data-goto-step]');if(go)setStep(Number(go.dataset.gotoStep));});
@@ -1068,7 +1140,7 @@ $('sharedAccount').onchange=()=>{const enabled=$('sharedAccount').checked;
   action(async()=>{try{await api('/api/settings/shared-account',{enabled});toast(enabled?'Đã bật tài khoản chung. Bấm “Đăng nhập tài khoản chung”.':'Đã tắt tài khoản chung: mỗi phần dùng lại hồ sơ riêng.');}catch(error){$('sharedAccount').checked=!enabled;throw error;}renderSettings(true);});};
 $('sharedLogin').onclick=()=>action(async()=>{await api('/api/shared-login',{});$('sharedLogin').blur();toast('Đã mở Chrome thường với 3 tab: Google, ChatGPT, Flow. Đăng nhập xong thì đóng hẳn cửa sổ đó.');});
 initProduction({api,toast,showView,openJob,key:()=>key});
-renderMode();await refresh();if(state?.content?.web?.busy&&state.content.web.kind!=='production')autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(state?.content?.chatgpt?.busy&&state.content.chatgpt.kind!=='production')chatJob={id:state.content.chatgpt.id,kind:state.content.chatgpt.kind};for(const [engine,web] of [['gemini',state?.content?.web],['chatgpt',state?.content?.chatgpt]])if(web?.busy&&web.kind==='characters')charJob={id:web.id,engine};if(location.hash==='#production')showView('production');else if(location.hash==='#content')showView('content');else if(location.hash==='#media')showView('media');else if(location.hash==='#community')showView('community');else if(location.hash==='#license')showView('license');else if(location.hash==='#settings')showView('settings');{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(m)openJob(m[1]);}setInterval(refresh,2000);
+renderMode();await refresh();if(state?.content?.web?.busy&&state.content.web.kind!=='production')autoJob={id:state.content.web.id,kind:state.content.web.kind||'generate'};if(state?.content?.chatgpt?.busy&&state.content.chatgpt.kind!=='production')chatJob={id:state.content.chatgpt.id,kind:state.content.chatgpt.kind};for(const [engine,web] of [['gemini',state?.content?.web],['chatgpt',state?.content?.chatgpt]])if(web?.busy&&web.kind==='characters')charJob={id:web.id,engine};if((location.hash==='#production'||location.hash==='#agents'))showView('agents');else if(location.hash==='#content')showView('content');else if(location.hash==='#media')showView('media');else if(location.hash==='#community')showView('community');else if(location.hash==='#license')showView('license');else if(location.hash==='#settings')showView('settings');{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(m)openJob(m[1]);}setInterval(refresh,2000);
 
 document.addEventListener('click',e=>{const b=e.target.closest('[data-review],[data-close-review]');if(!b)return;action(async()=>{await api(b.dataset.review?'/api/review':'/api/review-close',{id:b.dataset.review||b.dataset.closeReview});b.blur();toast(b.dataset.review?'Đang mở đúng phiên tài khoản. Đóng phiên trong mục Tài khoản khi kiểm tra xong.':'Đang đóng phiên kiểm tra.');});});
 
