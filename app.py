@@ -739,6 +739,7 @@ class Handler(BaseHTTPRequestHandler):
             exists = folder.is_dir()
             return {"folder": str(folder), "exists": exists, "auto": store.setting("claude_auto", True) is not False,
                     "cuts": store.setting("claude_cuts", True) is not False,
+                    "pack": store.setting("claude_pack", True) is not False,
                     "pending": bridge.pending(folder) if exists else [],
                     "results": bridge.results(folder, imported) if exists else []}
 
@@ -749,6 +750,8 @@ class Handler(BaseHTTPRequestHandler):
                 store.save_setting("claude_auto", body.get("auto") is not False)
             if "cuts" in body:
                 store.save_setting("claude_cuts", body.get("cuts") is not False)
+            if "pack" in body:
+                store.save_setting("claude_pack", body.get("pack") is not False)
             return self.reply(status())
         if path == "/api/claude/folder":
             action = body.get("action")
@@ -780,15 +783,16 @@ class Handler(BaseHTTPRequestHandler):
             video = str(body.get("path") or "").strip() or self.pick_video()
             if not video:
                 return self.reply(dict(status(), sent=None))
-            cuts = None
+            cuts, duration = None, None
             if store.setting("claude_cuts", True) is not False:
                 from runner import reverse_engineer
                 try:
-                    shots, _duration = reverse_engineer.quick_shots(Path(video))
+                    shots, duration = reverse_engineer.quick_shots(Path(video))
                     cuts = [float(s["start"]) for s in shots or [] if float(s["start"]) > 0]
                 except Exception:
-                    cuts = None  # không đo được: để Claude tự dò điểm cắt
-            sent = bridge.send(folder, video, cuts)
+                    cuts = None  # không đo được: để Claude / Codex tự dò điểm cắt
+            # Gói đo sẵn (tờ ảnh, shots, motion): Codex trên máy khách không cần Python / opencv.
+            sent = bridge.send(folder, video, cuts, duration, pack=store.setting("claude_pack", True) is not False)
             return self.reply(dict(status(), sent=sent))
         if path == "/api/claude/read":
             file = str(body.get("path") or "")
@@ -796,13 +800,15 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("File kết quả không nằm trong thư mục output của HanaMedia.")
             data = bridge.parse(file)
             return self.reply({"name": data["name"], "batch": bridge.batch_id(file), "signature": bridge.signature(file),
+                               "folder_key": bridge.folder_key(file),
                                "prompts": [bridge.studio_prompt(s) for s in data["scenes"]],
                                "scenes": [s["scene"] for s in data["scenes"]]})
         if path == "/api/claude/mark":
-            sig = str(body.get("signature") or "")
-            if not re.fullmatch(r"[a-f0-9]{20}", sig):
+            keys = [str(body.get("signature") or ""), str(body.get("folder_key") or "")]
+            if not re.fullmatch(r"[a-f0-9]{20}", keys[0]) or not re.fullmatch(r"(d[a-f0-9]{19})?", keys[1]):
                 raise ValueError("Mã kết quả không hợp lệ.")
-            imported[sig] = int(time.time())
+            for item in filter(None, keys):
+                imported[item] = int(time.time())
             store.save_setting("claude_imported", dict(sorted(imported.items(), key=lambda kv: kv[1])[-300:]))
             return self.reply({"ok": True})
         return self.reply({"error": "Không tìm thấy."}, 404)

@@ -37,10 +37,28 @@ def short_name(filename):
     return stem[:80] or "video"
 
 
+AGENTS_TEXT = """# Thư mục HanaMedia (dùng chung với tool HanaMedia)
+
+Dành cho Claude hoặc Codex khi được yêu cầu "Chạy hanamedia-wildlife-workflow":
+- Video cần làm nằm trong input/ (<ten-ngan>.mp4), kèm <ten-ngan>_cuts.txt (điểm cắt tool đo) nếu có.
+- Nếu có thư mục input/<ten-ngan>_pack/ thì tool đã đo sẵn: shots.txt, sheets/*.jpg + sheets.txt (3 khung mỗi cảnh),
+  motion.txt. Dùng luôn các file này, không cần cài Python / opencv. Xem đủ TẤT CẢ các tờ ảnh trong sheets/.
+- Ghi kết quả vào output/<ten-ngan>/: Wildlife_Prompts_EN_<ten-ngan>.txt (mỗi dòng một cảnh, dòng N = cảnh N)
+  và hanamedia_<ten-ngan>.json nếu làm được. Tool tự đưa prompt vào hàng đợi Studio khi thấy file.
+- Không sửa hay xoá video trong input/.
+"""
+
+
 def ensure(folder):
     root = Path(folder).expanduser()
     for sub in ("input", "output"):
         (root / sub).mkdir(parents=True, exist_ok=True)
+    agents = root / "AGENTS.md"
+    if not agents.exists():
+        try:
+            agents.write_text(AGENTS_TEXT, encoding="utf-8", newline="\n")
+        except OSError:
+            pass
     return root
 
 
@@ -52,8 +70,9 @@ def write_cuts(target, cuts):
     return len(values)
 
 
-def send(folder, video, cuts=None):
-    """Chép video vào input/ (tên chuẩn của workflow). cuts: danh sách giây đổi cảnh (None = để Claude tự dò)."""
+def send(folder, video, cuts=None, duration=None, pack=False, stop=None, status=lambda text: None):
+    """Chép video vào input/ (tên chuẩn của workflow). cuts: danh sách giây đổi cảnh (None = để Claude tự dò).
+    pack=True (cần cuts + duration): làm thêm input/<ten>_pack/ (tờ ảnh, shots, motion) cho Claude / Codex dùng luôn."""
     source = Path(video)
     if not source.is_file():
         raise BridgeError("Không thấy file video đã chọn.")
@@ -79,7 +98,102 @@ def send(folder, video, cuts=None):
         count = write_cuts(cuts_file, cuts)
     else:
         cuts_file.unlink(missing_ok=True)
-    return {"name": name, "video": str(target), "cuts": count, "folder": str(root)}
+    packed = None
+    pack_dir = root / "input" / f"{name}_pack"
+    if pack and cuts is not None and duration:
+        packed = build_pack(target, pack_dir, cuts, float(duration), stop, status)
+    elif pack_dir.exists():
+        shutil.rmtree(pack_dir, ignore_errors=True)
+    return {"name": name, "video": str(target), "cuts": count, "folder": str(root), "pack": packed}
+
+
+SHEET_SCENES = 14   # 14 cảnh một tờ, mỗi cảnh 3 khung (đầu / giữa / cuối) giống sheets.py của kỹ năng phân tích
+FRAME_W, FRAME_H = 256, 144
+
+
+def scenes_from_cuts(cuts, duration):
+    bounds = [0.0] + sorted({round(float(c), 2) for c in cuts if 0.05 < float(c) < duration - 0.05}) + [round(duration, 2)]
+    return [(bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
+
+
+def motion_label(value):
+    from .reverse_engineer import MOTION_FAST, MOTION_MEDIUM
+    if value is None:
+        return "không rõ"
+    return "nhanh" if value >= MOTION_FAST else "vừa" if value >= MOTION_MEDIUM else "chậm" if value >= MOTION_MEDIUM / 3 else "tĩnh"
+
+
+def build_pack(source, target, cuts, duration, stop=None, status=lambda text: None):
+    """Gói dữ liệu máy đo sẵn cho Claude / Codex (máy khách không cần Python, opencv):
+    shots.txt (cảnh · đầu · cuối · dài), allcuts.txt, sheets/sNN.jpg + sheets.txt (vị trí từng cảnh trên tờ ảnh),
+    motion.txt (độ chuyển động trong khung của từng cảnh, đo bằng sai khác khung hình)."""
+    from . import video_tools as video
+    from .reverse_engineer import frame_differences
+    target = Path(target)
+    if target.exists():
+        shutil.rmtree(target, ignore_errors=True)
+    (target / "sheets").mkdir(parents=True, exist_ok=True)
+    frames = target / "frames"
+    frames.mkdir()
+    shots = scenes_from_cuts(cuts, duration)
+    (target / "allcuts.txt").write_text("".join(f"{s:g}\n" for s, _ in shots[1:]), encoding="utf-8", newline="\n")
+    (target / "shots.txt").write_text("\n".join(f"{i + 1}\t{s:.2f}\t{e:.2f}\t{e - s:.2f}" for i, (s, e) in enumerate(shots)) + "\n",
+                                      encoding="utf-8", newline="\n")
+    index = []
+    total = len(shots)
+    for number, (start, end) in enumerate(shots):
+        if stop is not None and stop.is_set():
+            raise BridgeError("Đã dừng.")
+        if number % 20 == 0:
+            status(f"Trích khung hình cảnh {number + 1}/{total}…")
+        moments = [min(start + 0.3, (start + end) / 2), (start + end) / 2, max(end - 0.35, (start + end) / 2)]
+        for slot, moment in enumerate(moments):
+            out = frames / f"{number * 3 + slot:05d}.jpg"
+            video.run([video.ffmpeg(), "-v", "error", "-y", "-ss", f"{max(moment, 0):.3f}", "-i", str(source), "-frames:v", "1",
+                       "-vf", f"scale={FRAME_W}:{FRAME_H}:force_original_aspect_ratio=decrease,pad={FRAME_W}:{FRAME_H}:-1:-1",
+                       "-q:v", "4", str(out)], 60)
+            if not out.exists():  # khung cuối video đôi khi không đọc được: ô đen
+                video.run([video.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", f"color=black:s={FRAME_W}x{FRAME_H}",
+                           "-frames:v", "1", str(out)], 30)
+    per_sheet = SHEET_SCENES * 3
+    for sheet, first in enumerate(range(0, total, SHEET_SCENES)):
+        group = shots[first:first + SHEET_SCENES]
+        name = f"s{sheet + 1:02d}.jpg"
+        video.run([video.ffmpeg(), "-v", "error", "-y", "-start_number", str(first * 3), "-i", str(frames / "%05d.jpg"),
+                   "-frames:v", "1", "-vf", f"tile=6x{(len(group) + 1) // 2}:padding=4:color=black", "-q:v", "4",
+                   str(target / "sheets" / name)], 120)
+        for offset, (start, end) in enumerate(group):
+            row, half = divmod(offset, 2)
+            index.append(f"{first + offset + 1}\t{name}\thàng {row + 1}\t{'cột 1–3 (trái)' if half == 0 else 'cột 4–6 (phải)'}"
+                         f"\t{start:.2f}-{end:.2f}s")
+    (target / "sheets.txt").write_text(
+        "# Mỗi tờ: 2 cảnh một hàng, mỗi cảnh 3 khung liền nhau (đầu · giữa · cuối cảnh). Cột: cảnh · tờ · hàng · vị trí · giây\n"
+        + "\n".join(index) + "\n", encoding="utf-8", newline="\n")
+    shutil.rmtree(frames, ignore_errors=True)
+    status("Đo độ chuyển động từng cảnh…")
+    try:
+        scores, times = frame_differences(source, stop)
+    except Exception:
+        scores, times = [], []
+    if scores and len(times) < len(scores) + 1:  # không đọc được mốc thời gian: chia đều theo thời lượng
+        step = float(duration) / (len(scores) + 1)
+        times = [i * step for i in range(len(scores) + 1)]
+    lines = ["# cảnh · giây · chuyển động trong khung (sai khác khung hình trung bình / lớn nhất) · mức. Cắt cảnh không tính."]
+    for number, (start, end) in enumerate(shots):
+        values = [scores[i] for i in range(min(len(scores), len(times) - 1))
+                  if start + 0.15 < times[i + 1] < end - 0.15]
+        mean = sum(values) / len(values) if values else None
+        peak = max(values) if values else None
+        lines.append(f"{number + 1}\t{start:.1f}-{end:.1f}\t" + (f"tb={mean:.3f} max={peak:.3f}" if values else "na")
+                     + f"\t{motion_label(mean)}")
+    (target / "motion.txt").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    (target / "README.txt").write_text(
+        "Dữ liệu HanaMedia đo sẵn cho video này (không cần Python / opencv):\n"
+        "- shots.txt: cảnh, giây đầu, giây cuối, độ dài (thay cho Bước 2–3 của kỹ năng phân tích).\n"
+        "- sheets/*.jpg + sheets.txt: tờ ảnh liên hoàn, mỗi cảnh 3 khung đầu/giữa/cuối. Xem TẤT CẢ các tờ.\n"
+        "- motion.txt: độ chuyển động trong khung từng cảnh (tĩnh / chậm / vừa / nhanh), hỗ trợ ghi tốc độ hành động.\n",
+        encoding="utf-8", newline="\n")
+    return {"scenes": total, "sheets": (total + SHEET_SCENES - 1) // SHEET_SCENES}
 
 
 def pending(folder):
@@ -104,6 +218,20 @@ def _number(value):
 
 def _prompt_lines(text):
     return [line.strip() for line in str(text).replace("\r\n", "\n").split("\n") if line.strip()]
+
+
+def pack_lengths(shots_file):
+    """Độ dài từng cảnh trong shots.txt do tool làm (dùng khi Claude / Codex chỉ trả file prompt .txt)."""
+    try:
+        rows = Path(shots_file).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for row in rows:
+        parts = row.split("\t")
+        if len(parts) >= 4 and _number(parts[3]) is not None:
+            out.append(round(_number(parts[3]), 1))
+    return out
 
 
 def parse(path):
@@ -135,8 +263,10 @@ def parse(path):
             scenes.append({"scene": scene if isinstance(scene, int) else index + 1,
                            "duration": round(duration, 1) if duration and duration > 0 else None, "prompt": prompt})
     else:
+        lengths = pack_lengths(path.parents[2] / "input" / f"{path.parent.name}_pack" / "shots.txt") \
+            if len(path.parents) > 2 else []
         for index, line in enumerate(_prompt_lines(raw)[:MAX_SCENES]):
-            scenes.append({"scene": index + 1, "duration": None, "prompt": line})
+            scenes.append({"scene": index + 1, "duration": lengths[index] if index < len(lengths) else None, "prompt": line})
     if not scenes:
         raise BridgeError(f"{path.name} không có prompt nào.")
     name = path.parent.name
@@ -160,6 +290,12 @@ def result_files(folder):
 def signature(path):
     stat = Path(path).stat()
     return hashlib.sha1(f"{Path(path).resolve()}|{stat.st_size}|{int(stat.st_mtime)}".encode()).hexdigest()[:20]
+
+
+def folder_key(path):
+    """Khóa theo thư mục kết quả output/<ten>/: đã đưa một file của thư mục này (vd .txt) thì không tự đưa thêm file
+    khác của cùng thư mục (vd .json ghi sau) → không nhân đôi prompt trong Studio."""
+    return "d" + hashlib.sha1(str(Path(path).resolve().parent).encode()).hexdigest()[:19]
 
 
 def batch_id(path):
@@ -195,7 +331,8 @@ def results(folder, imported=None):
         sig = signature(path)
         items.append({"name": data["name"], "file": path.name, "path": str(path), "scenes": data["scene_count"],
                       "duration": data.get("duration"), "cut_source": data.get("cut_source", ""), "error": error,
-                      "updated": stat.st_mtime, "signature": sig, "imported": bool(imported.get(sig))})
+                      "updated": stat.st_mtime, "signature": sig, "folder_key": folder_key(path),
+                      "imported": bool(imported.get(sig)), "folder_imported": bool(imported.get(folder_key(path)))})
     items.sort(key=lambda item: -item["updated"])
     return items
 
