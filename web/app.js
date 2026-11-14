@@ -717,6 +717,13 @@ async function sendEnglishToStudio(auto){
   }catch(error){toast((auto?'Chưa tự đưa được vào Studio: ':'')+error.message,true);}
   finally{button.disabled=false;}
 }
+function orderedPrompts(list){
+  const first={};for(const j of list){const t=Number(j.created)||0;if(!(j.batch in first)||t<first[j.batch])first[j.batch]=t;}
+  return [...list].sort((a,b)=>(first[a.batch]-first[b.batch])||String(a.batch).localeCompare(String(b.batch))||(Number(a.ordinal)||0)-(Number(b.ordinal)||0)||(Number(a.created)||0)-(Number(b.created)||0)).map(j=>String(j.prompt||'').trim()).filter(Boolean);
+}
+$('copyAllPrompts').onclick=()=>{const prompts=orderedPrompts(visibleJobs||[]);if(!prompts.length){toast('Hàng đợi chưa có prompt để chép.',true);return;}
+  const text=prompts.join(prompts.some(p=>p.includes('\n'))?'\n\n':'\n');
+  navigator.clipboard.writeText(text).then(()=>toast(`Đã chép ${prompts.length} prompt theo thứ tự.`)).catch(()=>toast('Không chép được prompt.',true));};
 $('copyEnglish').onclick=()=>navigator.clipboard.writeText($('englishOutput').value).then(()=>toast('Đã chép prompt tiếng Anh.')).catch(()=>toast('Không chép được. Chọn và sao chép trong ô kết quả.',true));
 $('downloadEnglish').onclick=()=>{const blob=new Blob([$('englishOutput').value],{type:'text/plain;charset=utf-8'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`prompt-tieng-anh-${content.englishEngine}.txt`;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);};
 
