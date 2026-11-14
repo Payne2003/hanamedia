@@ -108,6 +108,17 @@ class ClaudeBridgeTests(unittest.TestCase):
         self.assertFalse((pack / "frames").exists())
         self.assertTrue((self.root / "AGENTS.md").is_file())
 
+    def test_merged_prompts_do_not_take_per_shot_seconds(self):
+        pack = self.root / "input" / "m_pack"
+        pack.mkdir(parents=True)
+        (pack / "shots.txt").write_text("".join(f"{i}\t0\t2.5\t2.50\n" for i in range(1, 9)), encoding="utf-8")
+        out = self.root / "output" / "m"
+        out.mkdir(parents=True)
+        (out / "Wildlife_Prompts_EN_m.txt").write_text("SCENE 1 | a\nSCENE 2 | b\n", encoding="utf-8")
+        self.assertEqual([s["duration"] for s in bridge.parse(out / "Wildlife_Prompts_EN_m.txt")["scenes"]], [None, None])
+        (out / "groups_m.json").write_text(json.dumps([{"start": 0, "end": 10}, {"duration": 9.6}]), encoding="utf-8")
+        self.assertEqual([s["duration"] for s in bridge.parse(out / "Wildlife_Prompts_EN_m.txt")["scenes"]], [10.0, 9.6])
+
 
 if __name__ == "__main__":
     unittest.main()

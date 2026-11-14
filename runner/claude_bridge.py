@@ -234,6 +234,29 @@ def pack_lengths(shots_file):
     return out
 
 
+def group_lengths(folder):
+    """Độ dài từng prompt trong groups_<ten>.json (danh sách, hoặc {"groups": [...]}; mỗi phần tử có duration
+    hoặc start/end)."""
+    for file in sorted(Path(folder).glob("groups_*.json")):
+        try:
+            data = json.loads(file.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            continue
+        items = data.get("groups") if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            continue
+        out = []
+        for item in items:
+            if not isinstance(item, dict):
+                return []
+            value = _number(item.get("duration"))
+            if value is None and _number(item.get("start")) is not None and _number(item.get("end")) is not None:
+                value = _number(item.get("end")) - _number(item.get("start"))
+            out.append(round(value, 1) if value and value > 0 else None)
+        return out
+    return []
+
+
 def parse(path):
     """Đọc hanamedia_<ten>.json (hoặc Wildlife_Prompts_EN_<ten>.txt). Trả về {name, scenes:[{scene, duration, prompt}], …}."""
     path = Path(path)
@@ -263,9 +286,16 @@ def parse(path):
             scenes.append({"scene": scene if isinstance(scene, int) else index + 1,
                            "duration": round(duration, 1) if duration and duration > 0 else None, "prompt": prompt})
     else:
-        lengths = pack_lengths(path.parents[2] / "input" / f"{path.parent.name}_pack" / "shots.txt") \
-            if len(path.parents) > 2 else []
-        for index, line in enumerate(_prompt_lines(raw)[:MAX_SCENES]):
+        lines = _prompt_lines(raw)[:MAX_SCENES]
+        # Số giây từng dòng: groups_<ten>.json (workflow gộp cảnh thành prompt 8–10 giây) → shots.txt của gói tool,
+        # nhưng chỉ khi số dòng khớp (không gán số giây của từng góc máy cho prompt đã gộp nhiều cảnh).
+        lengths = group_lengths(path.parent)
+        if len(lengths) != len(lines):
+            lengths = pack_lengths(path.parents[2] / "input" / f"{path.parent.name}_pack" / "shots.txt") \
+                if len(path.parents) > 2 else []
+        if len(lengths) != len(lines):
+            lengths = []
+        for index, line in enumerate(lines):
             scenes.append({"scene": index + 1, "duration": lengths[index] if index < len(lengths) else None, "prompt": line})
     if not scenes:
         raise BridgeError(f"{path.name} không có prompt nào.")
