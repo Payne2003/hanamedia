@@ -699,6 +699,9 @@ class Handler(BaseHTTPRequestHandler):
                    "/production.js": "production.js", "/production-agents.js": "production-agents.js",
                    "/hq3d.js": "hq3d.js", "/three.module.min.js": "three.module.min.js",
                    "/logo.png": "logo.png", "/logo.svg": "logo.svg", "/favicon.ico": "favicon.ico"}
+        addon = re.fullmatch(r"/addons/([A-Za-z]+\.js)", path)  # module hiệu ứng Three.js (web/addons/, thư mục phẳng)
+        if addon and (ROOT / "web" / "addons" / addon.group(1)).is_file():
+            mapping[path] = "addons/" + addon.group(1)
         if path not in mapping:
             return self.reply({"error": "Không tìm thấy."}, 404)
         file = ROOT / "web" / mapping[path]
