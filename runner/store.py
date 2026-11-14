@@ -477,7 +477,9 @@ class Store:
             now = time.time()
             # Thời lượng chung để trống: lấy số giây ghi trong chính prompt ("Generate a 2-second …") nếu Muse hỗ trợ,
             # để mỗi cảnh theo góc quay giữ đúng số giây và Studio hiện đúng thời lượng.
-            durations = [options["duration"] or prompt_seconds(p) for p in prompts]
+            # Prompt ghi số giây ("Generate a 3-second…", "(duration 2.8 seconds)") thì lấy đúng số đó (kể cả khi dán thẳng
+            # vào Studio); prompt không ghi thì dùng thời lượng chọn ở Studio.
+            durations = [prompt_seconds(p) or options["duration"] for p in prompts]
             # Ưu tiên trường có sẵn trong chính prompt (khung chuẩn); không có thì lấy từ dòng cảnh gốc.
             details = [self.prompt_details(p) or self.scene_details(sources[n] if n < len(sources) else "")
                        for n, p in enumerate(prompts)]
