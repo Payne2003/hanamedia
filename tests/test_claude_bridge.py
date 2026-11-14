@@ -106,6 +106,7 @@ class ClaudeBridgeTests(unittest.TestCase):
         self.assertEqual(len((pack / "shots.txt").read_text(encoding="utf-8").split()), 12)
         self.assertEqual(sum(1 for l in (pack / "motion.txt").read_text(encoding="utf-8").splitlines() if not l.startswith("#")), 3)
         self.assertFalse((pack / "frames").exists())
+        self.assertEqual(json.loads((pack / "groups.json").read_text(encoding="utf-8"))[0]["duration"], 8.0)
         self.assertTrue((self.root / "AGENTS.md").is_file())
 
     def test_merged_prompts_do_not_take_per_shot_seconds(self):
@@ -118,6 +119,18 @@ class ClaudeBridgeTests(unittest.TestCase):
         self.assertEqual([s["duration"] for s in bridge.parse(out / "Wildlife_Prompts_EN_m.txt")["scenes"]], [None, None])
         (out / "groups_m.json").write_text(json.dumps([{"start": 0, "end": 10}, {"duration": 9.6}]), encoding="utf-8")
         self.assertEqual([s["duration"] for s in bridge.parse(out / "Wildlife_Prompts_EN_m.txt")["scenes"]], [10.0, 9.6])
+
+    def test_group_shots_matches_lock01_rules(self):
+        cuts = [2.5 * i for i in range(1, 12)]  # 12 cảnh × 2,5 giây = 30 giây
+        groups = bridge.group_shots(bridge.scenes_from_cuts(cuts, 30.0))
+        self.assertEqual([(g["start"], g["end"]) for g in groups], [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)])
+        self.assertEqual(groups[0]["source_shots"], [1, 2, 3, 4])
+        short = bridge.group_shots([(0, 3), (3, 6)])
+        self.assertEqual(short[0]["duration"], 8.0)
+        self.assertEqual(short[0]["padded_seconds"], 2.0)
+        long = bridge.group_shots([(0, 25)])  # một góc máy dài: chia ở mốc tính được
+        self.assertEqual([g["end"] for g in long], [10.0, 18.0, 25.0])  # còn 15 giây: cắt ở 8 giây, phần cuối 7 giây kéo thành 8
+        self.assertTrue(long[0]["segments"][0]["split"])
 
 
 if __name__ == "__main__":

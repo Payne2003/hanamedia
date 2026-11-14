@@ -42,7 +42,8 @@ AGENTS_TEXT = """# Thư mục HanaMedia (dùng chung với tool HanaMedia)
 Dành cho Claude hoặc Codex khi được yêu cầu "Chạy hanamedia-wildlife-workflow":
 - Video cần làm nằm trong input/ (<ten-ngan>.mp4), kèm <ten-ngan>_cuts.txt (điểm cắt tool đo) nếu có.
 - Nếu có thư mục input/<ten-ngan>_pack/ thì tool đã đo sẵn: shots.txt, sheets/*.jpg + sheets.txt (3 khung mỗi cảnh),
-  motion.txt. Dùng luôn các file này, không cần cài Python / opencv. Xem đủ TẤT CẢ các tờ ảnh trong sheets/.
+  motion.txt, groups.json (gộp cảnh 8–10 giây đúng script Lock 01). Dùng luôn các file này, không cần cài Python /
+  opencv. Xem đủ TẤT CẢ các tờ ảnh trong sheets/.
 - Ghi kết quả vào output/<ten-ngan>/: Wildlife_Prompts_EN_<ten-ngan>.txt (mỗi dòng một cảnh, dòng N = cảnh N)
   và hanamedia_<ten-ngan>.json nếu làm được. Tool tự đưa prompt vào hàng đợi Studio khi thấy file.
 - Không sửa hay xoá video trong input/.
@@ -123,6 +124,52 @@ def motion_label(value):
     return "nhanh" if value >= MOTION_FAST else "vừa" if value >= MOTION_MEDIUM else "chậm" if value >= MOTION_MEDIUM / 3 else "tĩnh"
 
 
+def group_shots(shots):
+    """Gộp cảnh thành prompt 8–10 giây (prompt cuối tối đa 12, ngắn hơn 8 thì kéo cho đủ 8) — đúng thuật toán script
+    Lock 01 của kỹ năng wildlife-motion-prompt-meta, để Codex trên máy không có Python dùng luôn groups.json."""
+    shots = [(n + 1, float(a), float(b)) for n, (a, b) in enumerate(shots)]
+    if not shots:
+        return []
+    total = shots[-1][2]
+    bounds = sorted({a for _, a, _ in shots} | {total})
+
+    def pick(start, low, high, target):
+        candidates = [x for x in bounds if start + low - 1e-6 <= x <= start + high + 1e-6]
+        return min(candidates, key=lambda x: abs(x - target)) if candidates else None
+    groups, start = [], 0.0
+    while True:
+        rest = total - start
+        if rest <= 12:
+            groups.append((start, total))
+            break
+        if rest < 16:
+            end = pick(start, 8, 10, start + 8) or start + 8
+        elif rest < 18:
+            end = pick(start, 8, rest - 8, start + 8) or start + 8
+        elif rest <= 20:
+            end = pick(start, 8, 10, start + rest / 2) or start + rest / 2
+        else:
+            end = pick(start, 8, 10, start + 10) or start + 10
+        groups.append((start, end))
+        start = end
+    out = []
+    for index, (gs, ge) in enumerate(groups, 1):
+        segments = []
+        for n, a, b in shots:
+            a2, b2 = max(a, gs), min(b, ge)
+            if b2 - a2 > 0.05:
+                segments.append({"shot": n, "from": round(a2 - gs, 1), "to": round(b2 - gs, 1),
+                                 "split": a < gs - 1e-6 or b > ge + 1e-6})
+        real = round(ge - gs, 1)
+        duration = max(real, 8.0)
+        if duration > real and segments:
+            segments[-1]["to"] = duration
+        out.append({"prompt": index, "start": round(gs, 2), "end": round(ge, 2), "real_seconds": real, "duration": duration,
+                    "padded_seconds": round(duration - real, 1), "source_shots": [x["shot"] for x in segments],
+                    "segments": segments})
+    return out
+
+
 def build_pack(source, target, cuts, duration, stop=None, status=lambda text: None):
     """Gói dữ liệu máy đo sẵn cho Claude / Codex (máy khách không cần Python, opencv):
     shots.txt (cảnh · đầu · cuối · dài), allcuts.txt, sheets/sNN.jpg + sheets.txt (vị trí từng cảnh trên tờ ảnh),
@@ -139,6 +186,8 @@ def build_pack(source, target, cuts, duration, stop=None, status=lambda text: No
     (target / "allcuts.txt").write_text("".join(f"{s:g}\n" for s, _ in shots[1:]), encoding="utf-8", newline="\n")
     (target / "shots.txt").write_text("\n".join(f"{i + 1}\t{s:.2f}\t{e:.2f}\t{e - s:.2f}" for i, (s, e) in enumerate(shots)) + "\n",
                                       encoding="utf-8", newline="\n")
+    (target / "groups.json").write_text(json.dumps(group_shots(shots), ensure_ascii=False, indent=1), encoding="utf-8",
+                                        newline="\n")
     index = []
     total = len(shots)
     for number, (start, end) in enumerate(shots):
@@ -191,7 +240,8 @@ def build_pack(source, target, cuts, duration, stop=None, status=lambda text: No
         "Dữ liệu HanaMedia đo sẵn cho video này (không cần Python / opencv):\n"
         "- shots.txt: cảnh, giây đầu, giây cuối, độ dài (thay cho Bước 2–3 của kỹ năng phân tích).\n"
         "- sheets/*.jpg + sheets.txt: tờ ảnh liên hoàn, mỗi cảnh 3 khung đầu/giữa/cuối. Xem TẤT CẢ các tờ.\n"
-        "- motion.txt: độ chuyển động trong khung từng cảnh (tĩnh / chậm / vừa / nhanh), hỗ trợ ghi tốc độ hành động.\n",
+        "- motion.txt: độ chuyển động trong khung từng cảnh (tĩnh / chậm / vừa / nhanh), hỗ trợ ghi tốc độ hành động.\n"
+        "- groups.json: bảng gộp cảnh thành prompt 8–10 giây, tính đúng script Lock 01 (dùng khi máy không có Python).\n",
         encoding="utf-8", newline="\n")
     return {"scenes": total, "sheets": (total + SHEET_SCENES - 1) // SHEET_SCENES}
 
@@ -234,10 +284,10 @@ def pack_lengths(shots_file):
     return out
 
 
-def group_lengths(folder):
+def group_lengths(folder, pattern="groups_*.json"):
     """Độ dài từng prompt trong groups_<ten>.json (danh sách, hoặc {"groups": [...]}; mỗi phần tử có duration
     hoặc start/end)."""
-    for file in sorted(Path(folder).glob("groups_*.json")):
+    for file in sorted(Path(folder).glob(pattern)):
         try:
             data = json.loads(file.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
@@ -290,6 +340,8 @@ def parse(path):
         # Số giây từng dòng: groups_<ten>.json (workflow gộp cảnh thành prompt 8–10 giây) → shots.txt của gói tool,
         # nhưng chỉ khi số dòng khớp (không gán số giây của từng góc máy cho prompt đã gộp nhiều cảnh).
         lengths = group_lengths(path.parent)
+        if len(lengths) != len(lines) and len(path.parents) > 2:
+            lengths = group_lengths(path.parents[2] / "input" / f"{path.parent.name}_pack", "groups.json")
         if len(lengths) != len(lines):
             lengths = pack_lengths(path.parents[2] / "input" / f"{path.parent.name}_pack" / "shots.txt") \
                 if len(path.parents) > 2 else []
