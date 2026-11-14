@@ -763,73 +763,73 @@ $('claudeCuts').onchange=e=>claudeCall('/api/claude/settings',{cuts:e.target.che
 $('claudePack').onchange=e=>claudeCall('/api/claude/settings',{pack:e.target.checked}).catch(err=>toast(err.message,true));
 $('claudeCopyCommand').onclick=()=>navigator.clipboard.writeText($('claudeCommand').textContent).then(()=>toast('Đã chép câu lệnh. Dán vào Claude desktop hoặc Codex.')).catch(()=>toast('Chọn và chép câu lệnh.',true));
 $('claudeList').onclick=e=>{const b=e.target.closest('[data-claude-import]');if(b)claudeImport(b.dataset.claudeImport,b.dataset.claudeSig,false,b.dataset.again==='1');};
-// ---- Không gian Agent 3D: mỗi kỹ năng một agent, video đi qua từng trạm (CSS 3D, không cần thư viện) ----
-const AGENT_POS={tool:[-450,110],analyst:[-225,-95],writer:[0,105],conductor:[225,-95],studio:[450,110]};
-const AGENT_COLOR={tool:'#7dd3fc',analyst:'#a78bfa',writer:'#f472b6',conductor:'#fbbf24',studio:'#34d399'};
-const AGENT_ICON={tool:'🛠️',analyst:'🔍',writer:'✍️',conductor:'🎛️',studio:'🎬'};
-const AGENT_ORDER=['tool','analyst','writer','conductor','studio'];
-const STAGE_TEXT={waiting:'Chờ',working:'Đang làm',done:'Xong',error:'Lỗi'};
-let agentsData=null,agentsTimer=null,agentsRaf=0,agentsBuilt=false;const cam={rx:58,rz:-22,zoom:1,spin:true};let camDrag=null;
-function boxFaces(){return '<i class="fc top"></i><i class="fc front"></i><i class="fc back"></i><i class="fc left"></i><i class="fc right"></i>';}
-function buildSpace(){
-  if(agentsBuilt)return;agentsBuilt=true;
-  $('stations').innerHTML=AGENT_ORDER.map(id=>`<div class="station" data-agent="${id}"><div class="ring"></div><div class="beam"></div><div class="box">${boxFaces()}</div><div class="bill"><b>${AGENT_ICON[id]}</b><span class="nm"></span><small class="st"></small></div></div>`).join('');
-  $('stations').querySelectorAll('.station').forEach(el=>{const id=el.dataset.agent,[x,y]=AGENT_POS[id];el.style.transform=`translate3d(${x}px,${y}px,0)`;el.style.setProperty('--c',AGENT_COLOR[id]);});
-  const segs=[];for(let i=0;i<AGENT_ORDER.length-1;i++){const [x1,y1]=AGENT_POS[AGENT_ORDER[i]],[x2,y2]=AGENT_POS[AGENT_ORDER[i+1]];segs.push({x1,y1,len:Math.hypot(x2-x1,y2-y1),ang:Math.atan2(y2-y1,x2-x1)*180/Math.PI,from:AGENT_ORDER[i],to:AGENT_ORDER[i+1]});}
-  $('conveyor').innerHTML=segs.map(g=>`<div class="seg" data-to="${g.to}"></div>`).join('');
-  $('conveyor').querySelectorAll('.seg').forEach((el,i)=>{const g=segs[i];el.style.width=g.len+'px';el.style.transform=`translate3d(${g.x1}px,${g.y1}px,1px) rotateZ(${g.ang}deg)`;});
-  const space=$('space3d');
-  space.addEventListener('pointerdown',e=>{camDrag={x:e.clientX,y:e.clientY};space.setPointerCapture(e.pointerId);cam.spin=false;renderSpin();});
-  space.addEventListener('pointermove',e=>{if(!camDrag)return;cam.rz+=(e.clientX-camDrag.x)*.35;cam.rx=Math.max(20,Math.min(80,cam.rx-(e.clientY-camDrag.y)*.25));camDrag={x:e.clientX,y:e.clientY};applyCam();});
-  space.addEventListener('pointerup',()=>{camDrag=null;});space.addEventListener('pointercancel',()=>{camDrag=null;});
-  space.addEventListener('wheel',e=>{e.preventDefault();cam.zoom=Math.max(.5,Math.min(1.8,cam.zoom*(e.deltaY<0?1.08:.93)));applyCam();},{passive:false});
+// ---- Không gian Agent 3D: phòng điều khiển — Master Agent (điều phối) + 3 robot agent ngồi bàn, theo dõi tiến độ thật ----
+const HQ_AGENTS={
+  conductor:{title:'Master Agent',sub:'Điều phối',skill:'hanamedia-wildlife-workflow',color:'#5ab8ff',
+    tasks:[['tool','Nhận video & gói đo sẵn'],['analyst','Lập kế hoạch cảnh'],['writer','Phân công 3 agent'],['writer','Kiểm soát chất lượng'],['conductor','Tổng hợp & xuất kết quả']]},
+  analyst:{n:1,title:'Agent 1',sub:'Phân tích video',skill:'phan-tich-video-doi-thu',color:'#ffd166',icon:'💡',
+    tasks:['Xem tờ ảnh từng cảnh','Nhận diện nhân vật','Bối cảnh & góc máy','Xuất bảng cảnh']},
+  writer:{n:2,title:'Agent 2',sub:'Viết prompt',skill:'wildlife-motion-prompt-meta',color:'#b28cff',icon:'✍️',
+    tasks:['Gộp cảnh 8–10 giây','Khóa nhân vật & bối cảnh','Viết prompt tốc độ nhanh','Kiểm duyệt liên tục']},
+  studio:{n:3,title:'Agent 3',sub:'Studio · Muse',skill:'Hàng đợi tạo video',color:'#4fe3a8',icon:'🎬',
+    tasks:['Nhận prompt vào hàng đợi','Chia tài khoản Muse','Tạo video từng cảnh','Lưu & ghép video']},
+};
+const HQ_FLOW=[['tool','Nhận video'],['analyst','Phân tích cảnh'],['writer','Viết prompt'],['conductor','Xuất file cho tool'],['studio','Tạo video Muse'],['done','Hoàn tất']];
+let agentsData=null,agentsTimer=null,agentsRaf=0,hqBuilt=false;const hqCam={x:0,y:0,tx:0,ty:0,auto:true,t:0};
+let hq3d=null;
+function buildHQ(){
+  if(hqBuilt)return;hqBuilt=true;
+  const labelEls={};
+  for(const id of ['conductor','analyst','writer','studio']){
+    const a=HQ_AGENTS[id],el=document.createElement('div');el.className='hq-label'+(id==='conductor'?' master':'');el.dataset.agent=id;el.style.setProperty('--c',a.color);
+    el.innerHTML=id==='conductor'?`<div class="badge master"><b>${a.title}</b><small>(${a.sub})</small></div>`:`<div class="badge"><span class="ico">${a.icon}</span><b>${a.title}</b><small>(${a.sub})</small></div><ul class="tasks"></ul>`;
+    $('hqLabels').appendChild(el);labelEls[id]=el;
+  }
+  $('hqFlow').innerHTML=HQ_FLOW.map(([id,label],i)=>`<div class="fstep" data-step="${id}"><span class="fnum">${i+1}</span><span class="fico">${{tool:'📥',analyst:'🔍',writer:'✍️',conductor:'🎛️',studio:'🎬',done:'✅'}[id]}</span><span class="flabel">${label}</span></div>${i<HQ_FLOW.length-1?'<span class="farrow">➜</span>':''}`).join('');
+  import('/hq3d.js').then(mod=>{
+    if(!mod.mount($('hq'),$('hqCanvas'),labelEls)){$('hqFallback').hidden=false;return;}
+    hq3d=mod;mod.setAuto(hqCam.auto);if(!$('agentsView').hidden)mod.start();renderAgents();
+  }).catch(()=>{$('hqFallback').hidden=false;});
 }
-function applyCam(){
-  $('world').style.transform=`translate(-50%,-50%) scale(${cam.zoom}) rotateX(${cam.rx}deg) rotateZ(${cam.rz}deg)`;
-  const face=`rotateZ(${-cam.rz}deg) rotateX(${-cam.rx}deg)`;
-  document.querySelectorAll('#world .bill').forEach(b=>{b.style.transform=`translateZ(${b.dataset.z||150}px) ${face} translate(-50%,-100%)`;});
-}
-function renderSpin(){$('agentsSpin').setAttribute('aria-pressed',String(cam.spin));$('agentsSpin').classList.toggle('active',cam.spin);}
-function spinLoop(){agentsRaf=0;if($('agentsView').hidden)return;if(cam.spin){cam.rz+=.06;applyCam();}agentsRaf=requestAnimationFrame(spinLoop);}
-function currentStage(item){return AGENT_ORDER.find(id=>item.stages[id]!=='done')||'studio';}
+function renderSpin(){$('agentsSpin').setAttribute('aria-pressed',String(hqCam.auto));$('agentsSpin').classList.toggle('active',hqCam.auto);}
+function currentStage(item){return ['tool','analyst','writer','conductor','studio'].find(id=>item.stages[id]!=='done')||'done';}
 function renderAgents(){
   const data=agentsData;if(!data)return;
-  const board=data.board||[],agents=Object.fromEntries((data.agents||[]).map(a=>[a.id,a]));
+  const board=data.board||[];
+  const focus=board.find(b=>currentStage(b)!=='done')||board[0];
   $('boardFolder').textContent=`Thư mục chung: ${data.folder}`;
-  // trạm agent
-  for(const id of AGENT_ORDER){
-    const working=board.filter(b=>b.stages[id]==='working').length,done=board.filter(b=>b.stages[id]==='done').length,error=board.filter(b=>b.stages[id]==='error').length;
-    const el=document.querySelector(`.station[data-agent="${id}"]`);if(!el)continue;
-    el.classList.toggle('working',working>0);el.classList.toggle('done',!working&&done>0);el.classList.toggle('error',error>0);
-    el.querySelector('.nm').textContent=agents[id]?.name||id;
-    el.querySelector('.st').textContent=working?`Đang làm ${working} video`:done?`Đã xong ${done}`:'Đang chờ';
+  const stateOf=id=>board.some(b=>b.stages[id]==='working')?'working':board.some(b=>b.stages[id]==='error')?'error':board.some(b=>b.stages[id]==='done')?'done':'waiting';
+  const states={},screens={};
+  for(const id of ['conductor','analyst','writer','studio']){
+    const a=HQ_AGENTS[id],st=stateOf(id);states[id]=st;
+    screens[id]=board.filter(b=>b.stages[id]==='working').slice(0,4).map(b=>({name:b.name,pct:id==='studio'&&b.studio.total?Math.round(100*b.studio.done/b.studio.total):b.percent}));
+    const el=document.querySelector(`.hq-label[data-agent="${id}"]`);if(!el)continue;
+    el.classList.remove('working','done','waiting','error');el.classList.add(st);
+    if(id==='conductor')continue;
+    const fs=focus?focus.stages[id]:'waiting';
+    el.querySelector('.tasks').innerHTML=a.tasks.map((t,i)=>{const on=fs==='done'||(fs==='working'&&i<2);const spin=fs==='working'&&i===2;return `<li class="${on?'on':spin?'spin':''}"><i></i>${esc(t)}</li>`;}).join('')+
+      `<li class="who">${st==='working'?`Đang làm ${board.filter(b=>b.stages[id]==='working').length} video`:st==='done'?`Đã xong ${board.filter(b=>b.stages[id]==='done').length} video`:'Đang chờ'}</li>`;
   }
-  document.querySelectorAll('#conveyor .seg').forEach(seg=>{const to=seg.dataset.to;seg.classList.toggle('flow',board.some(b=>b.stages[to]==='working'));});
-  // video đang ở trạm nào
-  const groups={};board.slice(0,15).forEach(item=>{(groups[currentStage(item)]??=[]).push(item);});
-  $('tokens').innerHTML=Object.entries(groups).flatMap(([id,items])=>items.map((item,i)=>{const [x,y]=AGENT_POS[id],a=i*1.3+.6,r=70+12*Math.floor(i/5);
-    return `<div class="token ${item.stages[id]}" data-x="${Math.round(x+Math.cos(a)*r)}" data-y="${Math.round(y+Math.sin(a)*r)}"><div class="chip3d"><i class="fc top"></i><i class="fc front"></i><i class="fc back"></i><i class="fc left"></i><i class="fc right"></i></div><div class="bill" data-z="62"><span class="nm">${esc(item.name)}</span><small class="st">${item.percent}%</small></div></div>`;})).join('');
-  $('tokens').querySelectorAll('.token').forEach(t=>{t.style.transform=`translate3d(${t.dataset.x}px,${t.dataset.y}px,0)`;});
-  applyCam();
-  // thẻ agent
-  $('agentCards').innerHTML=AGENT_ORDER.map(id=>{const a=agents[id]||{name:id},working=board.filter(b=>b.stages[id]==='working').length,done=board.filter(b=>b.stages[id]==='done').length;
-    return `<div class="agent-card ${working?'working':done?'done':''}" data-agent="${id}"><span class="dot"></span><div><b>${AGENT_ICON[id]} ${esc(a.name)}</b>${a.skill?`<code>${esc(a.skill)}</code>`:''}<small>${esc(a.role||'')}</small></div><em>${working?`Đang làm ${working}`:done?`Xong ${done}`:'Chờ'}</em></div>`;}).join('');
-  $('agentCards').querySelectorAll('.agent-card').forEach(c=>c.style.setProperty('--c',AGENT_COLOR[c.dataset.agent]));
+  hq3d?.update(states,screens,focus?focus.percent:null);
+  const m=HQ_AGENTS.conductor;
+  $('hqMasterList').innerHTML=`<div class="cl-title">${focus?esc(focus.name):'Chưa có video'}</div>`+m.tasks.map(([stage,label])=>{const s=focus?focus.stages[stage]:'waiting';return `<div class="cl ${s==='done'?'on':s==='working'?'spin':''}"><i></i>${esc(label)}</div>`;}).join('');
+  const active=focus?currentStage(focus):null;
+  document.querySelectorAll('#hqFlow .fstep').forEach(f=>{const id=f.dataset.step,s=id==='done'?(active==='done'?'done':'waiting'):focus?focus.stages[id]:'waiting';f.className='fstep '+s+(id===active?' now':'');});
   // bảng workflow
-  $('boardHead').innerHTML='<th>Video</th>'+AGENT_ORDER.map(id=>`<th>${AGENT_ICON[id]} ${esc(agents[id]?.name||id)}</th>`).join('')+'<th>Tiến độ</th>';
-  $('boardRows').innerHTML=board.map(item=>`<tr><td><b>${esc(item.name)}</b><small>${esc(item.video||'(không còn video trong input)')}</small></td>${AGENT_ORDER.map(id=>{const st=item.stages[id];let extra='';
-      if(id==='studio'&&item.studio.total)extra=`<small>${item.studio.done}/${item.studio.total} video${item.studio.running?` · ${item.studio.running} đang chạy`:''}${item.studio.error?` · ${item.studio.error} lỗi`:''}</small>`;
-      return `<td><span class="stage ${st}">${STAGE_TEXT[st]||st}</span>${extra}</td>`;}).join('')}<td><div class="meter"><i data-w="${item.percent}"></i></div><small>${item.percent}%</small></td></tr>`).join('');
+  const order=['tool','analyst','writer','conductor','studio'],name={tool:'Tool',analyst:'Agent 1 · Phân tích',writer:'Agent 2 · Viết prompt',conductor:'Master · Điều phối',studio:'Agent 3 · Studio'};
+  const text={waiting:'Chờ',working:'Đang làm',done:'Xong',error:'Lỗi'};
+  $('boardHead').innerHTML='<th>Video</th>'+order.map(id=>`<th>${name[id]}</th>`).join('')+'<th>Tiến độ</th>';
+  $('boardRows').innerHTML=board.map(item=>`<tr><td><b>${esc(item.name)}</b><small>${esc(item.video||'(không còn video trong input)')}</small></td>${order.map(id=>{const st=item.stages[id];
+      const extra=id==='studio'&&item.studio.total?`<small>${item.studio.done}/${item.studio.total} video${item.studio.running?` · ${item.studio.running} đang chạy`:''}${item.studio.error?` · ${item.studio.error} lỗi`:''}</small>`:'';
+      return `<td><span class="stage ${st}">${text[st]||st}</span>${extra}</td>`;}).join('')}<td><div class="meter"><i data-w="${item.percent}"></i></div><small>${item.percent}%</small></td></tr>`).join('');
   $('boardRows').querySelectorAll('.meter i').forEach(i=>i.style.width=i.dataset.w+'%');
   $('boardEmpty').hidden=board.length>0;
 }
 async function pollAgents(){if($('agentsView').hidden||!key)return;try{agentsData=await api('/api/claude/board',{});renderAgents();}catch(error){}}
-function fitZoom(){return Math.max(.5,Math.min(1,($('space3d').clientWidth||1100)/1180));}
-let agentsFitted=false;
-function openAgents(){buildSpace();if(!agentsFitted){agentsFitted=true;cam.zoom=fitZoom();}applyCam();renderSpin();pollAgents();clearInterval(agentsTimer);agentsTimer=setInterval(pollAgents,3000);if(!agentsRaf)agentsRaf=requestAnimationFrame(spinLoop);}
-function closeAgents(){clearInterval(agentsTimer);agentsTimer=null;if(agentsRaf){cancelAnimationFrame(agentsRaf);agentsRaf=0;}}
-$('agentsSpin').onclick=()=>{cam.spin=!cam.spin;renderSpin();};
-$('agentsReset').onclick=()=>{Object.assign(cam,{rx:58,rz:-22,zoom:fitZoom()});applyCam();};
+function openAgents(){buildHQ();renderSpin();if(!agentsData){agentsData={board:[],folder:''};renderAgents();}pollAgents();clearInterval(agentsTimer);agentsTimer=setInterval(pollAgents,3000);hq3d?.start();}
+function closeAgents(){clearInterval(agentsTimer);agentsTimer=null;hq3d?.stop();}
+$('agentsSpin').onclick=()=>{hqCam.auto=!hqCam.auto;hq3d?.setAuto(hqCam.auto);renderSpin();};
+$('agentsReset').onclick=()=>{hq3d?.resetView();};
 $('agentsSend').onclick=()=>$('claudeSend').click();
 $('agentsCommand').onclick=()=>navigator.clipboard.writeText('Chạy hanamedia-wildlife-workflow').then(()=>toast('Đã chép lệnh. Dán vào Claude desktop hoặc Codex (mở thư mục HanaMedia).')).catch(()=>toast('Chép không được.',true));
 function orderedPrompts(list){

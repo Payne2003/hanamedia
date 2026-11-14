@@ -83,13 +83,16 @@
     </div>
     </div>
     <section id="agentsView" class="agents-page" hidden aria-labelledby="agentsTitle">
-      <div class="agents-top card"><div><h1 id="agentsTitle">Không gian Agent 3D</h1><p>Mỗi kỹ năng là một AI agent. Theo dõi từng video đi qua các agent: Tool → Phân tích → Viết prompt → Điều phối → Studio · Muse.</p></div>
-        <div class="agents-actions"><button id="agentsSend" type="button" class="primary"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg> Gửi video cho agent</button><button id="agentsSpin" type="button" aria-pressed="true">⟳ Tự xoay</button><button id="agentsReset" type="button">Góc nhìn mặc định</button><button id="agentsCommand" type="button">Chép lệnh chạy workflow</button></div></div>
-      <div class="agents-layout">
-        <div class="space3d card" id="space3d" aria-label="Không gian 3D các agent (kéo để xoay, cuộn để phóng to)"><div class="world" id="world"><div class="floor"></div><div id="conveyor"></div><div id="stations"></div><div id="tokens"></div></div>
-          <div class="space-hint">Kéo để xoay · cuộn chuột để phóng to / thu nhỏ</div><div class="space-legend"><span class="lg waiting">Chờ</span><span class="lg working">Đang làm</span><span class="lg done">Xong</span></div></div>
-        <aside class="agent-cards" id="agentCards"></aside>
+      <div class="agents-top card"><div><h1 id="agentsTitle">Không gian Agent 3D</h1><p>Master Agent điều phối 3 robot agent: Phân tích video → Viết prompt → Studio · Muse. Theo dõi từng video ngay trong phòng điều khiển.</p></div>
+        <div class="agents-actions"><button id="agentsSend" type="button" class="primary"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg> Gửi video cho agent</button><button id="agentsSpin" type="button" aria-pressed="true">⟳ Tự lia camera</button><button id="agentsReset" type="button">Góc nhìn mặc định</button><button id="agentsCommand" type="button">Chép lệnh chạy workflow</button></div></div>
+      <div class="hq card" id="hq" aria-label="Phòng điều khiển 3D: Master Agent và các robot agent">
+        <canvas id="hqCanvas"></canvas>
+        <div class="hq-labels" id="hqLabels"></div>
+        <div class="hq-checklist" id="hqMasterList"></div>
+        <div class="hq-hint">Kéo chuột để xoay quanh phòng · cuộn để phóng to / thu nhỏ</div>
+        <div class="hq-fallback" id="hqFallback" hidden>Máy này không bật được đồ hoạ 3D (WebGL). Bảng workflow bên dưới vẫn cập nhật bình thường.</div>
       </div>
+      <div class="hq-flow" id="hqFlow"></div>
       <section class="workflow-board card"><div class="board-head"><h2>Bảng workflow</h2><small id="boardFolder"></small></div>
         <div class="board-scroll"><table class="board"><thead><tr id="boardHead"></tr></thead><tbody id="boardRows"></tbody></table></div>
         <div id="boardEmpty" class="empty-small">Chưa có video nào. Bấm <b>Gửi video cho agent</b>, rồi mở Claude desktop / Codex trong thư mục HanaMedia và gõ: <code>Chạy hanamedia-wildlife-workflow</code></div></section>
