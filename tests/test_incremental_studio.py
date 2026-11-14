@@ -147,5 +147,8 @@ class ShortSceneDurationTests(unittest.TestCase):
             store.enqueue(["Generate a 2-second video of a fox.", "Generate a 10-second video of a fox.",
                            "SCENE 155 (duration 2.8 seconds) | ENVIRONMENT: a wall"], 1, batch)
             self.assertEqual(sorted(j["duration"] for j in store.snapshot()["jobs"]), [2, 2.8, 10])
-            store.enqueue(["Generate a 2-second video of a deer."], 1, uuid.uuid4().hex, options={"duration": 5})
-            self.assertIn(5, [j["duration"] for j in store.snapshot()["jobs"]])
+            batch2 = uuid.uuid4().hex
+            store.enqueue(["Generate a 2-second video of a deer.", "A deer grazes quietly."], 1, batch2,
+                          options={"duration": 5})
+            got = {j["prompt"]: j["duration"] for j in store.snapshot()["jobs"] if j["batch"] == batch2}
+            self.assertEqual(got, {"Generate a 2-second video of a deer.": 2, "A deer grazes quietly.": 5})
