@@ -1158,3 +1158,4 @@ table.board th:first-child{width:24%}table.board th:last-child{width:12%}table.b
 .hq-fallback{position:absolute;inset:0;display:grid;place-items:center;padding:2em;text-align:center;color:#c9d8f5;background:#040818;z-index:4}
 @media(max-width:900px){.hq-label .tasks{display:none}}
 .hq-label.compact .tasks li:not(.who){display:none}.hq-label.compact .tasks{width:auto;padding:.2em .6em}
+.hq-label.hover .badge{transform:scale(1.08);box-shadow:0 0 24px var(--c)}.hq-label .badge{transition:transform .2s,box-shadow .2s}
