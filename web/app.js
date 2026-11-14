@@ -740,7 +740,8 @@ function fillJob(){
   const accounts=state?.accounts||[];
   $('jobAccount').innerHTML=`<option value="">Chờ tài khoản (tool tự chia)</option>`+accounts.map((a,i)=>`<option value="${a.id}">Tài khoản ${i+1} · ${esc(a.email)}${a.enabled?'':' (đang tắt)'}</option>`).join('');
   $('jobAccount').value=job.assigned_account_id&&accounts.some(a=>a.id===job.assigned_account_id)?job.assigned_account_id:'';
-  $('jobAspect').value=job.aspect||'';$('jobDuration').value=job.duration?String(job.duration):'';$('jobResolution').value=job.resolution||'';
+  {const d=job.duration?String(job.duration):'',sel=$('jobDuration');  // số giây lấy từ prompt có thể lẻ (vd 2.8)
+   if(d&&![...sel.options].some(o=>o.value===d))sel.add(new Option(`${d} giây (theo prompt)`,d));sel.value=d;}$('jobResolution').value=job.resolution||'';
   const canRerun=job.status==='done'||job.status==='error';
   $('jobStatus').innerHTML=`<option value="${job.status}">${statusLabel[job.status]}${job.status==='error'&&job.error?' – '+esc(job.error.slice(0,80)):''}</option>`+(canRerun?'<option value="rerun">Chờ (chạy lại prompt này)</option>':'');
   $('jobStatus').disabled=!canRerun;

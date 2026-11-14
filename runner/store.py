@@ -24,11 +24,17 @@ def folder_name(value):
 
 
 def prompt_seconds(prompt):
-    """Số giây ghi ở đầu prompt ("Generate a 2-second …", "8 seconds") nếu nằm trong các thời lượng Muse nhận; không thì 0."""
-    from .video_tools import DURATIONS
-    match = re.search(r"\b(\d{1,2})[\s-]*(?:second|sec)s?\b", str(prompt or "")[:400], re.IGNORECASE)
-    value = int(match.group(1)) if match else 0
-    return value if value in DURATIONS else 0
+    """Số giây ghi trong prompt: "Generate a 2-second …", "8 seconds", "(duration 2.8 seconds)" (giữ số lẻ). Từ 1 đến 10
+    giây (Muse tối đa 10); không có / ngoài khoảng thì 0 (Muse tự chọn theo prompt)."""
+    head = str(prompt or "")[:600]
+    match = (re.search(r"\bduration\s*[:=]?\s*(\d{1,2}(?:[.,]\d+)?)\s*(?:seconds?|secs?|s\b)", head, re.IGNORECASE)
+             or re.search(r"(?<![\d.,])(\d{1,2}(?:[.,]\d+)?)[\s-]*(?:seconds?|secs?)\b", head, re.IGNORECASE))
+    if not match:
+        return 0
+    value = round(float(match.group(1).replace(",", ".")), 1)
+    if not 1 <= value <= 10:
+        return 0
+    return int(value) if value.is_integer() else value
 
 
 def video_options(options):
@@ -41,7 +47,8 @@ def video_options(options):
     resolution = options.get("resolution") or ""
     if aspect and aspect not in ASPECTS:
         raise ValueError("Tỉ lệ khung không hợp lệ.")
-    if duration and (type(duration) is not int or duration not in DURATIONS):
+    if duration and (isinstance(duration, bool) or not isinstance(duration, (int, float)) or not 1 <= duration <= 10
+                     or (isinstance(duration, int) and duration not in DURATIONS)):
         raise ValueError("Thời lượng mỗi cảnh phải là 2, 3, 4, 5, 6, 8 hoặc 10 giây (Muse tối đa 10 giây).")
     if resolution and resolution not in RESOLUTIONS:
         raise ValueError("Độ phân giải không hợp lệ.")

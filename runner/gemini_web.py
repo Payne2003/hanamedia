@@ -1134,10 +1134,18 @@ def english_detailed(session, lines, status, stop, email="", model="", style="",
     name = getattr(session, "NAME", "Gemini")
     windows = list(windows) if windows and len(windows) == total else None
     shot_mode = bool(windows) and all(w.get("shot") for w in windows)
+    # Đã nạp plugin: viết theo ĐỊNH DẠNG CỦA PLUGIN (vd "SCENE 155 (duration 2.8 seconds) | …"); tool chỉ kiểm tra
+    # đủ cảnh, tiếng Anh và đặt đúng số giây đo được (giữ số lẻ, vd 2.8), không ép về mẫu "Generate a N-second…".
+    plugged = bool(content.PLUGIN)
+    build = content.plugin_batch_request if plugged else content.detailed_batch_request
+    parse = content.parse_plugin if plugged else content.parse_detailed
+    problems = content.plugin_problems if plugged else content.detailed_problems
+    header = '"SCENE N"' if plugged else '"SCENE N:"'
     items = []
     for number, line in enumerate(lines, 1):
         window = windows[number - 1] if windows else None
-        length = content.scene_seconds(window) if shot_mode else seconds
+        length = ((round(float(window["end"]) - float(window["start"]), 1) if plugged else content.scene_seconds(window))
+                  if shot_mode else seconds)
         # Cảnh theo từng shot (2–3 giây) giữ một góc; cảnh có nhiều góc FFmpeg đo được giữ đúng điểm cắt; còn lại, khi
         # chọn "Đổi góc mỗi 2–3 giây" thì chia sẵn các góc 2–3 giây liền nhau (vd 10s → 0–3, 3–5, 5–8, 8–10).
         spans = ([(0, length)] if shot_mode else
@@ -1145,7 +1153,8 @@ def english_detailed(session, lines, status, stop, email="", model="", style="",
                  content.angle_spans(length, angles) if angles and length > angles else None)
         items.append((number, line, length, spans))
     found, issues, rounds = {}, [], 0
-    clean = lambda text, length: content.complete_detailed(content.tidy_prompt(text, length))
+    clean = ((lambda text, length: content.fix_plugin_seconds(text, length)) if plugged else
+             (lambda text, length: content.complete_detailed(content.tidy_prompt(text, length))))
     for first in range(0, total, DETAILED_BATCH):
         group = items[first:first + DETAILED_BATCH]
         numbers = [item[0] for item in group]
@@ -1158,30 +1167,30 @@ def english_detailed(session, lines, status, stop, email="", model="", style="",
             start_fresh(session, status, stop, email)
             if model:
                 session.choose_model(model)
-            answer = session.ask(content.detailed_batch_request(group, total, previous, aspect, style), status, stop, email,
+            answer = session.ask(build(group, total, previous, aspect, style), status, stop, email,
                                  label=f"{name} đang viết prompt {label}")
             rounds += 1
-            got = {n: clean(p, lengths[n]) for n, p in content.parse_detailed(answer, numbers).items()}
+            got = {n: clean(p, lengths[n]) for n, p in parse(answer, numbers).items()}
             missing = [n for n in numbers if n not in got]
             if missing:  # AI bỏ sót cảnh trong nhóm: hỏi lại đúng những cảnh đó (1 lần)
                 answer = session.ask("You skipped " + ", ".join(f"SCENE {n}" for n in missing) + ". Write them now, same "
-                                     f"structure, each starting with \"SCENE N:\". Then write {content.END_EN}.", status, stop,
+                                     f"structure, each starting with {header}. Then write {content.END_EN}.", status, stop,
                                      email, label=f"{name} viết bổ sung cảnh {', '.join(map(str, missing))}")
                 rounds += 1
-                got.update({n: clean(p, lengths[n]) for n, p in content.parse_detailed(answer, missing).items()})
+                got.update({n: clean(p, lengths[n]) for n, p in parse(answer, missing).items()})
             for attempt in range(DETAILED_FIXES):
-                bad = {n: content.detailed_problems(got[n], lengths[n]) for n in numbers if n in got}
+                bad = {n: problems(got[n], lengths[n]) for n in numbers if n in got}
                 bad = {n: v for n, v in bad.items() if v}
                 if not bad:
                     break
-                answer = session.ask("Rewrite these prompts completely, same structure, each starting with \"SCENE N:\", "
+                answer = session.ask(f"Rewrite these prompts completely, same structure, each starting with {header}, "
                                      "fixing: " + "; ".join(f"SCENE {n}: {', '.join(v)}" for n, v in bad.items())
                                      + f". Then write {content.END_EN}.", status, stop, email,
                                      label=f"{len(bad)} prompt còn lỗi · {name} viết lại")
                 rounds += 1
-                for n, text in content.parse_detailed(answer, list(bad)).items():
+                for n, text in parse(answer, list(bad)).items():
                     text = clean(text, lengths[n])
-                    if len(content.detailed_problems(text, lengths[n])) < len(bad[n]):
+                    if len(problems(text, lengths[n])) < len(bad[n]):
                         got[n] = text
         except GeminiWebError:
             raise
@@ -1192,7 +1201,7 @@ def english_detailed(session, lines, status, stop, email="", model="", style="",
             break
         found.update(got)
         for n in numbers:
-            left = content.detailed_problems(got[n], lengths[n]) if n in got else ["AI không viết cảnh này"]
+            left = problems(got[n], lengths[n]) if n in got else ["AI không viết cảnh này"]
             if left:
                 issues.append(f"Scene {n} — {'; '.join(left)}")
         done = numbers[-1]
