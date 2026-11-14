@@ -71,6 +71,42 @@ class ClaudeBridgeTests(unittest.TestCase):
         self.assertIn("JSON", items["b"]["error"])
         sig = items["a"]["signature"]
         self.assertTrue({i["name"]: i for i in bridge.results(self.root, {sig: 1})}["a"]["imported"])
+        key = items["a"]["folder_key"]
+        self.assertRegex(key, r"^d[a-f0-9]{19}$")
+        (txt / "hanamedia_a.json").write_text(json.dumps({"scenes": [{"prompt": "SCENE 1 | x"}]}), encoding="utf-8")
+        later = {i["name"]: i for i in bridge.results(self.root, {sig: 1, key: 1})}["a"]
+        self.assertEqual(later["file"], "hanamedia_a.json")  # JSON ghi sau: khác file nhưng cùng thư mục đã đưa
+        self.assertFalse(later["imported"])
+        self.assertTrue(later["folder_imported"])
+
+    def test_txt_result_takes_seconds_from_tool_pack(self):
+        pack = self.root / "input" / "a_pack"
+        pack.mkdir(parents=True)
+        (pack / "shots.txt").write_text("1\t0.00\t2.80\t2.80\n2\t2.80\t6.00\t3.20\n", encoding="utf-8")
+        out = self.root / "output" / "a"
+        out.mkdir(parents=True)
+        (out / "Wildlife_Prompts_EN_a.txt").write_text("SCENE 1 | x\nSCENE 2 | y\n", encoding="utf-8")
+        scenes = bridge.parse(out / "Wildlife_Prompts_EN_a.txt")["scenes"]
+        self.assertEqual([s["duration"] for s in scenes], [2.8, 3.2])
+        self.assertEqual(bridge.studio_prompt(scenes[1]), "SCENE 2 | Duration 3.2 seconds | y")
+
+    def test_build_pack_with_ffmpeg(self):
+        from runner import video_tools
+        try:
+            ffmpeg = video_tools.ffmpeg()
+        except Exception:
+            self.skipTest("không có ffmpeg")
+        import subprocess
+        video = Path(self.temp.name) / "v.mp4"
+        subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc=d=4:s=160x120:r=10", str(video)], check=True)
+        sent = bridge.send(self.root, video, [1.5, 3.0], 4.0, pack=True)
+        pack = self.root / "input" / "v_pack"
+        self.assertEqual(sent["pack"], {"scenes": 3, "sheets": 1})
+        self.assertTrue((pack / "sheets" / "s01.jpg").stat().st_size > 0)
+        self.assertEqual(len((pack / "shots.txt").read_text(encoding="utf-8").split()), 12)
+        self.assertEqual(sum(1 for l in (pack / "motion.txt").read_text(encoding="utf-8").splitlines() if not l.startswith("#")), 3)
+        self.assertFalse((pack / "frames").exists())
+        self.assertTrue((self.root / "AGENTS.md").is_file())
 
 
 if __name__ == "__main__":
