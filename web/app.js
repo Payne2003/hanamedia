@@ -728,6 +728,7 @@ function renderClaude(){
   const waiting=claude.pending.map(p=>`<div class="claude-item wait"><span>⏳ <b>${esc(p.video)}</b> <small>đang chờ Claude / Codex chạy workflow${p.cuts?' · có điểm cắt của tool':''}</small></span></div>`);
   const done=claude.results.map(r=>`<div class="claude-item"><span>${r.error?'<b class="bad">✕</b>':(r.imported||r.folder_imported)?'<b class="ok">✓</b>':'🆕'} <b>${esc(r.name)}</b> <small>${r.error?esc(r.error):`${r.scenes} cảnh${r.duration?` · ${Number(r.duration).toLocaleString('vi-VN')} giây`:''}${r.cut_source==='hanamedia'?' · điểm cắt của tool':r.cut_source==='auto'?' · Claude tự dò điểm cắt':''} · ${esc(r.file)}${r.imported?' · đã vào Studio':''}`}</small></span>${r.error?'':`<button type="button" data-claude-import="${esc(r.path)}" data-claude-sig="${r.signature}" data-again="${r.imported?1:0}">${r.imported?'Đưa lại vào Studio':'→ Đưa vào Studio'}</button>`}</div>`);
   $('claudeList').innerHTML=waiting.concat(done).join('');
+  $('claudeSummaryInfo').textContent=`· ${claude.results.length} kết quả${claude.pending.length?` · ${claude.pending.length} video đang chờ Claude/Codex`:''}`;
 }
 async function claudeCall(path,body={}){claude=await api(path,body);renderClaude();return claude;}
 async function claudeImport(path,sig,auto=false,again=false){
