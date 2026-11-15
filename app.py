@@ -544,12 +544,15 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed():
             return self.reply({"error": "Yêu cầu phải đến từ giao diện cục bộ."}, 403)
         path = urlsplit(self.path).path
-        voice_file = re.fullmatch(r"/api/voice/(file|ref)/([a-f0-9]{12})", path)
+        voice_file = re.fullmatch(r"/api/voice/(file|ref|export)/([a-f0-9]{12})", path)
         if voice_file:
             if not self.is_owner():
                 return self.reply({"error": "Chỉ máy Super Admin."}, 403)
             from runner.voice import VoiceError
             try:
+                if voice_file.group(1) == "export":
+                    file = self.server.voice.export_group(voice_file.group(2))
+                    return self.send_file(file, "application/zip", "attachment", file.name, cache_control="no-store")
                 if voice_file.group(1) == "file":
                     file = self.server.voice.output_file(voice_file.group(2))
                 else:
@@ -845,7 +848,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"ok": True})
             if path == "/api/voice/create":
                 return self.reply({"job": voice.create_job(str(body.get("profile")), body.get("text"), body.get("title"),
-                                                          body.get("format"), body.get("speed") or 1.0)})
+                                                          body.get("format"), body.get("speed") or 1.0, body.get("split"),
+                                                          body.get("gap"), body.get("nfe"))})
+            if path == "/api/voice/batch":
+                return self.reply(voice.create_batch(str(body.get("profile")), body.get("text"), body.get("title"), body.get("format"),
+                                                     body.get("speed") or 1.0, body.get("gap"), body.get("nfe"),
+                                                     str(body.get("group") or "") or None, body.get("start") is True))
+            if path == "/api/voice/start-group":
+                return self.reply({"started": voice.start_group(str(body.get("group")), body.get("settings") or {})})
+            if path == "/api/voice/edit":
+                return self.reply({"job": voice.edit(str(body.get("id")), body.get("text"), body.get("name"))})
+            if path == "/api/voice/normalize":
+                from runner.voice import normalize_vi
+                return self.reply({"text": normalize_vi(str(body.get("text") or "")[:200_000])})
             if path == "/api/voice/retry":
                 return self.reply({"job": voice.retry(str(body.get("id")))})
             if path == "/api/voice/cancel":

@@ -83,43 +83,70 @@
       </aside>
     </div>
     </div>
-    <section id="voiceView" class="voice-page" hidden aria-labelledby="voiceTitle">
-      <div class="agents-top card"><div><h1 id="voiceTitle">HanaMedia AI Voice</h1><p>Nhân bản giọng + đọc văn bản bằng F5-TTS chạy ngay trên máy (GPU của bạn). Giọng mẫu và văn bản không gửi lên máy chủ nào. Chỉ máy Super Admin.</p></div></div>
-      <div class="voice-grid">
-        <section class="card voice-box" id="voiceEngine"><h2>① AI Engine <span id="voiceEngineChip" class="status-chip">—</span></h2>
-          <dl class="voice-facts" id="voiceFacts"></dl>
-          <div class="wf-row"><button type="button" id="voiceInstall" class="primary">Cài AI Engine</button><button type="button" id="voiceRestart">Nạp lại mô hình</button><button type="button" id="voiceOpenRoot">Mở thư mục</button></div>
-          <p class="detail" id="voiceInstallInfo"></p>
-          <details><summary>Checkpoint &amp; giấy phép</summary>
-            <p class="detail">Mã nguồn F5-TTS: MIT. Checkpoint chính thức <b>F5TTS_v1_Base</b>: <b>CC BY-NC 4.0</b> — chỉ để thử nghiệm, không dùng cho sản phẩm thu phí. Bản gốc chủ yếu đọc tiếng Anh/Trung; đọc tiếng Việt tốt cần checkpoint tiếng Việt (kiểm tra giấy phép của checkpoint đó).</p>
+    <section id="voiceView" class="voice-app" hidden aria-label="HanaMedia AI Voice">
+      <aside class="va-nav">
+        <div class="va-brand"><b>HanaMedia AI Voice</b><small>F5-TTS chạy trên máy · chỉ Super Admin</small></div>
+        <div class="va-group">CÔNG CỤ GIỌNG NÓI</div>
+        <button type="button" class="va-link active" data-va="tts"><svg class="ic" aria-hidden="true"><use href="#i-message"/></svg>Chuyển văn bản thành giọng nói</button>
+        <button type="button" class="va-link" data-va="clone"><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg>Nhân bản giọng nói</button>
+        <div class="va-group">THƯ VIỆN</div>
+        <button type="button" class="va-link" data-va="clone"><svg class="ic" aria-hidden="true"><use href="#i-sparkles"/></svg>Giọng nói <span id="vaVoiceCount" class="count">0</span></button>
+        <div class="va-engine" id="vaEnginePill"><span class="dot-status"></span><span id="vaEngineText">AI Engine…</span></div>
+      </aside>
+      <main class="va-main">
+        <div class="va-pane" id="vaEditor">
+          <div class="va-top"><input id="vaTitle" maxlength="80" placeholder="🏷 Tên tác vụ (tên tập tin tải xuống)">
+            <div class="va-split"><button type="button" data-split="line">Tách bằng dấu xuống dòng</button><button type="button" data-split="sentence" class="active">✂ Chia theo câu</button></div></div>
+          <div class="va-editor-wrap" id="vaDrop"><textarea id="vaText" maxlength="200000" spellcheck="false" placeholder="Nhập văn bản của bạn vào đây. Chèn [ngắt 1s] để tạm dừng. 📂 Kéo và thả các tệp .txt hoặc .srt vào đây."></textarea></div>
+          <div class="va-bottom"><label class="va-icon-btn" title="Tải tệp .txt / .srt"><input type="file" id="vaUpload" accept=".txt,.srt,text/plain" hidden><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg></label>
+            <button type="button" id="vaNormalize">✎ Chuẩn hóa tiếng Việt</button><button type="button" id="vaPause">⏱ Thêm tạm dừng</button>
+            <span class="bulk-spacer"></span><small id="vaCount">0 ký tự</small><button type="button" id="vaGenerate" class="va-primary">✦ Tạo giọng nói</button></div>
+        </div>
+        <div class="va-pane" id="vaProject" hidden>
+          <div class="va-top"><button type="button" id="vaBack" class="text-button">←</button><b id="vaProjectTitle">Dự án mới</b><span class="bulk-spacer"></span>
+            <label class="va-ghost"><input type="file" id="vaProjectUpload" accept=".txt,.srt,text/plain" hidden>⇪ Tải lên</label><a id="vaExport" class="va-accent" href="#">⇩ Xuất</a></div>
+          <div class="va-chip" id="vaProgress">Hoàn thành: 0 / 0</div>
+          <div class="va-table-wrap"><table class="va-table"><thead><tr><th>#</th><th>Tên</th><th>Văn bản</th><th>Trạng thái</th><th>Kết quả đầu ra</th><th></th></tr></thead><tbody id="vaRows"></tbody></table></div>
+          <div class="va-bottom"><span class="bulk-spacer"></span><small id="vaProjectCount"></small><button type="button" id="vaProjectGenerate" class="va-primary">✦ Tạo giọng nói</button></div>
+        </div>
+        <div class="va-pane va-clone" id="vaClone" hidden>
+          <h2>Nhân bản giọng nói</h2><p class="detail">Tải 5–15 giây giọng nói rõ ràng, không nhạc nền. Engine F5-TTS học giọng từ đoạn mẫu này (không cần huấn luyện lâu).</p>
+          <div class="va-clone-form">
+            <label>Tên giọng<input id="vaVoiceName" maxlength="60" placeholder="Ví dụ: Giọng nam trầm kể chuyện"></label>
+            <label class="va-dropbox" id="vaVoiceDrop"><input id="vaVoiceFile" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,.webm,audio/*" hidden><b>🎙 Kéo thả hoặc bấm để chọn giọng mẫu</b><small id="vaVoiceFileName">WAV, MP3, M4A, FLAC · 5–15 giây</small></label>
+            <label>Lời mẫu <small>(đúng từng chữ trong đoạn mẫu — để trống thì engine tự nhận dạng)</small><textarea id="vaVoiceText" rows="3" maxlength="1000"></textarea></label>
+            <label class="voice-consent"><input id="vaVoiceConsent" type="checkbox"> Tôi xác nhận đây là giọng của tôi hoặc đã được chủ giọng đồng ý cho nhân bản.</label>
+            <button type="button" id="vaVoiceSave" class="va-primary">Lưu hồ sơ giọng</button>
+          </div>
+          <h3>Thư viện giọng</h3><div id="vaVoices" class="va-voices"></div>
+        </div>
+      </main>
+      <aside class="va-side">
+        <div class="va-tabs"><button type="button" data-vtab="settings" class="active">⚙ Cài đặt</button><button type="button" data-vtab="history">🕘 Lịch sử</button></div>
+        <div class="va-tab" id="vaSettings">
+          <label class="va-field">Mô hình<div class="va-model">⚡ F5-TTS <small id="vaModelName">trên máy</small></div></label>
+          <label class="va-field">Chọn giọng nói<div class="va-voice-pick"><select id="vaVoice"></select><button type="button" id="vaVoicePlay" title="Nghe giọng mẫu">▶</button></div></label>
+          <audio id="vaPreview" preload="none" hidden></audio>
+          <div class="va-slider"><span>Tốc độ: <b id="vaSpeedVal">1.00</b></span><input type="range" id="vaSpeed" min="0.7" max="1.3" step="0.05" value="1"><small><i>Chậm hơn</i><i>Nhanh hơn</i></small></div>
+          <div class="va-slider"><span>Chất lượng (bước suy luận): <b id="vaNfeVal">32</b></span><input type="range" id="vaNfe" min="16" max="64" step="8" value="32"><small><i>Nhanh hơn</i><i>Kỹ hơn</i></small></div>
+          <div class="va-slider"><span>Khoảng nghỉ giữa câu: <b id="vaGapVal">0.28s</b></span><input type="range" id="vaGap" min="0" max="1.5" step="0.02" value="0.28"><small><i>Liền mạch</i><i>Chậm rãi</i></small></div>
+          <div class="va-field">Định dạng<div class="va-seg" id="vaFormat"><button type="button" data-fmt="mp3" class="active">MP3</button><button type="button" data-fmt="wav">WAV</button></div></div>
+          <button type="button" id="vaReset" class="text-button va-reset">↺ Đặt lại giá trị</button>
+          <details class="va-engine-box" id="voiceEngine"><summary>AI Engine &amp; checkpoint <span id="voiceEngineChip" class="status-chip">—</span></summary>
+            <dl class="voice-facts" id="voiceFacts"></dl>
+            <div class="wf-row"><button type="button" id="voiceInstall" class="primary">Cài AI Engine</button><button type="button" id="voiceRestart">Nạp lại mô hình</button><button type="button" id="voiceOpenRoot">Mở thư mục</button></div>
+            <p class="detail" id="voiceInstallInfo"></p>
+            <p class="detail">Checkpoint chính thức <b>F5TTS_v1_Base</b> là <b>CC BY-NC 4.0</b> (thử nghiệm, không thương mại) và đọc tiếng Việt chưa tốt. Đọc tiếng Việt tốt cần checkpoint tiếng Việt — kiểm tra giấy phép của nó.</p>
             <label>Model<input id="voiceModel" placeholder="F5TTS_v1_Base"></label>
-            <label>Checkpoint riêng (.pt / .safetensors) <small>để trống = checkpoint chính thức</small><input id="voiceCkpt" placeholder="D:\models\f5-vi\model.safetensors"></label>
-            <label>File vocab (vocab.txt của checkpoint riêng)<input id="voiceVocab"></label>
-            <div class="wf-row"><label class="voice-inline">Chế độ<select id="voiceMode"><option value="development">Development (thử nghiệm)</option><option value="commercial">Commercial (chỉ checkpoint đã có quyền thương mại)</option></select></label>
-              <label class="voice-inline">Chất lượng (NFE)<select id="voiceNfe"><option value="16">16 · nhanh</option><option value="32">32 · chuẩn</option><option value="48">48 · kỹ</option></select></label></div>
+            <label>Checkpoint riêng (.pt / .safetensors)<input id="voiceCkpt" placeholder="để trống = checkpoint chính thức"></label>
+            <label>File vocab của checkpoint riêng<input id="voiceVocab"></label>
+            <label>Chế độ<select id="voiceMode"><option value="development">Development (thử nghiệm)</option><option value="commercial">Commercial (checkpoint đã có quyền thương mại)</option></select></label>
             <button type="button" id="voiceSaveConfig">Lưu cấu hình</button>
+            <details><summary>Nhật ký cài đặt / engine</summary><pre id="voiceLog" class="wf-log"></pre></details>
           </details>
-          <details><summary>Nhật ký cài đặt / engine</summary><pre id="voiceLog" class="wf-log"></pre></details>
-        </section>
-        <section class="card voice-box"><h2>② Nhân bản giọng</h2>
-          <label>Tên giọng<input id="voiceName" maxlength="60" placeholder="Ví dụ: Giọng nam trầm kể chuyện"></label>
-          <label>Giọng mẫu (5–15 giây, rõ, không nhạc nền) <small>WAV, MP3, M4A, FLAC…</small><input id="voiceFile" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,.webm,audio/*"></label>
-          <label>Lời mẫu <small>(đúng từng chữ trong file mẫu — để trống thì engine tự nhận dạng, chậm hơn)</small><textarea id="voiceRefText" rows="3" maxlength="1000"></textarea></label>
-          <label class="voice-consent"><input id="voiceConsent" type="checkbox"> Tôi xác nhận đây là giọng của tôi hoặc đã được chủ giọng đồng ý cho nhân bản.</label>
-          <button type="button" id="voiceAddProfile" class="primary">Lưu hồ sơ giọng</button>
-          <h3>Thư viện giọng</h3><div id="voiceProfiles" class="voice-profiles"></div>
-        </section>
-        <section class="card voice-box"><h2>③ Tạo Voice AI</h2>
-          <label>Giọng đọc<select id="voiceProfile"></select></label>
-          <label>Tiêu đề<input id="voiceJobTitle" maxlength="80" placeholder="Tập 1 – Báo săn mồi"></label>
-          <label>Văn bản cần đọc <small id="voiceCount">0 ký tự</small><textarea id="voiceText" rows="9" maxlength="200000" placeholder="Dán kịch bản (20–60 phút đọc cũng được). Tool tự cắt theo câu và ghép lại."></textarea></label>
-          <div class="wf-row"><label class="voice-inline">Tải .txt<input id="voiceTxt" type="file" accept=".txt,text/plain"></label>
-            <label class="voice-inline">Tốc độ<select id="voiceSpeed"><option value="0.85">0.85×</option><option value="1" selected>1×</option><option value="1.1">1.1×</option><option value="1.2">1.2×</option></select></label>
-            <label class="voice-inline">Định dạng<select id="voiceFormat"><option value="mp3">MP3</option><option value="wav">WAV</option></select></label></div>
-          <div class="wf-row"><button type="button" id="voiceCreate" class="primary">▶ Tạo voice</button><button type="button" id="voiceTest">Nghe thử 1 câu</button></div>
-        </section>
-      </div>
-      <section class="card voice-box"><h2>④ Hàng đợi &amp; lịch sử</h2><div id="voiceJobs" class="voice-jobs"></div></section>
+        </div>
+        <div class="va-tab" id="vaHistory" hidden></div>
+      </aside>
     </section>
     <section id="agentsView" class="agents-page" hidden aria-labelledby="agentsTitle">
       <div class="agents-top card"><div><h1 id="agentsTitle">Không gian Agent 3D</h1><p>Master Agent điều phối 3 robot agent: Phân tích video → Viết prompt → Studio · Muse. Theo dõi từng video ngay trong phòng điều khiển.</p></div>

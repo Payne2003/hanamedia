@@ -23,7 +23,7 @@ class FakeStudio(VoiceStudio):
     def installed(self):
         return True
 
-    def synth(self, ref_audio, ref_text, text, out, speed=1.0, timeout=900):
+    def synth(self, ref_audio, ref_text, text, out, speed=1.0, timeout=900, nfe=None):
         assert Path(ref_audio).is_file()
         if "LỖI" in text and not FakeStudio.failed_once:
             FakeStudio.failed_once = True
@@ -154,3 +154,75 @@ class WorkerProtocolTests(unittest.TestCase):
             self.assertTrue((temp / "y.wav").is_file())
             studio.stop_worker()
             self.assertIn("đang nạp mô hình", (studio.engine_dir / "worker.log").read_text(encoding="utf-8"))
+
+
+class VietnameseTextTests(unittest.TestCase):
+    def test_numbers_and_normalize(self):
+        from runner.voice import normalize_vi, number_vi
+        cases = {21: "hai mươi mốt", 105: "một trăm linh năm", 1015: "một nghìn không trăm mười lăm", 24: "hai mươi tư",
+                 15: "mười lăm", 1250000: "một triệu hai trăm năm mươi nghìn"}
+        for n, words in cases.items():
+            self.assertEqual(number_vi(n), words)
+        text = normalize_vi("Ngày 15/11/2026 lúc 9:30, giá 1.250.000đ giảm 12,5% tại TP.HCM, 32°C, 45km.")
+        self.assertIn("Ngày mười lăm tháng mười một năm hai nghìn không trăm hai mươi sáu", text)
+        self.assertIn("chín giờ ba mươi phút", text)
+        self.assertIn("một triệu hai trăm năm mươi nghìn đồng", text)
+        self.assertIn("mười hai phẩy năm phần trăm", text)
+        self.assertIn("thành phố Hồ Chí Minh", text)
+        self.assertIn("bốn mươi lăm ki lô mét", text)
+        self.assertNotRegex(text, r"\d")
+
+    def test_pause_tags_and_line_mode(self):
+        from runner.voice import build_chunks
+        chunks = build_chunks("Câu một. Câu hai. [ngắt 1.5s] Câu ba.\nDòng hai", "line")
+        self.assertEqual([c["text"] for c in chunks], ["Câu một. Câu hai.", "Câu ba.", "Dòng hai"])
+        self.assertEqual([c["pause"] for c in chunks], [1.5, None, None])
+        self.assertEqual(len(build_chunks("A. B.\nC.", "sentence")), 1)  # theo câu: gộp tới 220 ký tự
+
+
+class PauseMergeTests(unittest.TestCase):
+    def test_pause_and_gap_lengths(self):
+        try:
+            video.ffmpeg()
+        except Exception:
+            self.skipTest("không có ffmpeg")
+        with tempfile.TemporaryDirectory() as temp:
+            studio = FakeStudio(Path(temp))
+            sample = Path(temp) / "s.wav"
+            tone(sample, 5)
+            profile = studio.add_profile(sample.read_bytes(), "s.wav", "P", "", consent=True)
+            job = studio.create_job(profile["id"], "Một.\n[ngắt 2s]\nHai.\nBa.", "", "wav", 1.0, split="line", gap=0.5)
+            studio.process(job["id"])
+            info = studio.public(studio.load_job(job["id"]))
+            # 3 đoạn × 0,4 s + nghỉ 2 s + nghỉ 0,5 s = 3,7 s
+            self.assertAlmostEqual(info["seconds"], 3.7, delta=0.15)
+
+
+class BatchProjectTests(unittest.TestCase):
+    def test_each_line_is_a_file_and_export_zip(self):
+        import zipfile
+        try:
+            video.ffmpeg()
+        except Exception:
+            self.skipTest("không có ffmpeg")
+        with tempfile.TemporaryDirectory() as temp:
+            studio = FakeStudio(Path(temp))
+            sample = Path(temp) / "s.wav"
+            tone(sample, 5)
+            profile = studio.add_profile(sample.read_bytes(), "s.wav", "P", "", consent=True)
+            project = studio.create_batch(profile["id"], "Dòng thứ nhất.\n\nDòng thứ hai [ngắt 1s] tiếp.\n", "Dự án A")
+            self.assertEqual([j["index"] for j in project["jobs"]], [1, 2])
+            more = studio.create_batch(profile["id"], "Dòng ba", group=project["group"])
+            self.assertEqual((more["title"], more["jobs"][0]["index"]), ("Dự án A", 3))
+            self.assertEqual({j["status"] for j in studio.jobs()}, {"draft"})  # Sẵn sàng: chưa chạy tới khi bấm Tạo
+            edited = studio.edit(more["jobs"][0]["id"], "Dòng ba đã sửa", "Dòng ba đã sửa")
+            self.assertEqual((edited["status"], edited["title"]), ("draft", "Dòng ba đã sửa"))
+            self.assertEqual(studio.start_group(project["group"], {"format": "wav", "speed": 1.1}), 3)
+            for job in studio.jobs():
+                self.assertEqual((job["status"], job["format"]), ("waiting", "wav"))
+                studio.process(job["id"])
+            path = studio.export_group(project["group"])
+            with zipfile.ZipFile(path) as z:
+                names = sorted(z.namelist())
+            self.assertEqual(len(names), 3)
+            self.assertTrue(names[0].startswith("001_Dòng thứ nhất") and names[2].startswith("003_Dòng ba đã sửa"))
