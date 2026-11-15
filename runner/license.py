@@ -474,7 +474,8 @@ class LicenseManager:
         info = {"id": payload.get("id"), "name": payload.get("name"), "email": payload.get("email"),
                 "role": payload.get("role"), "plan": payload.get("plan"), "start": payload.get("start"),
                 "expires": payload.get("expires"), "quota": payload.get("quota", 0), "used": self.used(payload.get("id")),
-                "permissions": payload.get("permissions", []), "issued_by": payload.get("issued_by")}
+                "permissions": payload.get("permissions", []), "issued_by": payload.get("issued_by"),
+                "beacon": bool(payload.get("beacon"))}
         if payload.get("devices") and machine not in payload["devices"]:
             return {**info, "state": "wrong_device", "allowed": [],
                     "message": "Key không cấp cho máy này. Gửi mã máy của máy này cho người bán."}, payload
@@ -738,6 +739,10 @@ class LicenseManager:
                    "quota": row["quota"], "issued": int(self.clock())}
         if context["chain"]:
             payload["chain"] = context["chain"]
+        if context["mode"] == "root":
+            beacon = self.beacon_keys.public_info()
+            if beacon:  # máy khách gửi nhịp tim (đã mã hóa) về bảng theo dõi của Super Admin
+                payload["beacon"] = beacon
         token = sign(context["raw"], payload)
         db.execute("UPDATE licenses SET token=?,updated=? WHERE id=?", (token, self.clock(), row["id"]))
         return token
@@ -1051,6 +1056,76 @@ class LicenseManager:
                 "device_codes": json.loads(row["devices"]),
                 "state": state, "days_left": days, "token": row["token"], "short_code": row["short_code"]}
 
+    # ---- bảng theo dõi máy khách online (runner/beacon.py) ------------------------------------------------------
+    @property
+    def beacon_keys(self):
+        from .beacon import BeaconKeys
+        return BeaconKeys(self.dir)
+
+    def require_root(self):
+        context = self.require_issuer()
+        if context["mode"] != "root":
+            raise LicenseError("Chỉ máy Super Admin xem được bảng máy khách online.")
+        return context
+
+    def enable_beacon(self, relay=None):
+        """Bật theo dõi: tạo khóa + kênh (một lần), cấp lại key cho mọi tài khoản có nhịp tim và đăng lên kênh tự cập
+        nhật để máy khách tự nhận (không cần gửi key). Trả về {"count", "published", "error"}."""
+        from .beacon import DEFAULT_RELAY
+        context = self.require_root()
+        self.beacon_keys.create(relay or DEFAULT_RELAY)
+        tokens = []
+        with self.store.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for row in db.execute("SELECT * FROM licenses WHERE locked=0").fetchall():
+                tokens.append((row["id"], self.issue(db, row, context)))
+        published, error = 0, ""
+        for license_id, token in tokens:
+            result = self.share_code(license_id, token)
+            if result["code"]:
+                published += 1
+            else:
+                error = result["error"]
+        self.audit("beacon", f"Bật bảng theo dõi máy khách ({len(tokens)} tài khoản)")
+        return {"count": len(tokens), "published": published, "error": error}
+
+    def beacon_info(self):
+        data = self.beacon_keys.load()
+        return {"enabled": bool(data), "relay": data["relay"] if data else ""}
+
+    def clients(self):
+        """Danh sách máy khách đã gửi nhịp tim trong 12 giờ gần nhất (máy Super Admin)."""
+        from .beacon import collect
+        self.require_root()
+        data = self.beacon_keys.load()
+        if not data:
+            return {"enabled": False, "clients": [], "error": ""}
+        try:
+            rows = collect(self.http, data)
+        except OSError as error:
+            return {"enabled": True, "clients": [], "error": str(error)[:200] or "Không kết nối được trạm chuyển tin."}
+        with self.store.connect() as db:
+            names = {r["id"]: r["name"] for r in db.execute("SELECT id,name FROM licenses")}
+        for row in rows:
+            row["account"] = names.get(row.get("id")) or row.get("name") or "?"
+        return {"enabled": True, "clients": rows, "error": ""}
+
+    def beacon_target(self):
+        """Máy khách: kênh nhịp tim ghi trong key đang dùng (None nếu key không có / không hợp lệ)."""
+        token = self.store.setting("license_token")
+        if not token or not self.enforced() or self.issuer_trusted():
+            return None, None
+        try:
+            payload = verify(token, self.trusted)
+        except LicenseError:
+            return None, None
+        beacon = payload.get("beacon")
+        if not isinstance(beacon, dict) or not all(isinstance(beacon.get(k), str) for k in ("url", "topic", "pub")):
+            return None, payload
+        if not beacon["url"].startswith("https://"):
+            return None, payload
+        return beacon, payload
+
     def dashboard(self):
         """Dữ liệu trang quản lý (máy Super Admin hoặc máy được cấp quyền quản lý)."""
         context = self.require_issuer()
@@ -1072,5 +1147,6 @@ class LicenseManager:
                  "role": limits["role"] if limits else "super_admin",
                  "can_create": True if not limits else limits["can_create"],
                  "can_renew": True if not limits else limits["can_renew"]}
-        return {"accounts": accounts, "events": events, "revenue": revenue, "stats": stats, "scope": scope,
+        return {"beacon": self.beacon_info() if context["mode"] == "root" else None,
+                "accounts": accounts, "events": events, "revenue": revenue, "stats": stats, "scope": scope,
                 "revocation": self.revocation_info()}

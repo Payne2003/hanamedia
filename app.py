@@ -195,11 +195,24 @@ class AppServer(ThreadingHTTPServer):
         stop = threading.Event()
         stop.wait(3)
         self.updater.clean_old()  # bộ cài của lần cập nhật trước (đã cài xong)
+        last_beat = 0
         while True:
             try:
                 if self.license.needs_check():
                     self.license.check_revocations()
             except Exception:  # không để luồng kiểm tra chết vì lỗi lạ (ví dụ CSDL đang bận)
+                pass
+            try:  # nhịp tim (đã mã hóa) cho bảng theo dõi máy khách online của Super Admin
+                from runner import beacon
+                if time.time() - last_beat >= beacon.INTERVAL:
+                    target, payload = self.license.beacon_target()
+                    if target:
+                        last_beat = time.time()
+                        totals = self.store.snapshot().get("totals", {})
+                        status = self.license.status()
+                        beacon.send(licensing.http_request, target,
+                                    beacon.heartbeat(payload, licensing.machine_code(), APP_VERSION, totals, status["state"]))
+            except Exception:
                 pass
             try:
                 if self.updater.status()["supported"] and self.updater.due():
@@ -485,6 +498,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"ok": True, "revocation": manager.set_publisher_token(body.get("token"))})
             if path == "/api/license/publish":
                 return self.reply({"ok": True, "revocation": manager.publish()})
+            if path == "/api/license/clients":
+                return self.reply({"ok": True, **manager.clients()})
+            if path == "/api/license/beacon":
+                return self.reply({"ok": True, **manager.enable_beacon(str(body.get("relay") or "").strip() or None)})
             if path == "/api/license/check":
                 result = manager.check_revocations()
                 return self.reply({"ok": True, "check": result, "status": manager.status()})

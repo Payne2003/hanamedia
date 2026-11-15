@@ -1578,6 +1578,7 @@ function renderLicense(){
   $('licenseActivate').hidden=!st.enforced||st.state==='owner';
   $('licenseRemove').hidden=!st.id;
   $('licenseOnline').hidden=!st.online_check||!st.id;
+  $('licenseMessage').textContent=st.message+(st.beacon?' · Tool gửi tín hiệu hoạt động cho người bán mỗi 10 phút (tên tài khoản, mã máy, phiên bản app, số video đang chạy; không gửi prompt, video hay mật khẩu).':'');
   $('licenseOnlineText').textContent=st.checked_at?`Kiểm tra thu hồi online lần cuối: ${new Date(st.checked_at*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'})}${st.check_error?` · lần thử gần nhất lỗi: ${st.check_error}`:''}`:`Chưa kiểm tra được thu hồi online${st.check_error?`: ${st.check_error}`:''}.`;
   $('issuerInit').hidden=st.enforced||st.issuer;$('issuerPanel').hidden=!st.issuer;
   if(!st.issuer)return;
@@ -1596,8 +1597,33 @@ function renderLicense(){
   $('licenseRevenue').innerHTML=db.revenue.length?db.revenue.map(r=>`<div class="rev-row"><span>${esc(r.month)}</span><b>${vnd(r.total)}</b><small>${r.count} giao dịch</small></div>`).join(''):'<p class="detail">Chưa có doanh thu. Nhập số tiền khi tạo hoặc gia hạn tài khoản.</p>';
   $('licenseAudit').innerHTML=db.events.slice(0,60).map(e=>`<div><time>${new Date(e.at*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'})}</time><span>${esc(e.detail||e.action)}</span></div>`).join('')||'<p class="detail">Chưa có nhật ký.</p>';
   renderRevocation(db.revocation,scope);
+  renderClientsCard(db.beacon);
   if(!licenseEditing)fillLicenseForm(null);
 }
+// ---- Máy khách online (nhịp tim đã mã hóa, chỉ máy Super Admin đọc được) ----
+let clientsTimer=null,clientsBusy=false;
+function olderVersion(a,b){if(!a||!b)return false;const x=String(a).split('.').map(Number),y=String(b).split('.').map(Number);for(let i=0;i<Math.max(x.length,y.length);i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)<(y[i]||0);}return false;}
+function agoText(sec){const s=Math.max(0,Math.round(Date.now()/1000-sec));if(s<60)return 'vừa xong';if(s<3600)return `${Math.floor(s/60)} phút trước`;if(s<86400)return `${Math.floor(s/3600)} giờ trước`;return `${Math.floor(s/86400)} ngày trước`;}
+function renderClientsCard(info){
+  $('clientsCard').hidden=!info;if(!info){clearInterval(clientsTimer);clientsTimer=null;return;}
+  $('clientsSetup').hidden=info.enabled;$('clientsWrap').hidden=!info.enabled;
+  if(!info.enabled){$('clientsChip').textContent='Chưa bật';$('clientsChip').className='status-chip';$('clientsText').textContent='Bật để thấy máy khách nào đang mở tool, phiên bản app, hạn bản quyền và số video đang chạy. Máy khách gửi nhịp tim mỗi 10 phút, đã mã hóa bằng khóa riêng của bạn (trạm chuyển tin chỉ thấy chuỗi mã hóa).';return;}
+  if(!clientsTimer){loadClients();clientsTimer=setInterval(()=>{if(!$('licenseView').hidden)loadClients();},60000);}
+}
+async function loadClients(){
+  if(clientsBusy)return;clientsBusy=true;
+  try{
+    const r=await api('/api/license/clients',{});const rows=r.clients||[],online=rows.filter(c=>c.online).length;
+    $('clientsChip').textContent=`${online} online / ${rows.length} máy`;$('clientsChip').className='status-chip '+(online?'ok':'');
+    $('clientsText').textContent=r.error?`Chưa tải được: ${r.error}`:rows.length?'Online = có nhịp tim trong 20 phút gần nhất. Danh sách giữ các máy đã báo trong 12 giờ qua; tự làm mới mỗi phút.':'Chưa có máy khách nào báo về. Máy khách cần cập nhật app bản mới và mở tool; key mới được tự nhận trong khoảng 15 phút.';
+    const stateText={active:'Đang dùng',expiring:'Sắp hết hạn',expired:'Hết hạn',revoked:'Đã thu hồi',offline:'Mất kiểm tra',wrong_device:'Sai máy',clock:'Sai đồng hồ',not_started:'Chưa bắt đầu'};
+    $('clientsRows').innerHTML=rows.map(c=>`<tr class="${c.online?'on':'off'}"><td><span class="dot-status ${c.online?'on':'off'}" title="${c.online?'Đang online':'Không online'}"></span></td><td><b>${esc(c.account)}</b><small>${esc(licenseData?.roles?.[c.role]||c.role||'')}</small></td><td><code>${esc(String(c.machine||'').split('.')[0])}</code></td><td>${esc(c.ver||'')}${olderVersion(c.ver,state?.app_version)?' <small class="warn-text">cũ</small>':''}</td><td>${esc(c.os||'')}</td><td>${esc(stateText[c.state]||c.state||'')}<small>${c.expires?'đến '+dmy(c.expires):''}</small></td><td>${c.running||0} đang chạy<small>${c.waiting||0} chờ</small></td><td>${agoText(c.seen)}<small>${new Date(c.seen*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'})}</small></td></tr>`).join('')||'<tr><td colspan="8" class="detail">Chưa có dữ liệu.</td></tr>';
+  }catch(error){$('clientsText').textContent=error.message;}
+  finally{clientsBusy=false;}
+}
+$('clientsRefresh').onclick=()=>loadClients();
+$('clientsEnable').onclick=async()=>{if(!confirm('Bật theo dõi máy khách online? Tool cấp lại key (giữ nguyên hạn, role, quyền) cho mọi tài khoản đang hoạt động và đăng lên kênh tự cập nhật.'))return;
+  try{const r=await api('/api/license/beacon',{});toast(r.error?`Đã bật. Đăng được ${r.published}/${r.count} key; lỗi: ${r.error}`:`Đã bật theo dõi. ${r.published}/${r.count} máy khách sẽ tự nhận key mới và báo online trong khoảng 15–25 phút.`,Boolean(r.error));await loadLicense();}catch(error){toast(error.message,true);}};
 function renderRevocation(r,scope){
   const root=scope.mode==='root';
   $('ldRevokeNote').textContent=!r.enabled?'Bản chạy từ mã nguồn: khóa / xóa chỉ lưu trên máy này.':root?'Khóa hoặc xóa: máy khách ngừng dùng được trong khoảng 1 giờ (hoặc ngay khi mở lại app). Xóa là thu hồi vĩnh viễn.':'Khóa / xóa chỉ lưu trên máy bạn: key đã cấp vẫn chạy tới ngày hết hạn. Muốn chặn ngay, nhờ Super Admin khóa tài khoản đại lý của bạn.';
