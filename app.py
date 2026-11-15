@@ -169,6 +169,8 @@ class AppServer(ThreadingHTTPServer):
         from runner import claude_bridge as _bridge
         from runner.workflows import Workflows
         self.workflows = Workflows(lambda: store.setting("claude_folder") or _bridge.default_folder())
+        from runner.voice import VoiceStudio
+        self.voice = VoiceStudio(self.data_dir)  # AI Voice (F5-TTS trên máy) — chỉ máy Super Admin dùng
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
         self.chatgpt_web.api_session = lambda: self.api_session("chatgpt")
         self.claude_web = claude_runner(self.data_dir / "profiles" / "claude-web")
@@ -542,6 +544,22 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed():
             return self.reply({"error": "Yêu cầu phải đến từ giao diện cục bộ."}, 403)
         path = urlsplit(self.path).path
+        voice_file = re.fullmatch(r"/api/voice/(file|ref)/([a-f0-9]{12})", path)
+        if voice_file:
+            if not self.is_owner():
+                return self.reply({"error": "Chỉ máy Super Admin."}, 403)
+            from runner.voice import VoiceError
+            try:
+                if voice_file.group(1) == "file":
+                    file = self.server.voice.output_file(voice_file.group(2))
+                else:
+                    self.server.voice.profile(voice_file.group(2))
+                    file = self.server.voice.profiles_dir / voice_file.group(2) / "ref.wav"
+            except VoiceError as error:
+                return self.reply({"error": str(error)}, 404)
+            kind = "audio/mpeg" if file.suffix == ".mp3" else "audio/wav"
+            download = parse_qs(urlsplit(self.path).query).get("download") == ["1"]
+            return self.send_file(file, kind, "attachment" if download else "inline", file.name, cache_control="no-store")
         if path == "/api/state":
             data = self.server.store.snapshot()
             data["engine"] = self.server.engine.snapshot()
@@ -806,6 +824,46 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({"error": str(error)[:300]}, 400)
         return self.reply({"error": "Không tìm thấy."}, 404)
 
+    def voice_action(self, path, body):
+        from runner.voice import VoiceError
+        if not self.is_owner():
+            return self.reply({"error": "Chỉ máy Super Admin dùng AI Voice."}, 403)
+        voice = self.server.voice
+        try:
+            if path == "/api/voice/status":
+                return self.reply({"status": voice.status(), "profiles": voice.profiles(),
+                                   "jobs": [voice.public(j) for j in voice.jobs()[:100]]})
+            if path == "/api/voice/install":
+                return self.reply({"status": voice.install()})
+            if path == "/api/voice/config":
+                return self.reply({"config": voice.save_config(body)})
+            if path == "/api/voice/restart":
+                voice.stop_worker()
+                return self.reply({"ok": True})
+            if path == "/api/voice/delete-profile":
+                voice.delete_profile(str(body.get("id")))
+                return self.reply({"ok": True})
+            if path == "/api/voice/create":
+                return self.reply({"job": voice.create_job(str(body.get("profile")), body.get("text"), body.get("title"),
+                                                          body.get("format"), body.get("speed") or 1.0)})
+            if path == "/api/voice/retry":
+                return self.reply({"job": voice.retry(str(body.get("id")))})
+            if path == "/api/voice/cancel":
+                return self.reply({"job": voice.cancel(str(body.get("id")))})
+            if path == "/api/voice/delete":
+                voice.delete_job(str(body.get("id")))
+                return self.reply({"ok": True})
+            if path == "/api/voice/open":
+                target = voice.jobs_dir / str(body.get("id")) if body.get("id") else voice.root
+                if not re.fullmatch(r"[a-f0-9]{12}", str(body.get("id") or "a" * 12)) or not target.exists():
+                    raise VoiceError("Không tìm thấy thư mục.")
+                if not open_folder(target):
+                    raise VoiceError("Không mở được thư mục: " + str(target))
+                return self.reply({"ok": True})
+        except (VoiceError, OSError, TypeError) as error:
+            return self.reply({"error": str(error)[:400]}, 400)
+        return self.reply({"error": "Không tìm thấy."}, 404)
+
     def claude_bridge(self, path, body):
         """Workflow Claude (hanamedia-wildlife-workflow): gửi video vào input/, đọc kết quả trong output/ của thư mục chung."""
         from runner import claude_bridge as bridge
@@ -936,6 +994,21 @@ class Handler(BaseHTTPRequestHandler):
                 item, duplicate = self.server.agents.sounds.add(self.rfile.read(size), unquote(self.headers.get("X-Sound-Name", "")),
                                                                 unquote(self.headers.get("X-Sound-Tags", "")))
                 return self.reply({"ok": True, "duplicate": duplicate, "sound": item})
+            if path == "/api/voice/upload":
+                if not self.is_owner():
+                    return self.reply({"error": "Chỉ máy Super Admin dùng AI Voice."}, 403)
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 60 * 1024 * 1024:
+                    raise ValueError("File giọng mẫu trống hoặc lớn hơn 60 MB.")
+                from runner.voice import VoiceError
+                try:
+                    profile = self.server.voice.add_profile(self.rfile.read(size), unquote(self.headers.get("X-Voice-File", "")),
+                                                            unquote(self.headers.get("X-Voice-Name", "")),
+                                                            unquote(self.headers.get("X-Voice-Text", "")),
+                                                            self.headers.get("X-Voice-Consent") == "1")
+                except VoiceError as error:
+                    return self.reply({"error": str(error)}, 400)
+                return self.reply({"ok": True, "profile": profile})
             if path in ("/api/image-upload", "/api/library/image-upload"):
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= 10_000_000:
@@ -1293,6 +1366,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.claude_bridge(path, body)
             elif path.startswith("/api/workflows/"):
                 return self.workflow_action(path, body)
+            elif path.startswith("/api/voice/"):
+                return self.voice_action(path, body)
             elif path == "/api/content/review-rules":
                 store.save_setting("review_rules", str(body.get("rules") or "").strip()[:6000])
                 store.save_setting("review_lock", str(body.get("lock") or "").strip()[:2000])

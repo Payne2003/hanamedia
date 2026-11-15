@@ -1199,3 +1199,20 @@ details.claude-flow{display:block}details.claude-flow:not([open]){padding:12px 1
 .wf-requests{display:grid;gap:6px;max-height:220px;overflow:auto}.wf-req{white-space:pre-wrap;font-size:var(--fs-xs);padding:8px 10px;border-left:3px solid var(--c-accent);background:var(--c-surface-3);border-radius:6px}
 .wf-log{margin:0;max-height:300px;min-height:120px;overflow:auto;white-space:pre-wrap;font:12px/1.5 ui-monospace,Consolas,monospace;background:#050913;color:#c9d8f5;border-radius:8px;padding:10px;border:1px solid var(--border)}
 @media(max-width:1200px){.wf-grid{grid-template-columns:1fr}}
+/* HanaMedia AI Voice */
+#voiceView{padding:24px;max-width:1700px;margin:auto;display:grid;gap:16px}
+.voice-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.voice-box{padding:16px 18px;display:grid;gap:10px;align-content:start}
+.voice-box h2{display:flex;align-items:center;gap:10px;font-size:var(--fs-lg)}.voice-box h3{margin:8px 0 0;font-size:var(--fs-sm)}
+.voice-box label{display:grid;gap:4px;font-size:var(--fs-xs);color:var(--muted)}.voice-box label small{color:var(--c-text-3)}
+.voice-box input,.voice-box select,.voice-box textarea{margin:0;font-size:var(--fs-sm)}.voice-box textarea{min-height:80px}
+.voice-inline{display:flex!important;align-items:center;gap:6px}.voice-inline select,.voice-inline input{width:auto}
+.voice-consent{display:flex!important;gap:8px;align-items:flex-start;color:var(--c-text-2)!important}
+.voice-facts{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:var(--fs-sm)}.voice-facts dt{color:var(--muted)}.voice-facts dd{margin:0;overflow-wrap:anywhere}
+.voice-profiles{display:grid;gap:8px}.voice-profile{display:grid;grid-template-columns:1fr auto;gap:6px 10px;align-items:center;padding:8px 10px;border-radius:10px;background:var(--c-surface-2)}
+.voice-profile small{display:block;color:var(--c-text-3);font-size:var(--fs-xs)}.voice-profile audio{grid-column:1/3;width:100%;height:32px}
+.voice-jobs{display:grid;gap:10px}.voice-job{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 14px;padding:10px 12px;border-radius:10px;background:var(--c-surface-2)}
+.voice-job small{display:block;color:var(--c-text-3);font-size:var(--fs-xs);overflow-wrap:anywhere}.vj-main{display:grid;gap:4px;min-width:0}
+.vj-actions{grid-column:1/3;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.vj-actions audio{height:32px;min-width:260px}
+.vj-actions button,.vj-actions a{font-size:var(--fs-xs);padding:5px 9px;border:1px solid var(--border);border-radius:6px}
+@media(max-width:1200px){.voice-grid{grid-template-columns:1fr}}
