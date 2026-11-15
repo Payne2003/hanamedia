@@ -17,8 +17,8 @@ const AGENTS = {
   writer: {color: 0xb07cff, pos: [0, 0, 2.75], rot: 0, title: 'LIVE · VIẾT PROMPT', desk: 'code'},
   studio: {color: 0x34e0a8, pos: [4.6, 0, 1.35], rot: -0.6, title: 'LIVE · STUDIO MUSE', desk: 'video'},
 };
-const HOME = {theta: 0, phi: 1.24, radius: 13.4};
-const ROOM_R = 15;
+const HOME = {theta: 0, phi: 1.22, radius: 13.2};
+const ROOM_R = 19;
 
 let renderer, composer, bloom, scene, camera, canvas, host, labels = {}, raf = 0, clock, running = false, mirror = null;
 const view = {...HOME, target: new THREE.Vector3(0, 2.9, .2), auto: true, drag: null, t: 0, intro: 0};
@@ -115,9 +115,9 @@ function vehicle(color) {
   body.rotation.z = Math.PI / 2; group.add(body);
   const canopy = new THREE.Mesh(new THREE.SphereGeometry(.3, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshBasicMaterial({color: 0x7fd6ff, toneMapped: false}));
   canopy.position.set(.15, .18, 0); group.add(canopy);
-  const under = new THREE.Mesh(new THREE.CircleGeometry(.55, 24), glow(color, .7)); under.rotation.x = Math.PI / 2; under.position.y = -.33; group.add(under);
+  const under = new THREE.Mesh(new THREE.CircleGeometry(.55, 24), glow(color, .35)); under.rotation.x = Math.PI / 2; under.position.y = -.33; group.add(under);
   const tail = new THREE.Mesh(new THREE.SphereGeometry(.09, 8, 6), glow(0xff3355, 1)); tail.position.x = -.85; group.add(tail);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(.08, 8, 6), glow(0xffffff, 1)); head.position.x = .85; group.add(head);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(.06, 8, 6), glow(0xfff2c8, .8)); head.position.x = .85; group.add(head);
   const trail = new THREE.Mesh(new THREE.ConeGeometry(.16, 2.4, 10, 1, true), glow(color, .25)); trail.rotation.z = Math.PI / 2; trail.position.x = -2; group.add(trail);
   group.userData = {tail};
   return group;
@@ -127,7 +127,7 @@ function buildVehicles() {
   const colors = [0x7fd6ff, 0xb28cff, 0xffb36b, 0x34e0a8];
   for (let i = 0; i < 14; i++) {
     const v = vehicle(colors[i % colors.length]);
-    const r = 21 + rand() * 26, y = -6 + rand() * 16, speed = (.025 + rand() * .05) * (rand() > .5 ? 1 : -1);
+    const r = 24 + rand() * 24, y = -6 + rand() * 16, speed = (.025 + rand() * .05) * (rand() > .5 ? 1 : -1);
     v.userData = {...v.userData, r, y, speed, phase: rand() * Math.PI * 2, wobble: rand() * 2, scale: .7 + rand() * .6};
     v.scale.setScalar(v.userData.scale);
     scene.add(v); parts.vehicles.push(v);
@@ -137,9 +137,9 @@ function buildVehicles() {
 // ---------- phòng: vách kính, trần, sàn bóng, chậu cây ----------
 function buildRoom() {
   // sàn bóng phản chiếu (tắt khi máy yếu)
-  mirror = new Reflector(new THREE.CircleGeometry(ROOM_R + .5, 96), {clipBias: .003, textureWidth: 1024, textureHeight: 1024, color: 0x6a7698});
+  mirror = new Reflector(new THREE.CircleGeometry(ROOM_R + .5, 96), {clipBias: .003, textureWidth: 1024, textureHeight: 1024, color: 0x8a96bb});
   mirror.rotation.x = -Math.PI / 2; scene.add(mirror);
-  const tint = new THREE.Mesh(new THREE.CircleGeometry(ROOM_R + .5, 96), new THREE.MeshStandardMaterial({color: 0x0d1838, metalness: .6, roughness: .45, transparent: true, opacity: .55,
+  const tint = new THREE.Mesh(new THREE.CircleGeometry(ROOM_R + .5, 96), new THREE.MeshPhysicalMaterial({color: 0x0b1636, metalness: .55, roughness: .18, clearcoat: 1, clearcoatRoughness: .05, envMapIntensity: .9, transparent: true, opacity: .5,
     map: canvasTexture(1024, 1024, (g, w, h) => {
       g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
       g.strokeStyle = 'rgba(30,60,120,.35)'; g.lineWidth = 3;
@@ -148,15 +148,15 @@ function buildRoom() {
     })}));
   tint.rotation.x = -Math.PI / 2; tint.position.y = .005; scene.add(tint);
   parts.tint = tint;
-  for (const [r, w, c, o] of [[2.6, .05, 0x7fd6ff, .95], [3.7, .035, 0x9a7bff, .7], [6.6, .055, 0x7fd6ff, .7], [9.8, .06, 0xb28cff, .55], [12.8, .05, 0x4fb7ff, .45]]) {
+  for (const [r, w, c, o] of [[2.6, .05, 0x7fd6ff, .95], [3.7, .035, 0x9a7bff, .7], [6.6, .055, 0x7fd6ff, .7], [9.8, .06, 0xb28cff, .55], [12.8, .05, 0x4fb7ff, .45], [16.2, .06, 0x9a7bff, .4]]) {
     const ring = new THREE.Mesh(new THREE.RingGeometry(r - w, r + w, 180), glow(c, o)); ring.rotation.x = -Math.PI / 2; ring.position.y = .015; scene.add(ring);
   }
   const scan = new THREE.Mesh(new THREE.RingGeometry(2.7, 12.7, 128, 1, 0, Math.PI / 7), glow(0x4fb7ff, .1));
   scan.rotation.x = -Math.PI / 2; scan.position.y = .018; scene.add(scan); parts.scan.push(scan);
   // vách kính: khung đứng + gờ, kính mờ rất nhẹ
   const frameMat = new THREE.MeshStandardMaterial({color: 0x3a4a72, metalness: .9, roughness: .25});
-  for (let i = 0; i < 28; i++) {
-    const a = i / 28 * Math.PI * 2, mull = new THREE.Mesh(new THREE.BoxGeometry(.22, 9, .35), frameMat);
+  for (let i = 0; i < 32; i++) {
+    const a = i / 32 * Math.PI * 2, mull = new THREE.Mesh(new THREE.BoxGeometry(.16, 9, .25), frameMat);
     mull.position.set(Math.sin(a) * ROOM_R, 4.5, Math.cos(a) * ROOM_R); mull.lookAt(0, 4.5, 0); scene.add(mull);
   }
   for (const y of [.05, 1.0, 8.6]) {
@@ -168,7 +168,7 @@ function buildRoom() {
   // trần: đĩa trần tối + vòng đèn + đèn âm trần
   const ceiling = new THREE.Mesh(new THREE.RingGeometry(3.6, ROOM_R + 1, 96), new THREE.MeshStandardMaterial({color: 0x081129, metalness: .5, roughness: .5, side: THREE.FrontSide}));  // chỉ thấy từ dưới lên: camera kéo xa vẫn nhìn xuyên được
   ceiling.rotation.x = Math.PI / 2; ceiling.position.y = 9.4; scene.add(ceiling);
-  for (const [r, y, c, t] of [[3.6, 9.3, 0x7fd6ff, .09], [6.2, 9.2, 0xffffff, .06], [9.4, 9.25, 0x7fd6ff, .09], [12.6, 9.1, 0xffb36b, .07]]) {
+  for (const [r, y, c, t] of [[3.6, 9.3, 0x7fd6ff, .09], [6.2, 9.2, 0xffffff, .06], [9.4, 9.25, 0x7fd6ff, .09], [13, 9.15, 0xb28cff, .08], [16.5, 9.1, 0xffb36b, .07]]) {
     const torus = new THREE.Mesh(new THREE.TorusGeometry(r, t, 12, 220), glow(c, 1)); torus.rotation.x = Math.PI / 2; torus.position.y = y; scene.add(torus);
   }
   for (let i = 0; i < 24; i++) {
@@ -183,7 +183,7 @@ function buildRoom() {
     g.strokeStyle = 'rgba(20,70,40,.8)'; g.lineWidth = 2; g.beginPath(); g.moveTo(w / 2, 4); g.lineTo(w / 2, h - 4); g.stroke();
   });
   const leafMat = new THREE.MeshStandardMaterial({map: leafTex, transparent: true, alphaTest: .4, side: THREE.DoubleSide, roughness: .7});
-  for (const [x, z] of [[-9.6, -3.2], [9.6, -3.2], [-12.4, 4.5], [12.4, 4.5]]) {
+  for (const [x, z] of [[-9.6, -3.4], [9.6, -3.4], [-12.6, 4.2], [12.6, 4.2], [-15.5, -6], [15.5, -6]]) {
     const bowl = new THREE.Mesh(new THREE.LatheGeometry([0, .6, .9, 1.0, .95].map((r, i) => new THREE.Vector2(r, i * .3)), 32), pot);
     bowl.position.set(x, 0, z); scene.add(bowl);
     const soil = new THREE.Mesh(new THREE.CircleGeometry(.92, 24), new THREE.MeshStandardMaterial({color: 0x120c08, roughness: 1})); soil.rotation.x = -Math.PI / 2; soil.position.set(x, 1.15, z); scene.add(soil);
@@ -249,7 +249,7 @@ function faceTexture(color, mood, blink) {
 }
 
 function robot(color, master, trim) {
-  const shell = new THREE.MeshPhysicalMaterial({color: 0xe4eaf3, metalness: .05, roughness: .28, clearcoat: .8, clearcoatRoughness: .1, envMapIntensity: .3});
+  const shell = new THREE.MeshPhysicalMaterial({color: 0xf0f3f8, metalness: 0, roughness: .25, clearcoat: 1, clearcoatRoughness: .06, envMapIntensity: .4});
   const joint = new THREE.MeshPhysicalMaterial({color: 0xb7c4dc, metalness: .7, roughness: .25, clearcoat: .6, envMapIntensity: .5});
   const accent = new THREE.MeshPhysicalMaterial({color: trim || color, metalness: .8, roughness: .25, clearcoat: 1, emissive: trim || color, emissiveIntensity: .25});
   const glass = new THREE.MeshPhysicalMaterial({color: 0x02060f, metalness: .3, roughness: .04, clearcoat: 1, envMapIntensity: 1});
@@ -322,8 +322,8 @@ function arcShape(rIn, rOut, half) {
 
 function desk(color) {
   const group = new THREE.Group();
-  const top = new THREE.MeshPhysicalMaterial({color: 0xcfd8e8, metalness: .6, roughness: .22, clearcoat: 1, envMapIntensity: .45});
-  const side = new THREE.MeshPhysicalMaterial({color: 0x9aa7c0, metalness: .85, roughness: .25, clearcoat: .8, envMapIntensity: .5});
+  const top = new THREE.MeshPhysicalMaterial({color: 0xf2f5fb, metalness: .2, roughness: .2, clearcoat: 1, envMapIntensity: .6});
+  const side = new THREE.MeshPhysicalMaterial({color: 0x1c2747, metalness: .7, roughness: .22, clearcoat: 1, envMapIntensity: .7});
   const half = .7;
   const plate = new THREE.Mesh(new THREE.ExtrudeGeometry(arcShape(.85, 1.6, half), {depth: .1, bevelEnabled: true, bevelThickness: .03, bevelSize: .03, bevelSegments: 3, curveSegments: 56}), top);
   plate.rotation.x = Math.PI / 2; plate.position.y = 1.12; group.add(plate);
@@ -532,7 +532,7 @@ function resize() {
   renderer.setSize(w, h, false);
   composer?.setSize(w, h);
   bloom?.resolution.set(w / 2, h / 2);
-  mirror?.getRenderTarget().setSize(Math.round(w * renderer.getPixelRatio() * .6), Math.round(h * renderer.getPixelRatio() * .6));
+  mirror?.getRenderTarget().setSize(Math.round(w * .5), Math.round(h * .5));
   camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 
@@ -624,8 +624,13 @@ function frame() {
   placeLabels();
   perf.frames++; perf.time += dt;
   if (perf.time > 3) {
-    if (!perf.low && perf.frames / perf.time < 28 && view.intro > 1.2) {
-      perf.low = true; renderer.setPixelRatio(1); if (mirror) mirror.visible = false; if (parts.tint) parts.tint.material.opacity = 1; resize();
+    const fps = perf.frames / perf.time;
+    if (view.intro > 1.2 && fps < 24) {
+      if (!perf.stage) {  // bước 1: bỏ sàn phản chiếu (tốn nhất), giữ quầng sáng neon
+        perf.stage = 1; renderer.setPixelRatio(1); if (mirror) mirror.visible = false; if (parts.tint) parts.tint.material.opacity = .96; resize();
+      } else if (perf.stage === 1 && fps < 18) {  // bước 2: máy vẫn giật → tắt quầng sáng, vẽ bảng thưa hơn
+        perf.stage = 2; perf.low = true;
+      }
     }
     perf.frames = 0; perf.time = 0;
   }
@@ -652,7 +657,7 @@ export function mount(container, canvasElement, labelElements) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = .82;
+  renderer.toneMappingExposure = .88;
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x050a20);
   scene.fog = new THREE.Fog(0x3a2c62, 45, 130);
@@ -661,7 +666,8 @@ export function mount(container, canvasElement, labelElements) {
     scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), .04).texture;
   } catch (error) { /* không có phản chiếu môi trường vẫn chạy */ }
   camera = new THREE.PerspectiveCamera(42, 16 / 9, .1, 200);
-  scene.add(new THREE.HemisphereLight(0x9cc8ff, 0x1a1030, .35));
+  scene.add(new THREE.HemisphereLight(0xa9c8ff, 0x2a1840, .42));
+  const front = new THREE.DirectionalLight(0xe8f0ff, .45); front.position.set(0, 9, 16); scene.add(front);
   const sun = new THREE.DirectionalLight(0xffb48a, .9); sun.position.set(-10, 8, -14); scene.add(sun);
   const fill = new THREE.DirectionalLight(0x9fc4ff, .55); fill.position.set(8, 10, 12); scene.add(fill);
   const center = new THREE.PointLight(0x5ab8ff, 3, 16, 1.6); center.position.set(0, 7.5, -2); scene.add(center);
@@ -669,7 +675,7 @@ export function mount(container, canvasElement, labelElements) {
   try {
     composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
-    bloom = new UnrealBloomPass(new THREE.Vector2(640, 360), .6, .4, .9);
+    bloom = new UnrealBloomPass(new THREE.Vector2(640, 360), .7, .45, .86);
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
   } catch (error) {
