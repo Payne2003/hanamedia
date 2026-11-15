@@ -247,11 +247,14 @@ class FakeGitHub:
                 self.files.pop((json.loads(body)["branch"], name), None)
                 return 200, b"{}"
             if method == "GET":
-                branch = path.split("ref=")[1]
+                branch = path.split("ref=")[1].split("&")[0]
                 if branch not in self.branches:
                     return 404, b'{"message":"No commit found for the ref"}'
                 return (200, b'{"sha":"s1"}') if (branch, name) in self.files else (404, b"{}")
             data = json.loads(body)
+            if getattr(self, "conflicts", 0):  # GitHub: nhánh vừa đổi do lần ghi trước → 409, ghi lại là được
+                self.conflicts -= 1
+                return 409, b'{"message":"is at abc but expected def"}'
             if data["branch"] not in self.branches or (((data["branch"], name) in self.files) != bool(data.get("sha"))):
                 return 409, b"{}"
             self.files[(data["branch"], name)] = base64.b64decode(data["content"]).decode()
@@ -270,6 +273,8 @@ class RevocationTests(unittest.TestCase):
         folder.mkdir()
         self.public = LicenseManager(Store(folder / "t.db"), folder, trusted=[]).init_signing_key()
         self.root_m, self.agent, self.customer = (self.manager(n) for n in ("root", "agent", "customer"))
+        for m in (self.root_m, self.agent, self.customer):
+            m.sleep = lambda seconds: None
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -395,6 +400,16 @@ class RevocationTests(unittest.TestCase):
         with self.assertRaises(LicenseError):
             self.customer.clients()  # máy khách không xem được bảng
         self.assertNotIn("private", json.dumps(self.root_m.dashboard()))  # khóa riêng không ra giao diện
+
+    def test_github_conflict_409_is_retried(self):
+        self.root_m.sleep = lambda seconds: None
+        self.root_m.set_publisher_token(TOKEN)
+        account, token = self.root_m.save_account({"name": "A", "role": "user", "plan": "1y", "start": "2026-01-01",
+                                                   "devices": [self.customer.request_code()]})
+        self.github.conflicts = 3
+        self.assertEqual(self.root_m.share_code(account["id"], token)["error"], "")
+        self.github.conflicts = 50
+        self.assertIn("xung đột", self.root_m.share_code(account["id"], token)["error"])
 
     def test_renewing_a_locked_account_unrevokes_it(self):
         self.root_m.set_publisher_token(TOKEN)
