@@ -84,7 +84,7 @@
     </div>
     <section id="agentsView" class="agents-page" hidden aria-labelledby="agentsTitle">
       <div class="agents-top card"><div><h1 id="agentsTitle">Không gian Agent 3D</h1><p>Master Agent điều phối 3 robot agent: Phân tích video → Viết prompt → Studio · Muse. Theo dõi từng video ngay trong phòng điều khiển.</p></div>
-        <div class="agents-actions"><button id="agentsSend" type="button" class="primary"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg> Gửi video cho agent</button><button id="agentsSpin" type="button" aria-pressed="true">⟳ Tự lia camera</button><button id="agentsReset" type="button">Góc nhìn mặc định</button><button id="agentsCommand" type="button">Chép lệnh chạy workflow</button></div></div>
+        <div class="agents-actions"><label class="wf-pick" id="wfPick" hidden>Workflow<select id="wfSelect"></select></label><button id="wfNew" type="button" hidden>＋ Workflow mới</button><button id="agentsSend" type="button" class="primary"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg> Gửi video cho agent</button><button id="agentsSpin" type="button" aria-pressed="true">⟳ Tự lia camera</button><button id="agentsReset" type="button">Góc nhìn mặc định</button><button id="agentsCommand" type="button">Chép lệnh chạy workflow</button></div></div>
       <div class="hq card" id="hq" aria-label="Phòng điều khiển 3D: Master Agent và các robot agent">
         <canvas id="hqCanvas"></canvas>
         <div class="hq-labels" id="hqLabels"></div>
@@ -93,6 +93,34 @@
         <div class="hq-fallback" id="hqFallback" hidden>Máy này không bật được đồ hoạ 3D (WebGL). Bảng workflow bên dưới vẫn cập nhật bình thường.</div>
       </div>
       <div class="hq-flow" id="hqFlow"></div>
+      <details class="card wf-panel" id="wfPanel" open hidden>
+        <summary class="claude-summary">🧩 Workflow <b id="wfTitle"></b> · kỹ năng, yêu cầu thay đổi &amp; chạy <small>(chỉ máy Super Admin)</small></summary>
+        <div class="wf-grid">
+          <section class="wf-box"><h3>Thông tin</h3>
+            <label>Tên workflow<input id="wfName" maxlength="60"></label>
+            <label>Câu lệnh chạy <small>(gõ trong Claude / Codex)</small><input id="wfCommand" maxlength="300" placeholder="Chạy <tên kỹ năng điều phối>"></label>
+            <label>Mô tả<input id="wfDesc" maxlength="400"></label>
+            <div class="wf-agents" id="wfAgents"></div>
+            <div class="wf-row"><button type="button" id="wfSave" class="primary">Lưu</button><button type="button" id="wfDelete" class="danger-outline">Xóa workflow</button></div>
+          </section>
+          <section class="wf-box"><h3>Kỹ năng <small id="wfSkillCount"></small></h3>
+            <div id="wfSkills" class="wf-skills"></div>
+            <div class="wf-row"><button type="button" id="wfImport">＋ Nạp kỹ năng (thư mục / zip)</button><button type="button" id="wfOpen">Mở thư mục</button><button type="button" id="wfSync" title="Chép kỹ năng sang Claude Code, Codex và đóng gói zip cho Claude desktop">⟳ Đồng bộ</button></div>
+            <h3>Yêu cầu thay đổi kỹ năng</h3>
+            <div class="wf-row"><select id="wfTarget"><option value="">Kỹ năng nào cũng được (AI tự tìm)</option></select></div>
+            <textarea id="wfRequest" rows="4" maxlength="6000" placeholder="Ví dụ: Phần kiểm duyệt bỏ sót cảnh trùng nhân vật — thêm bước kiểm tra số con vật mỗi cảnh. Prompt hay viết slow motion, cấm hẳn từ này."></textarea>
+            <div class="wf-row"><button type="button" id="wfAddRequest" class="primary">Thêm yêu cầu</button><button type="button" id="wfClearRequests">Xóa hết yêu cầu</button></div>
+            <div id="wfRequests" class="wf-requests"></div>
+          </section>
+          <section class="wf-box wf-run"><h3>Chạy <small id="wfEngines"></small></h3>
+            <div class="wf-row"><button type="button" id="wfRunClaude" class="primary">▶ Chạy bằng Claude Code</button><button type="button" id="wfRunCodex" class="primary">▶ Chạy bằng Codex</button></div>
+            <div class="wf-row"><button type="button" id="wfApply">✎ Chỉ áp dụng yêu cầu (không chạy)</button><button type="button" id="wfStop" class="danger-outline" hidden>■ Dừng</button><button type="button" id="wfCopy">Chép lệnh cho Claude desktop</button></div>
+            <p class="detail" id="wfRunInfo"></p>
+            <pre id="wfLog" class="wf-log"></pre>
+            <details><summary>Nhật ký thay đổi kỹ năng (CHANGELOG)</summary><pre id="wfChangelog" class="wf-log"></pre></details>
+          </section>
+        </div>
+      </details>
       <details class="claude-flow card" id="claudeFlow" aria-label="Workflow Claude / Codex"><summary class="claude-summary">⚙ Cài đặt workflow &amp; kết quả từ Claude / Codex <small id="claudeSummaryInfo"></small></summary>
         <div class="claude-head"><div><h2>Workflow Claude / Codex <small>hanamedia-wildlife-workflow · không dùng Gemini / ChatGPT</small></h2>
           <p id="claudeFolderInfo">Thư mục chung: …</p></div>

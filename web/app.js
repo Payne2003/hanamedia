@@ -826,12 +826,79 @@ function renderAgents(){
   $('boardRows').querySelectorAll('.meter i').forEach(i=>i.style.width=i.dataset.w+'%');
   $('boardEmpty').hidden=board.length>0;
 }
-async function pollAgents(){if($('agentsView').hidden||!key)return;try{agentsData=await api('/api/claude/board',{});renderAgents();}catch(error){}}
-function openAgents(){buildHQ();renderSpin();if(!agentsData){agentsData={board:[],folder:''};renderAgents();}pollAgents();clearInterval(agentsTimer);agentsTimer=setInterval(pollAgents,3000);hq3d?.start();}
+async function pollAgents(){if($('agentsView').hidden||!key)return;try{agentsData=await api('/api/claude/board',{workflow:wf.slug});renderAgents();}catch(error){}if(wf.owner)pollWorkflow();}
+function openAgents(){buildHQ();loadWorkflows();renderSpin();if(!agentsData){agentsData={board:[],folder:''};renderAgents();}pollAgents();clearInterval(agentsTimer);agentsTimer=setInterval(pollAgents,3000);hq3d?.start();}
 function closeAgents(){clearInterval(agentsTimer);agentsTimer=null;hq3d?.stop();}
 $('agentsSpin').onclick=()=>{hqCam.auto=!hqCam.auto;hq3d?.setAuto(hqCam.auto);renderSpin();};
 $('agentsReset').onclick=()=>{hq3d?.resetView();};
 $('agentsSend').onclick=()=>$('claudeSend').click();
+// ---- Nhiều workflow (chỉ máy Super Admin): kỹ năng gốc, yêu cầu thay đổi, chạy Claude Code / Codex ----
+const wf={owner:false,list:[],engines:{},slug:(()=>{try{return localStorage.getItem('hq.workflow')||'wildlife';}catch{return 'wildlife';}})(),status:null,loaded:false};
+const WF_SLOTS=[['conductor','Master Agent'],['analyst','Agent 1'],['writer','Agent 2'],['studio','Agent 3']];
+const HQ_DEFAULTS=JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(HQ_AGENTS).map(([k,v])=>[k,{title:v.title,sub:v.sub,skill:v.skill,tasks:v.tasks}]))));
+const WF_GENERIC_TASKS=['Nhận việc từ Master','Đọc kỹ năng & dữ liệu','Thực hiện phần việc','Bàn giao kết quả'];
+function currentWf(){return wf.list.find(w=>w.slug===wf.slug)||wf.list[0];}
+async function loadWorkflows(){
+  try{const r=await api('/api/workflows/list',{});wf.owner=true;wf.list=r.workflows;wf.engines=r.engines;}
+  catch{wf.owner=false;wf.list=[];}
+  $('wfPick').hidden=$('wfNew').hidden=$('wfPanel').hidden=!wf.owner;
+  if(!wf.owner){wf.slug='wildlife';return;}
+  if(!wf.list.some(w=>w.slug===wf.slug))wf.slug='wildlife';
+  $('wfSelect').innerHTML=wf.list.map(w=>`<option value="${esc(w.slug)}">${esc(w.name)}</option>`).join('');$('wfSelect').value=wf.slug;
+  renderWorkflow();
+}
+function applyWfLabels(w){
+  for(const [slot] of WF_SLOTS){const a=w?.agents?.[slot],d=HQ_DEFAULTS[slot],el=document.querySelector(`.hq-label[data-agent="${slot}"] .badge`);
+    HQ_AGENTS[slot].title=a?.name||d.title;HQ_AGENTS[slot].sub=a?.role||d.sub;HQ_AGENTS[slot].skill=a?.skill||d.skill;
+    if(slot!=='conductor')HQ_AGENTS[slot].tasks=w?.slug&&w.slug!=='wildlife'?WF_GENERIC_TASKS:d.tasks;
+    if(el){el.querySelector('b').textContent=HQ_AGENTS[slot].title;el.querySelector('small').textContent=`(${HQ_AGENTS[slot].sub})`;}}
+}
+function renderWorkflow(){
+  const w=currentWf();if(!w)return;applyWfLabels(w);
+  $('wfTitle').textContent=w.name;$('wfName').value=w.name;$('wfCommand').value=w.command||'';$('wfDesc').value=w.description||'';
+  const options=['<option value="">— chưa gắn —</option>'].concat(w.skills.map(k=>`<option value="${esc(k.name)}">${esc(k.name)}</option>`)).join('');
+  $('wfAgents').innerHTML=WF_SLOTS.map(([slot,label])=>{const a=w.agents[slot]||{};return `<div class="wf-agent" data-slot="${slot}"><b>${label}</b><input data-k="name" maxlength="40" value="${esc(a.name||'')}" placeholder="Tên hiển thị"><input data-k="role" maxlength="60" value="${esc(a.role||'')}" placeholder="Vai trò"><select data-k="skill">${options}</select></div>`;}).join('');
+  $('wfAgents').querySelectorAll('.wf-agent').forEach(row=>{const v=w.agents[row.dataset.slot]?.skill||'';const sel=row.querySelector('select');if(v&&![...sel.options].some(o=>o.value===v))sel.insertAdjacentHTML('beforeend',`<option value="${esc(v)}">${esc(v)} (chưa nạp)</option>`);sel.value=v;});
+  $('wfSkillCount').textContent=`· ${w.skills.length} kỹ năng`;
+  $('wfSkills').innerHTML=w.skills.map(k=>`<div class="wf-skill"><b>${esc(k.name)}</b><small>${esc(k.description||'')} · ${k.chars.toLocaleString('vi-VN')} ký tự · sửa ${new Date(k.updated*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'})}</small><button type="button" data-rm-skill="${esc(k.name)}" class="text-button">Gỡ</button></div>`).join('')||'<p class="detail">Chưa nạp kỹ năng nào. Bấm “Nạp kỹ năng” và chọn thư mục có SKILL.md (hoặc file .zip).</p>';
+  $('wfTarget').innerHTML='<option value="">Kỹ năng nào cũng được (AI tự tìm)</option>'+w.skills.map(k=>`<option value="${esc(k.name)}">${esc(k.name)}</option>`).join('');
+  $('wfRequests').innerHTML=w.requests.length?w.requests.map(r=>`<div class="wf-req">${esc(r).replace(/^## (.*)$/m,'<b>$1</b>')}</div>`).join(''):'<p class="detail">Chưa có yêu cầu nào. Lần chạy tới, AI sẽ sửa kỹ năng theo các yêu cầu ở đây trước rồi mới chạy.</p>';
+  $('wfChangelog').textContent=w.changelog||'(chưa có)';
+  $('wfEngines').textContent=`· Claude Code: ${wf.engines.claude?'có ✓':'chưa cài'} · Codex: ${wf.engines.codex?'có ✓':'chưa cài'}`;
+  $('wfRunClaude').disabled=!wf.engines.claude;$('wfRunCodex').disabled=!wf.engines.codex;$('wfApply').disabled=!(wf.engines.claude||wf.engines.codex);
+  $('wfDelete').hidden=w.slug==='wildlife';
+  renderWfStatus();
+}
+function renderWfStatus(){
+  const st=wf.status;$('wfStop').hidden=!st?.running;
+  $('wfRunInfo').textContent=st?.running?`Đang chạy bằng ${st.engine==='claude'?'Claude Code':'Codex'} (${st.mode==='apply'?'chỉ sửa kỹ năng':'chạy workflow'}) · từ ${new Date(st.started*1000).toLocaleTimeString('vi-VN')}`
+    :st?.engine?`Lần chạy gần nhất: ${st.engine==='claude'?'Claude Code':'Codex'} · kết thúc mã ${st.code}${st.code===0?' (thành công)':''}`:'Chưa chạy lần nào trong phiên này.';
+  if(st?.log!==undefined){const log=$('wfLog');const atEnd=log.scrollTop+log.clientHeight>=log.scrollHeight-20;log.textContent=st.log||'';if(atEnd)log.scrollTop=log.scrollHeight;}
+}
+async function pollWorkflow(){if(!wf.owner)return;try{const r=await api('/api/workflows/status',{slug:wf.slug});const was=wf.status?.running;wf.status=r.status;
+  const i=wf.list.findIndex(w=>w.slug===wf.slug);if(i>=0)wf.list[i]=r.workflow;
+  if(was&&!r.status.running){toast(r.status.code===0?'Workflow đã chạy xong.':`Workflow dừng (mã ${r.status.code}). Xem nhật ký.`,r.status.code!==0);renderWorkflow();}else renderWfStatus();}catch{}}
+async function wfCall(path,body={}){const r=await api(path,{slug:wf.slug,...body});if(r.workflow){const i=wf.list.findIndex(w=>w.slug===r.workflow.slug);if(i>=0)wf.list[i]=r.workflow;else wf.list.push(r.workflow);}return r;}
+$('wfSelect').onchange=e=>{wf.slug=e.target.value;try{localStorage.setItem('hq.workflow',wf.slug);}catch{}wf.status=null;renderWorkflow();pollAgents();};
+$('wfNew').onclick=async()=>{const name=prompt('Tên workflow mới (ví dụ: Phim hoạt hình, Review sản phẩm…)');if(!name||!name.trim())return;
+  try{const r=await api('/api/workflows/save',{name:name.trim(),command:'',agents:{}});wf.list.push(r.workflow);wf.slug=r.workflow.slug;try{localStorage.setItem('hq.workflow',wf.slug);}catch{}
+    $('wfSelect').insertAdjacentHTML('beforeend',`<option value="${esc(wf.slug)}">${esc(r.workflow.name)}</option>`);$('wfSelect').value=wf.slug;renderWorkflow();$('wfPanel').open=true;toast('Đã tạo workflow. Nạp kỹ năng rồi gắn kỹ năng cho từng agent.');}catch(error){toast(error.message,true);}};
+$('wfSave').onclick=async()=>{const agents={};$('wfAgents').querySelectorAll('.wf-agent').forEach(row=>{agents[row.dataset.slot]={};row.querySelectorAll('[data-k]').forEach(i=>agents[row.dataset.slot][i.dataset.k]=i.value);});
+  try{await wfCall('/api/workflows/save',{name:$('wfName').value,command:$('wfCommand').value,description:$('wfDesc').value,agents});$('wfSelect').querySelector(`option[value="${wf.slug}"]`).textContent=$('wfName').value;renderWorkflow();toast('Đã lưu workflow.');}catch(error){toast(error.message,true);}};
+$('wfDelete').onclick=async()=>{if(!confirm('Xóa workflow này? (Thư mục được chuyển sang workflows-deleted, không mất hẳn.)'))return;try{await api('/api/workflows/delete',{slug:wf.slug});wf.slug='wildlife';await loadWorkflows();toast('Đã xóa workflow.');}catch(error){toast(error.message,true);}};
+$('wfImport').onclick=async()=>{try{const r=await wfCall('/api/workflows/import');renderWorkflow();if(r.imported?.length)toast(`Đã nạp ${r.imported.length} kỹ năng: ${r.imported.join(', ')}.`);}
+  catch(error){const path=prompt('Không mở được hộp chọn thư mục.\nDán đường dẫn thư mục kỹ năng (có SKILL.md) hoặc file .zip:');if(path&&path.trim()){try{const r=await wfCall('/api/workflows/import',{path:path.trim()});renderWorkflow();toast(`Đã nạp ${r.imported.length} kỹ năng.`);}catch(e){toast(e.message,true);}}}};
+$('wfSkills').onclick=async e=>{const b=e.target.closest('[data-rm-skill]');if(!b||!confirm(`Gỡ kỹ năng ${b.dataset.rmSkill} khỏi workflow này?`))return;try{await wfCall('/api/workflows/remove-skill',{name:b.dataset.rmSkill});renderWorkflow();}catch(error){toast(error.message,true);}};
+$('wfOpen').onclick=()=>wfCall('/api/workflows/open').catch(e=>toast(e.message,true));
+$('wfSync').onclick=async()=>{try{const r=await wfCall('/api/workflows/sync');toast(`Đã đồng bộ: ${r.sync.claude} kỹ năng cho Claude Code, ${r.sync.codex} cho Codex, ${r.sync.zip} file zip cho Claude desktop (thư mục dist của workflow).`);}catch(error){toast(error.message,true);}};
+$('wfAddRequest').onclick=async()=>{try{const r=await wfCall('/api/workflows/request',{text:$('wfRequest').value,target:$('wfTarget').value});currentWf().requests=r.requests;$('wfRequest').value='';renderWorkflow();toast('Đã thêm yêu cầu. Bấm Chạy (hoặc Chỉ áp dụng yêu cầu) để AI sửa kỹ năng.');}catch(error){toast(error.message,true);}};
+$('wfClearRequests').onclick=async()=>{if(!confirm('Xóa hết yêu cầu chưa xử lý?'))return;try{await wfCall('/api/workflows/clear-requests');currentWf().requests=[];renderWorkflow();}catch(error){toast(error.message,true);}};
+async function wfRun(engine,mode){try{const r=await wfCall('/api/workflows/run',{engine,mode});wf.status=r.status;renderWfStatus();toast(mode==='apply'?'Đang để AI sửa kỹ năng theo yêu cầu…':'Đã bắt đầu chạy workflow. Theo dõi trong không gian 3D và nhật ký.');}catch(error){toast(error.message,true);}}
+$('wfRunClaude').onclick=()=>wfRun('claude','run');$('wfRunCodex').onclick=()=>wfRun('codex','run');
+$('wfApply').onclick=()=>wfRun(wf.engines.claude?'claude':'codex','apply');
+$('wfStop').onclick=async()=>{try{const r=await wfCall('/api/workflows/stop');wf.status=r.status;renderWfStatus();}catch(error){toast(error.message,true);}};
+$('wfCopy').onclick=async()=>{try{const r=await wfCall('/api/workflows/prompt',{mode:'run'});await navigator.clipboard.writeText(r.prompt);toast('Đã chép lệnh. Mở Claude desktop với thư mục HanaMedia rồi dán vào.');}catch(error){toast(error.message,true);}};
+
 $('agentsCommand').onclick=()=>navigator.clipboard.writeText('Chạy hanamedia-wildlife-workflow').then(()=>toast('Đã chép lệnh. Dán vào Claude desktop hoặc Codex (mở thư mục HanaMedia).')).catch(()=>toast('Chép không được.',true));
 function orderedPrompts(list){
   const first={};for(const j of list){const t=Number(j.created)||0;if(!(j.batch in first)||t<first[j.batch])first[j.batch]=t;}

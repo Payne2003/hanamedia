@@ -166,6 +166,9 @@ class AppServer(ThreadingHTTPServer):
         self.gemini_web.api_session = lambda: self.api_session("gemini")
         # Chatbot hỗ trợ khách: FAQ trước, rồi Gemini (khóa của chủ tool, giới hạn lượt/ngày), hết lượt → Zalo.
         self.support = SupportChat(store, allowed=lambda: self.license.allows("create_jobs"))
+        from runner import claude_bridge as _bridge
+        from runner.workflows import Workflows
+        self.workflows = Workflows(lambda: store.setting("claude_folder") or _bridge.default_folder())
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
         self.chatgpt_web.api_session = lambda: self.api_session("chatgpt")
         self.claude_web = claude_runner(self.data_dir / "profiles" / "claude-web")
@@ -750,6 +753,59 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             self.server.folder_lock.release()
 
+    def is_owner(self):
+        """Chỉ máy Super Admin (giữ khóa ký gốc) mới dùng nhiều workflow / sửa kỹ năng."""
+        context = self.server.license.issuer_context()
+        return bool(context) and context["mode"] == "root"
+
+    def workflow_action(self, path, body):
+        from runner.workflows import WorkflowError
+        if not self.is_owner():
+            return self.reply({"error": "Chỉ máy Super Admin dùng được phần này."}, 403)
+        flows = self.server.workflows
+        slug = str(body.get("slug") or "")
+        try:
+            if path == "/api/workflows/list":
+                return self.reply({"workflows": flows.list(), "engines": flows.engines()})
+            if path == "/api/workflows/save":
+                return self.reply({"workflow": flows.save(body)})
+            if path == "/api/workflows/delete":
+                flows.delete(slug)
+                return self.reply({"ok": True})
+            if path == "/api/workflows/import":
+                source = str(body.get("path") or "").strip() or self.server.pick_directory("--pick-plugin", ["--plugin"])
+                if not source:
+                    return self.reply({"workflow": flows.load(slug), "imported": []})
+                names = flows.import_skills(slug, source)
+                return self.reply({"workflow": flows.load(slug), "imported": names, "sync": flows.sync(slug)})
+            if path == "/api/workflows/remove-skill":
+                flows.remove_skill(slug, body.get("name"))
+                return self.reply({"workflow": flows.load(slug)})
+            if path == "/api/workflows/request":
+                return self.reply({"requests": flows.add_request(slug, body.get("text"), body.get("target"))})
+            if path == "/api/workflows/clear-requests":
+                flows.clear_requests(slug)
+                return self.reply({"requests": []})
+            if path == "/api/workflows/run":
+                return self.reply({"status": flows.run(slug, body.get("engine"), body.get("mode") or "run")})
+            if path == "/api/workflows/stop":
+                return self.reply({"status": flows.stop(slug)})
+            if path == "/api/workflows/status":
+                return self.reply({"status": flows.status(slug), "workflow": flows.load(slug)})
+            if path == "/api/workflows/prompt":
+                return self.reply({"prompt": flows.prompt(slug, body.get("mode") or "run")})
+            if path == "/api/workflows/sync":
+                return self.reply({"sync": flows.sync(slug)})
+            if path == "/api/workflows/open":
+                target = flows.folder(slug)
+                target.mkdir(parents=True, exist_ok=True)
+                if not open_folder(target):
+                    raise WorkflowError("Không mở được thư mục: " + str(target))
+                return self.reply({"ok": True})
+        except (WorkflowError, OSError) as error:
+            return self.reply({"error": str(error)[:300]}, 400)
+        return self.reply({"error": "Không tìm thấy."}, 404)
+
     def claude_bridge(self, path, body):
         """Workflow Claude (hanamedia-wildlife-workflow): gửi video vào input/, đọc kết quả trong output/ của thư mục chung."""
         from runner import claude_bridge as bridge
@@ -768,6 +824,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/claude/status":
             return self.reply(status())
         if path == "/api/claude/board":
+            slug = str(body.get("workflow") or "wildlife")
+            if slug != "wildlife" and self.is_owner():
+                try:
+                    return self.reply({"folder": str(folder), "agents": bridge.AGENTS, "board": self.server.workflows.board(slug)})
+                except ValueError:
+                    pass
             counts = {}
             for job in store.snapshot()["jobs"]:
                 counts.setdefault(job.get("batch"), {}).setdefault(job.get("status"), 0)
@@ -1229,6 +1291,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"ok": True, "plugin": self.server.plugin_public()})
             elif path.startswith("/api/claude/"):
                 return self.claude_bridge(path, body)
+            elif path.startswith("/api/workflows/"):
+                return self.workflow_action(path, body)
             elif path == "/api/content/review-rules":
                 store.save_setting("review_rules", str(body.get("rules") or "").strip()[:6000])
                 store.save_setting("review_lock", str(body.get("lock") or "").strip()[:2000])
