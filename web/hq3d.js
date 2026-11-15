@@ -17,11 +17,11 @@ const AGENTS = {
   writer: {color: 0xb07cff, pos: [0, 0, 2.75], rot: 0, title: 'LIVE · VIẾT PROMPT', desk: 'code'},
   studio: {color: 0x34e0a8, pos: [4.6, 0, 1.35], rot: -0.6, title: 'LIVE · STUDIO MUSE', desk: 'video'},
 };
-const HOME = {theta: 0, phi: 1.22, radius: 13.2};
+const HOME = {theta: 0, phi: 1.2, radius: 12.8, tx: 0, ty: 2.75, tz: .7};
 const ROOM_R = 19;
 
 let renderer, composer, bloom, scene, camera, canvas, host, labels = {}, raf = 0, clock, running = false, mirror = null;
-const view = {...HOME, target: new THREE.Vector3(0, 2.9, .2), auto: true, drag: null, t: 0, intro: 0};
+const view = {...HOME, target: new THREE.Vector3(HOME.tx, HOME.ty, HOME.tz), goal: null, auto: true, drag: null, t: 0, intro: 0};
 const parts = {robots: {}, links: {}, rings: {}, lights: {}, globe: null, dust: null, scan: [], vehicles: [], beacons: [],
   panels: [], pulses: []};
 const perf = {frames: 0, time: 0, low: false};
@@ -139,7 +139,7 @@ function buildRoom() {
   // sàn bóng phản chiếu (tắt khi máy yếu)
   mirror = new Reflector(new THREE.CircleGeometry(ROOM_R + .5, 96), {clipBias: .003, textureWidth: 1024, textureHeight: 1024, color: 0x8a96bb});
   mirror.rotation.x = -Math.PI / 2; scene.add(mirror);
-  const tint = new THREE.Mesh(new THREE.CircleGeometry(ROOM_R + .5, 96), new THREE.MeshPhysicalMaterial({color: 0x0b1636, metalness: .55, roughness: .18, clearcoat: 1, clearcoatRoughness: .05, envMapIntensity: .9, transparent: true, opacity: .5,
+  const tint = new THREE.Mesh(new THREE.CircleGeometry(ROOM_R + .5, 96), new THREE.MeshPhysicalMaterial({color: 0x0b1636, metalness: .5, roughness: .32, clearcoat: .8, clearcoatRoughness: .28, envMapIntensity: .8, transparent: true, opacity: .5,
     map: canvasTexture(1024, 1024, (g, w, h) => {
       g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
       g.strokeStyle = 'rgba(30,60,120,.35)'; g.lineWidth = 3;
@@ -176,7 +176,7 @@ function buildRoom() {
     spot.rotation.x = Math.PI / 2; spot.position.set(Math.sin(a) * 11, 9.32, Math.cos(a) * 11); scene.add(spot);
   }
   // chậu cây cảnh lớn
-  const pot = new THREE.MeshPhysicalMaterial({color: 0xb9c3d6, metalness: .9, roughness: .2, clearcoat: 1, envMapIntensity: .5});
+  const pot = new THREE.MeshPhysicalMaterial({color: 0x8e9ab2, metalness: .75, roughness: .32, clearcoat: .5, envMapIntensity: .22});
   const leafTex = canvasTexture(64, 256, (g, w, h) => {
     const grad = g.createLinearGradient(0, 0, w, 0); grad.addColorStop(0, '#1d6b3c'); grad.addColorStop(.5, '#3fbf6a'); grad.addColorStop(1, '#1d6b3c');
     g.fillStyle = grad; g.beginPath(); g.moveTo(w / 2, 0); g.quadraticCurveTo(w, h * .4, w / 2, h); g.quadraticCurveTo(0, h * .4, w / 2, 0); g.fill();
@@ -201,7 +201,7 @@ function buildRoom() {
 // ---------- quả địa cầu ----------
 function buildGlobe() {
   const group = new THREE.Group();
-  group.position.set(0, 6.9, -5.2); group.scale.setScalar(.92);
+  group.position.set(0, 6.55, -3.4); group.scale.setScalar(.95);
   group.add(new THREE.Mesh(new THREE.SphereGeometry(2.55, 64, 48), new THREE.MeshPhysicalMaterial({color: 0x0f3a9a, transparent: true, opacity: .55, roughness: .1, metalness: .1, clearcoat: 1, emissive: 0x0a2a7a, emissiveIntensity: .8, depthWrite: false})));
   group.add(new THREE.Mesh(new THREE.SphereGeometry(2.62, 48, 32), glow(0x3aa5ff, .12)));
   const wire = new THREE.Mesh(new THREE.SphereGeometry(2.6, 36, 24), new THREE.MeshBasicMaterial({color: 0x8fdcff, wireframe: true, transparent: true, opacity: .14, blending: THREE.AdditiveBlending, depthWrite: false}));
@@ -231,68 +231,119 @@ function buildGlobe() {
 
 // ---------- robot chibi ----------
 function faceTexture(color, mood, blink) {
-  return canvasTexture(256, 176, (g, w, h) => {
-    const bg = g.createRadialGradient(w / 2, h / 2, 10, w / 2, h / 2, w * .7); bg.addColorStop(0, '#0b1634'); bg.addColorStop(1, '#030712');
+  return canvasTexture(320, 208, (g, w, h) => {
+    const bg = g.createRadialGradient(w / 2, h * .45, 10, w / 2, h / 2, w * .7); bg.addColorStop(0, '#0d1a3c'); bg.addColorStop(1, '#02050e');
     g.fillStyle = bg; g.fillRect(0, 0, w, h);
-    const c = mood === 'done' ? '#5cf2b8' : mood === 'waiting' ? rgba(color, .7) : '#9ff0ff';
-    g.strokeStyle = c; g.fillStyle = c; g.lineCap = 'round'; g.shadowColor = c; g.shadowBlur = 22;
-    for (const x of [82, 174]) {
-      g.lineWidth = 14; g.beginPath();
-      if (blink || mood === 'waiting') { g.moveTo(x - 24, 86); g.lineTo(x + 24, 86); }   // nhắm / lim dim
-      else g.arc(x, 98, 26, Math.PI * 1.12, Math.PI * 1.88);                               // mắt cười ^ ^
+    g.fillStyle = 'rgba(255,255,255,.07)'; g.beginPath(); g.ellipse(w * .32, h * .2, w * .28, h * .09, -.15, 0, Math.PI * 2); g.fill();  // vệt bóng kính
+    const c = mood === 'error' ? '#ff5d6c' : mood === 'done' ? '#5cf2b8' : mood === 'waiting' ? rgba(color, .75) : '#8ff3ff';
+    g.strokeStyle = c; g.fillStyle = c; g.lineCap = 'round'; g.shadowColor = c; g.shadowBlur = 26;
+    for (const x of [100, 220]) {
+      g.lineWidth = 17; g.beginPath();
+      if (mood === 'error') { g.moveTo(x - 22, 86); g.lineTo(x + 22, 122); g.moveTo(x + 22, 86); g.lineTo(x - 22, 122); }   // mắt X
+      else if (blink || mood === 'waiting') { g.moveTo(x - 28, 108); g.lineTo(x + 28, 108); }                                 // nhắm / lim dim
+      else g.arc(x, 122, 32, Math.PI * 1.13, Math.PI * 1.87);                                                                  // mắt cười ^ ^
       g.stroke();
     }
-    g.shadowBlur = 0; g.fillStyle = 'rgba(255,120,170,.45)';
-    g.beginPath(); g.ellipse(58, 128, 16, 8, 0, 0, Math.PI * 2); g.fill(); g.beginPath(); g.ellipse(198, 128, 16, 8, 0, 0, Math.PI * 2); g.fill();
-    g.strokeStyle = c; g.lineWidth = 6; g.shadowBlur = 12; g.beginPath(); g.arc(128, 122, mood === 'waiting' ? 8 : 15, Math.PI * .15, Math.PI * .85); g.stroke();
+    g.shadowBlur = 0; g.fillStyle = mood === 'error' ? 'rgba(255,80,100,.25)' : 'rgba(255,120,175,.5)';
+    g.beginPath(); g.ellipse(64, 156, 20, 10, 0, 0, Math.PI * 2); g.fill(); g.beginPath(); g.ellipse(256, 156, 20, 10, 0, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = c; g.lineWidth = 7; g.shadowBlur = 14; g.beginPath();
+    if (mood === 'error') { g.arc(160, 172, 14, Math.PI * 1.15, Math.PI * 1.85); }
+    else g.arc(160, 150, mood === 'waiting' ? 9 : 18, Math.PI * .15, Math.PI * .85);
+    g.stroke();
   });
 }
 
+// Thân robot dạng quả trứng (tiện tròn) cho vỏ bo cong mềm
+function shellGeometry(points, scaleZ = .82, segments = 48) {
+  const geo = new THREE.LatheGeometry(points.map(([x, y]) => new THREE.Vector2(x, y)), segments);
+  geo.scale(1, 1, scaleZ);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 function robot(color, master, trim) {
-  const shell = new THREE.MeshPhysicalMaterial({color: 0xf0f3f8, metalness: 0, roughness: .25, clearcoat: 1, clearcoatRoughness: .06, envMapIntensity: .4});
-  const joint = new THREE.MeshPhysicalMaterial({color: 0xb7c4dc, metalness: .7, roughness: .25, clearcoat: .6, envMapIntensity: .5});
-  const accent = new THREE.MeshPhysicalMaterial({color: trim || color, metalness: .8, roughness: .25, clearcoat: 1, emissive: trim || color, emissiveIntensity: .25});
-  const glass = new THREE.MeshPhysicalMaterial({color: 0x02060f, metalness: .3, roughness: .04, clearcoat: 1, envMapIntensity: 1});
+  const accentColor = trim || color;
+  const shell = new THREE.MeshPhysicalMaterial({color: 0xf3f6fb, metalness: 0, roughness: .23, clearcoat: 1, clearcoatRoughness: .05, envMapIntensity: .45});
+  const silver = new THREE.MeshPhysicalMaterial({color: 0xc3cede, metalness: .85, roughness: .22, clearcoat: .7, envMapIntensity: .6});
+  const darkJoint = new THREE.MeshPhysicalMaterial({color: 0x2a3550, metalness: .7, roughness: .3, clearcoat: .5, envMapIntensity: .5});
+  const accent = new THREE.MeshPhysicalMaterial({color: accentColor, metalness: .85, roughness: .22, clearcoat: 1, emissive: accentColor, emissiveIntensity: .22, envMapIntensity: .6});
+  const glass = new THREE.MeshPhysicalMaterial({color: 0x02050d, metalness: .4, roughness: .03, clearcoat: 1, envMapIntensity: 1.1});
   const light = new THREE.MeshBasicMaterial({color, toneMapped: false});
   const root = new THREE.Group();
-  const body = new THREE.Mesh(new RoundedBoxGeometry(.78, .66, .56, 6, .26), shell); body.position.y = .98; root.add(body);
-  const belt = new THREE.Mesh(new THREE.TorusGeometry(.33, .03, 8, 40), accent); belt.rotation.x = Math.PI / 2; belt.position.y = .78; belt.scale.set(1.15, .85, 1); root.add(belt);
-  const chest = new THREE.Mesh(new THREE.CircleGeometry(.11, 32), light); chest.position.set(0, 1.02, .285); root.add(chest);
-  const chestRing = new THREE.Mesh(new THREE.TorusGeometry(.13, .02, 10, 40), accent); chestRing.position.set(0, 1.02, .285); root.add(chestRing);
-  const head = new THREE.Group(); head.position.y = 1.9; root.add(head);
-  head.add(new THREE.Mesh(new RoundedBoxGeometry(1.24, .98, .96, 8, .42), shell));
-  const visor = new THREE.Mesh(new RoundedBoxGeometry(1.0, .66, .08, 6, .22), glass); visor.position.z = .46; head.add(visor);
-  const face = new THREE.Mesh(new THREE.PlaneGeometry(.88, .58), new THREE.MeshBasicMaterial({map: faceTexture(color, 'working'), toneMapped: false, transparent: true}));
-  face.position.z = .505; head.add(face);
-  for (const x of [-.66, .66]) {
-    const cup = new THREE.Mesh(new THREE.CylinderGeometry(.22, .22, .16, 32), accent); cup.rotation.z = Math.PI / 2; cup.position.x = x; head.add(cup);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(.13, .03, 10, 32), light); ring.rotation.y = Math.PI / 2; ring.position.x = x * 1.13; head.add(ring);
+  // thân: vỏ trứng + tấm ngực + đai eo
+  const torso = new THREE.Mesh(shellGeometry([[0, 0], [.2, .01], [.3, .06], [.37, .2], [.39, .36], [.36, .52], [.27, .63], [.12, .69], [0, .7]]), shell);
+  torso.position.y = .62; root.add(torso);
+  const chestPlate = new THREE.Mesh(new THREE.CylinderGeometry(.17, .17, .05, 40), silver); chestPlate.rotation.x = Math.PI / 2; chestPlate.position.set(0, 1.0, .29); root.add(chestPlate);
+  const chestRing = new THREE.Mesh(new THREE.TorusGeometry(.14, .022, 12, 48), accent); chestRing.position.set(0, 1.0, .318); root.add(chestRing);
+  const chest = new THREE.Mesh(new THREE.CircleGeometry(.1, 40), light); chest.position.set(0, 1.0, .32); root.add(chest);
+  const waist = new THREE.Mesh(new THREE.TorusGeometry(.3, .035, 10, 48), accent); waist.rotation.x = Math.PI / 2; waist.scale.set(1, .82, 1); waist.position.y = .68; root.add(waist);
+  const hip = new THREE.Mesh(shellGeometry([[0, 0], [.22, .02], [.28, .1], [.26, .18], [0, .2]], .82, 32), silver); hip.position.y = .5; root.add(hip);
+  for (const side of [-1, 1]) {  // các vạch vỏ tạo chi tiết cơ khí
+    const seam = new THREE.Mesh(new THREE.TorusGeometry(.37, .006, 6, 48, Math.PI * .5), darkJoint);
+    seam.rotation.set(0, side * Math.PI / 2, Math.PI / 2); seam.position.set(side * .02, .98, 0); root.add(seam);
   }
-  const band = new THREE.Mesh(new THREE.TorusGeometry(.66, .045, 10, 40, Math.PI), joint); band.position.y = .05; head.add(band);
-  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(.02, .02, .22, 8), joint); antenna.position.y = .6; head.add(antenna);
-  const tip = new THREE.Mesh(new THREE.SphereGeometry(.06, 16, 12), light); tip.position.y = .74; head.add(tip);
+  // cổ + đầu
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(.11, .14, .16, 24), darkJoint); neck.position.y = 1.38; root.add(neck);
+  const neckRing = new THREE.Mesh(new THREE.TorusGeometry(.13, .02, 8, 32), accent); neckRing.rotation.x = Math.PI / 2; neckRing.position.y = 1.33; root.add(neckRing);
+  const head = new THREE.Group(); head.position.y = 1.92; root.add(head);
+  head.add(new THREE.Mesh(new RoundedBoxGeometry(1.26, 1.0, .98, 10, .44), shell));
+  const back = new THREE.Mesh(new RoundedBoxGeometry(.9, .7, .2, 6, .1), silver); back.position.z = -.46; head.add(back);
+  const bezel = new THREE.Mesh(new RoundedBoxGeometry(1.06, .74, .08, 8, .26), darkJoint); bezel.position.z = .455; head.add(bezel);
+  const visor = new THREE.Mesh(new RoundedBoxGeometry(.98, .66, .08, 8, .23), glass); visor.position.z = .485; head.add(visor);
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(.9, .58), new THREE.MeshBasicMaterial({map: faceTexture(color, 'working'), toneMapped: false, transparent: true}));
+  face.position.z = .528; head.add(face);
+  for (const x of [-.66, .66]) {  // tai nghe nhiều lớp
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(.25, .25, .14, 40), accent); cup.rotation.z = Math.PI / 2; cup.position.x = x; head.add(cup);
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(.18, .18, .16, 32), silver); pad.rotation.z = Math.PI / 2; pad.position.x = x * 1.04; head.add(pad);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(.14, .028, 10, 40), light); ring.rotation.y = Math.PI / 2; ring.position.x = x * 1.13; head.add(ring);
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(.06, 24), light); dot.rotation.y = Math.sign(x) * Math.PI / 2; dot.position.x = x * 1.135; head.add(dot);
+  }
+  const band = new THREE.Mesh(new THREE.TorusGeometry(.68, .05, 12, 48, Math.PI), silver); band.position.y = .04; head.add(band);
+  let tip = null;
+  if (!master) {  // ăng-ten
+    const antenna = new THREE.Mesh(new THREE.CylinderGeometry(.02, .025, .24, 10), silver); antenna.position.y = .62; head.add(antenna);
+    tip = new THREE.Mesh(new THREE.SphereGeometry(.065, 20, 14), light); tip.position.y = .77; head.add(tip);
+  }
+  // tay: vai → khuỷu → bàn tay 3 ngón
   const arms = [];
   for (const side of [-1, 1]) {
-    const pivot = new THREE.Group(); pivot.position.set(side * .47, 1.18, 0); root.add(pivot);
-    pivot.add(new THREE.Mesh(new THREE.SphereGeometry(.12, 20, 16), joint));
-    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(.1, .28, 8, 16), shell); arm.position.set(0, -.22, 0); pivot.add(arm);
-    const hand = new THREE.Group(); hand.position.set(0, -.44, 0); pivot.add(hand);
-    hand.add(new THREE.Mesh(new THREE.SphereGeometry(.11, 20, 16), joint));
-    const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(.035, .1, 4, 8), joint); thumb.position.set(side * -.06, -.02, .1); thumb.rotation.x = 1.2; thumb.visible = false; hand.add(thumb);
-    pivot.rotation.x = -1.05; pivot.rotation.z = side * .14;
-    arms.push({pivot, thumb, side});
+    const shoulder = new THREE.Group(); shoulder.position.set(side * .42, 1.16, 0); root.add(shoulder);
+    shoulder.add(new THREE.Mesh(new THREE.SphereGeometry(.13, 24, 18), accent));
+    const upper = new THREE.Mesh(new THREE.CapsuleGeometry(.085, .16, 8, 18), shell); upper.position.y = -.17; shoulder.add(upper);
+    const elbow = new THREE.Group(); elbow.position.y = -.32; shoulder.add(elbow);
+    elbow.add(new THREE.Mesh(new THREE.SphereGeometry(.085, 20, 14), darkJoint));
+    const fore = new THREE.Mesh(new THREE.CapsuleGeometry(.095, .16, 8, 18), shell); fore.position.y = -.16; elbow.add(fore);
+    const cuff = new THREE.Mesh(new THREE.TorusGeometry(.085, .018, 8, 24), accent); cuff.rotation.x = Math.PI / 2; cuff.position.y = -.27; elbow.add(cuff);
+    const hand = new THREE.Group(); hand.position.y = -.36; elbow.add(hand);
+    hand.add(new THREE.Mesh(new THREE.SphereGeometry(.095, 20, 14), silver));
+    for (let f = 0; f < 3; f++) {
+      const finger = new THREE.Mesh(new THREE.CapsuleGeometry(.026, .07, 4, 8), silver);
+      finger.position.set((f - 1) * .045, -.1, .03); finger.rotation.x = .25; hand.add(finger);
+    }
+    const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(.03, .09, 4, 8), silver);
+    thumb.position.set(-side * .07, -.02, .07); thumb.rotation.set(1.1, 0, side * .4); hand.add(thumb);
+    arms.push({shoulder, elbow, hand, thumb, side});
+  }
+  // Master đứng: chân + bàn chân
+  if (master) {
+    for (const side of [-1, 1]) {
+      const leg = new THREE.Mesh(new THREE.CapsuleGeometry(.1, .22, 8, 16), shell); leg.position.set(side * .16, .3, 0); root.add(leg);
+      const knee = new THREE.Mesh(new THREE.TorusGeometry(.1, .02, 8, 24), accent); knee.rotation.x = Math.PI / 2; knee.position.set(side * .16, .34, 0); root.add(knee);
+      const foot = new THREE.Mesh(new RoundedBoxGeometry(.22, .1, .32, 4, .05), silver); foot.position.set(side * .16, .06, .04); root.add(foot);
+    }
   }
   let crown = null;
   if (master) {
-    const gold = new THREE.MeshPhysicalMaterial({color: 0xffc83d, metalness: 1, roughness: .16, clearcoat: 1, emissive: 0x5a3400, emissiveIntensity: .6});
-    crown = new THREE.Group(); crown.position.y = .56; head.add(crown);
-    crown.add(new THREE.Mesh(new THREE.CylinderGeometry(.34, .36, .16, 40, 1, true), gold));
+    const gold = new THREE.MeshPhysicalMaterial({color: 0xffc83d, metalness: 1, roughness: .15, clearcoat: 1, emissive: 0x5a3400, emissiveIntensity: .6});
+    crown = new THREE.Group(); crown.position.y = .58; head.add(crown);
+    crown.add(new THREE.Mesh(new THREE.CylinderGeometry(.34, .37, .17, 48, 1, true), gold));
+    const band2 = new THREE.Mesh(new THREE.TorusGeometry(.36, .025, 8, 48), gold); band2.rotation.x = Math.PI / 2; band2.position.y = -.07; crown.add(band2);
     for (let i = 0; i < 5; i++) {
-      const a = i / 5 * Math.PI * 2, spike = new THREE.Mesh(new THREE.ConeGeometry(.08, .28, 12), gold);
-      spike.position.set(Math.sin(a) * .34, .2, Math.cos(a) * .34); crown.add(spike);
-      const ball = new THREE.Mesh(new THREE.SphereGeometry(.04, 12, 8), gold); ball.position.set(Math.sin(a) * .34, .36, Math.cos(a) * .34); crown.add(ball);
-      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(.05), new THREE.MeshBasicMaterial({color: [0xff4f6d, 0x5ab8ff, 0x34e0a8][i % 3], toneMapped: false}));
-      gem.position.set(Math.sin(a) * .37, 0, Math.cos(a) * .37); crown.add(gem);
+      const a = i / 5 * Math.PI * 2, spike = new THREE.Mesh(new THREE.ConeGeometry(.085, .3, 16), gold);
+      spike.position.set(Math.sin(a) * .34, .22, Math.cos(a) * .34); crown.add(spike);
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(.045, 14, 10), gold); ball.position.set(Math.sin(a) * .34, .39, Math.cos(a) * .34); crown.add(ball);
+      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(.055), new THREE.MeshBasicMaterial({color: [0xff4f6d, 0x5ab8ff, 0x34e0a8][i % 3], toneMapped: false}));
+      gem.position.set(Math.sin(a) * .375, 0, Math.cos(a) * .375); crown.add(gem);
     }
   }
   root.userData = {head, arms, light, face, tip, crown, mood: '', blink: false, color, baseColor: new THREE.Color(color), master};
@@ -302,14 +353,22 @@ function robot(color, master, trim) {
 
 function chair(color) {
   const group = new THREE.Group();
-  const dark = new THREE.MeshPhysicalMaterial({color: 0x1b2238, metalness: .3, roughness: .4, clearcoat: .7, envMapIntensity: .4});
+  const dark = new THREE.MeshPhysicalMaterial({color: 0x1b2238, metalness: .3, roughness: .38, clearcoat: .8, envMapIntensity: .45});
   const metal = new THREE.MeshStandardMaterial({color: 0xb9c6dc, metalness: .9, roughness: .2});
-  const seat = new THREE.Mesh(new RoundedBoxGeometry(1.0, .18, .9, 4, .08), dark); seat.position.y = .5; group.add(seat);
-  const back = new THREE.Mesh(new RoundedBoxGeometry(1.0, 1.25, .2, 4, .1), dark); back.position.set(0, 1.18, -.48); back.rotation.x = -.12; group.add(back);
-  for (const x of [-.55, .55]) { const armrest = new THREE.Mesh(new RoundedBoxGeometry(.12, .1, .7, 2, .04), dark); armrest.position.set(x, .78, -.05); group.add(armrest); }
-  const trim = new THREE.Mesh(new THREE.BoxGeometry(.8, .035, .02), glow(color, 1)); trim.position.set(0, 1.72, -.36); group.add(trim);
+  const seat = new THREE.Mesh(new RoundedBoxGeometry(1.05, .2, .95, 5, .09), dark); seat.position.y = .5; group.add(seat);
+  const back = new THREE.Mesh(new RoundedBoxGeometry(1.05, 1.35, .22, 5, .11), dark); back.position.set(0, 1.22, -.5); back.rotation.x = -.12; group.add(back);
+  const headrest = new THREE.Mesh(new RoundedBoxGeometry(.7, .32, .2, 4, .09), dark); headrest.position.set(0, 2.02, -.6); headrest.rotation.x = -.12; group.add(headrest);
+  for (const x of [-.6, .6]) {
+    const wing = new THREE.Mesh(new RoundedBoxGeometry(.14, 1.0, .3, 3, .06), dark); wing.position.set(x * .92, 1.25, -.42); wing.rotation.set(-.12, x > 0 ? -.35 : .35, 0); group.add(wing);
+    const armrest = new THREE.Mesh(new RoundedBoxGeometry(.13, .1, .72, 3, .04), metal); armrest.position.set(x, .8, -.05); group.add(armrest);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(.03, .03, .28, 8), metal); post.position.set(x, .65, -.1); group.add(post);
+  }
+  for (const x of [-.42, .42]) { const trim = new THREE.Mesh(new THREE.BoxGeometry(.03, 1.1, .02), glow(color, 1)); trim.position.set(x, 1.22, -.37); trim.rotation.x = -.12; group.add(trim); }
   const stem = new THREE.Mesh(new THREE.CylinderGeometry(.06, .06, .42, 12), metal); stem.position.y = .25; group.add(stem);
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(.42, .46, .06, 32), metal); base.position.y = .03; group.add(base);
+  for (let i = 0; i < 5; i++) {
+    const a = i / 5 * Math.PI * 2, spoke = new THREE.Mesh(new THREE.BoxGeometry(.5, .04, .06), metal);
+    spoke.position.set(Math.cos(a) * .22, .05, Math.sin(a) * .22); spoke.rotation.y = -a; group.add(spoke);
+  }
   return group;
 }
 
@@ -322,22 +381,25 @@ function arcShape(rIn, rOut, half) {
 
 function desk(color) {
   const group = new THREE.Group();
-  const top = new THREE.MeshPhysicalMaterial({color: 0xf2f5fb, metalness: .2, roughness: .2, clearcoat: 1, envMapIntensity: .6});
-  const side = new THREE.MeshPhysicalMaterial({color: 0x1c2747, metalness: .7, roughness: .22, clearcoat: 1, envMapIntensity: .7});
-  const half = .7;
-  const plate = new THREE.Mesh(new THREE.ExtrudeGeometry(arcShape(.85, 1.6, half), {depth: .1, bevelEnabled: true, bevelThickness: .03, bevelSize: .03, bevelSegments: 3, curveSegments: 56}), top);
-  plate.rotation.x = Math.PI / 2; plate.position.y = 1.12; group.add(plate);
-  const front = new THREE.Mesh(new THREE.CylinderGeometry(1.58, 1.4, 1.0, 64, 1, true, -half, half * 2), side); front.position.y = .55; group.add(front);
-  const inner = new THREE.Mesh(new THREE.CylinderGeometry(.86, .86, 1.0, 48, 1, true, -half, half * 2), side); inner.position.y = .55; group.add(inner);
-  for (const y of [.98, .12]) {
-    const trim = new THREE.Mesh(new THREE.TorusGeometry(y > .5 ? 1.6 : 1.42, .02, 8, 64, half * 2), glow(color, 1));
+  const top = new THREE.MeshPhysicalMaterial({color: 0xe9eef7, metalness: .55, roughness: .16, clearcoat: 1, envMapIntensity: .7});
+  const side = new THREE.MeshPhysicalMaterial({color: 0x1a2546, metalness: .75, roughness: .2, clearcoat: 1, envMapIntensity: .8});
+  const chrome = new THREE.MeshPhysicalMaterial({color: 0xd5deec, metalness: 1, roughness: .12, clearcoat: 1, envMapIntensity: .9});
+  const half = .82;
+  const plate = new THREE.Mesh(new THREE.ExtrudeGeometry(arcShape(.9, 1.75, half), {depth: .12, bevelEnabled: true, bevelThickness: .04, bevelSize: .04, bevelSegments: 4, curveSegments: 64}), top);
+  plate.rotation.x = Math.PI / 2; plate.position.y = 1.16; group.add(plate);
+  const lip = new THREE.Mesh(new THREE.TorusGeometry(1.79, .04, 10, 72, half * 2), chrome); lip.rotation.x = -Math.PI / 2; lip.rotation.z = Math.PI / 2 - half; lip.position.y = 1.1; group.add(lip);
+  const front = new THREE.Mesh(new THREE.CylinderGeometry(1.72, 1.45, 1.04, 72, 1, true, -half, half * 2), side); front.position.y = .56; group.add(front);
+  const inner = new THREE.Mesh(new THREE.CylinderGeometry(.92, .92, 1.04, 48, 1, true, -half, half * 2), side); inner.position.y = .56; group.add(inner);
+  for (const [r, y] of [[1.72, .96], [1.5, .16]]) {
+    const trim = new THREE.Mesh(new THREE.TorusGeometry(r, .022, 8, 72, half * 2), glow(color, 1));
     trim.rotation.x = -Math.PI / 2; trim.rotation.z = Math.PI / 2 - half; trim.position.y = y; group.add(trim);
   }
-  const keys = new THREE.Mesh(new THREE.PlaneGeometry(.7, .22), new THREE.MeshBasicMaterial({map: canvasTexture(140, 44, (g, w, h) => {
+  const base = new THREE.Mesh(new THREE.TorusGeometry(1.48, .06, 10, 72, half * 2), chrome); base.rotation.x = -Math.PI / 2; base.rotation.z = Math.PI / 2 - half; base.position.y = .04; group.add(base);
+  const keys = new THREE.Mesh(new THREE.PlaneGeometry(.74, .24), new THREE.MeshBasicMaterial({map: canvasTexture(150, 48, (g, w, h) => {
     g.fillStyle = '#0a1430'; g.fillRect(0, 0, w, h); g.fillStyle = hexOf(color);
     for (let y = 5; y < h - 5; y += 10) for (let x = 5; x < w - 5; x += 11) g.fillRect(x, y, 8, 7);
   }), toneMapped: false}));
-  keys.rotation.x = -Math.PI / 2; keys.position.set(0, 1.235, 1.05); group.add(keys);
+  keys.rotation.x = -Math.PI / 2; keys.position.set(0, 1.335, 1.1); group.add(keys);
   return group;
 }
 
@@ -545,7 +607,8 @@ function placeLabels() {
     el.style.transform = `translate(-50%, 0) translate(${(v.x * .5 + .5) * w}px, ${(-v.y * .5 + .5) * h}px)`;
     el.style.opacity = v.z < 1 ? '1' : '0';
     el.style.zIndex = String(Math.round((1 - v.z) * 10000));
-    el.classList.toggle('compact', Math.abs(Math.atan2(Math.sin(view.theta), Math.cos(view.theta))) > .5 || view.radius > 17);
+    el.classList.toggle('compact', view.focus ? view.focus !== id : (Math.abs(Math.atan2(Math.sin(view.theta), Math.cos(view.theta))) > .5 || view.radius > 17));
+    el.classList.toggle('focus', view.focus === id);
     el.classList.toggle('hover', hovered === id);
   }
 }
@@ -566,11 +629,15 @@ function frame() {
   const dt = Math.min(clock.getDelta(), .05);
   view.t += dt; view.intro = (performance.now() - view.start) / 2600;  // theo giờ thật: máy chậm cũng bay vào đúng 2,6 giây
   const t = view.t;
-  if (view.auto && !view.drag) view.theta += (Math.sin(t * .08) * .45 - view.theta) * .01;
+  if (view.goal) {  // camera bay tới robot được chọn (hoặc về góc mặc định)
+    const g = view.goal, k = 1 - Math.pow(.02, dt);
+    view.target.lerp(g.target, k); view.radius += (g.radius - view.radius) * k; view.phi += (g.phi - view.phi) * k;
+    view.theta += (Math.atan2(Math.sin(g.theta - view.theta), Math.cos(g.theta - view.theta))) * k;
+  } else if (view.auto && !view.drag) view.theta += (Math.sin(t * .08) * .45 - view.theta) * .01;
   applyCamera();
   // địa cầu, quỹ đạo, vệt quét, bụi, cây, đèn nóc toà nhà, xe bay
   const gl = parts.globe;
-  if (gl) { gl.group.rotation.y += dt * .15; gl.wire.rotation.y -= dt * .04; for (const o of gl.orbits) o.pivot.rotation.y += dt * o.sp; gl.group.position.y = 6.9 + Math.sin(t * .6) * .08; }
+  if (gl) { gl.group.rotation.y += dt * .15; gl.wire.rotation.y -= dt * .04; for (const o of gl.orbits) o.pivot.rotation.y += dt * o.sp; gl.group.position.y = 6.55 + Math.sin(t * .6) * .08; }
   for (const scan of parts.scan) scan.rotation.z -= dt * .3;
   if (parts.halo) parts.halo.rotation.z += dt * .4;
   if (parts.dust) {
@@ -591,22 +658,34 @@ function frame() {
   // robot
   for (const [id, bot] of Object.entries(parts.robots)) {
     const st = state[id] || 'waiting', u = bot.userData, time = t + id.length * 1.7, working = st === 'working';
-    setFace(bot, st === 'error' ? 'waiting' : st === 'working' ? 'working' : st, (time % 4.4) < .12 && st !== 'waiting');
-    u.head.rotation.z = working ? Math.sin(time * 3.4) * .06 : Math.sin(time * .7) * .04;
-    u.head.rotation.x = working && !u.master ? .1 + Math.sin(time * 1.2) * .04 : Math.sin(time * .5) * .02;
-    if (u.master) {  // Master dang tay điều phối
-      u.arms.forEach(({pivot, side}) => { pivot.rotation.x = -.6 + Math.sin(time * 1.6 + side) * .12; pivot.rotation.z = side * (1.0 + Math.sin(time * 1.3) * .15); });
-    } else if (id === 'studio' && st !== 'waiting' && Math.sin(time * .5) > .55) {  // giơ ngón cái
-      u.arms.forEach(({pivot, thumb, side}) => { const up = side < 0; pivot.rotation.x = up ? -1.9 : -1.05; pivot.rotation.z = side * (up ? .5 : .14); thumb.visible = up; });
-    } else {
-      u.arms.forEach(({pivot, thumb, side}, i) => { thumb.visible = false; pivot.rotation.z = side * .14; pivot.rotation.x = -1.05 + (working ? Math.sin(time * 16 + i * Math.PI) * .14 : Math.sin(time * .8 + i) * .03); });
+    setFace(bot, st, (time % 4.4) < .12 && st !== 'waiting' && st !== 'error');
+    u.head.rotation.z = working ? Math.sin(time * 3.4) * .06 : st === 'error' ? Math.sin(time * 9) * .05 : Math.sin(time * .7) * .04;
+    u.head.rotation.x = working && !u.master ? .12 + Math.sin(time * 1.2) * .04 : st === 'error' ? .2 : Math.sin(time * .5) * .02;
+    u.head.rotation.y = u.master ? Math.sin(time * .45) * .25 : 0;
+    if (u.master) {  // Master dang tay điều phối, khuỷu tay co nhịp nhàng
+      u.arms.forEach(({shoulder, elbow, side}) => {
+        shoulder.rotation.set(-.35 + Math.sin(time * 1.4 + side) * .12, 0, side * (1.05 + Math.sin(time * 1.2) * .12));
+        elbow.rotation.set(-.5 - Math.sin(time * 1.4 + side) * .2, 0, side * -.3);
+      });
+    } else if (id === 'studio' && st !== 'waiting' && st !== 'error' && Math.sin(time * .5) > .55) {  // giơ ngón cái
+      u.arms.forEach(({shoulder, elbow, side}) => {
+        if (side < 0) { shoulder.rotation.set(-1.25, 0, -.35); elbow.rotation.set(-1.6, 0, 0); }
+        else { shoulder.rotation.set(-.75, 0, .12); elbow.rotation.set(-.85, 0, 0); }
+      });
+    } else {  // gõ phím: vai đưa ra trước, khuỷu co, cẳng tay nhịp lên xuống
+      u.arms.forEach(({shoulder, elbow, side}, i) => {
+        const type = working ? Math.sin(time * 15 + i * Math.PI) * .16 : Math.sin(time * .8 + i) * .03;
+        shoulder.rotation.set(-.75 + type * .4, 0, side * .12);
+        elbow.rotation.set(-.85 + type, 0, 0);
+      });
     }
-    u.light.color.set(st === 'done' ? 0x5cf2b8 : st === 'waiting' ? u.baseColor.clone().multiplyScalar(.55) : u.baseColor);
-    u.tip.visible = !working || Math.sin(time * 10) > -.3;
+    u.light.color.set(st === 'error' ? 0xff4d5e : st === 'done' ? 0x5cf2b8 : st === 'waiting' ? u.baseColor.clone().multiplyScalar(.55) : u.baseColor);
+    if (u.tip) u.tip.visible = !working || Math.sin(time * 10) > -.3;
     if (u.crown) u.crown.rotation.y = time * .5;
     if (u.floatBase !== undefined) bot.position.y = u.floatBase + Math.sin(time * 1.3) * .06;
     const [r1, r2] = parts.rings[id];
-    r1.scale.setScalar(working ? 1 + Math.sin(time * 3) * .04 : 1); r1.material.opacity = working ? 1 : st === 'done' ? .75 : .45;
+    r1.scale.setScalar(working ? 1 + Math.sin(time * 3) * .04 : 1); r1.material.opacity = working ? 1 : st === 'done' ? .75 : st === 'error' ? .6 + Math.sin(time * 8) * .4 : .45;
+    r1.material.color.set(st === 'error' ? 0xff4d5e : AGENTS[id].color);
     r2.rotation.z += dt * (working ? .8 : .2);
     parts.lights[id].intensity = working ? 1.6 + Math.sin(time * 3) * .4 : st === 'done' ? 1 : .5;
     bot.scale.setScalar((u.master ? 1.3 : 1) * (hovered === id ? 1.06 : 1));
@@ -637,6 +716,15 @@ function frame() {
   raf = requestAnimationFrame(frame);
 }
 
+function focusOn(id) {
+  if (!id) { view.goal = {target: new THREE.Vector3(HOME.tx, HOME.ty, HOME.tz), radius: HOME.radius, phi: HOME.phi, theta: 0}; view.focus = null;
+    setTimeout(() => { if (!view.focus) view.goal = null; }, 2500); return; }
+  const a = AGENTS[id], p = new THREE.Vector3(...a.pos);
+  view.focus = id;
+  view.goal = {target: new THREE.Vector3(p.x, a.master ? 3.2 : 2.0, p.z + (a.master ? 0 : .4)), radius: a.master ? 7.5 : 6.2, phi: 1.28, theta: a.rot || 0};
+  host.dispatchEvent(new CustomEvent('hq-focus', {detail: id}));
+}
+
 function pick(e) {
   const r = canvas.getBoundingClientRect();
   pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
@@ -645,6 +733,7 @@ function pick(e) {
   const bot = hit?.object.userData.robot;
   hovered = bot ? Object.keys(parts.robots).find(id => parts.robots[id] === bot) : null;
   canvas.style.cursor = hovered ? 'pointer' : 'grab';
+  canvas.title = hovered ? 'Bấm để phóng tới agent này' : '';
 }
 
 export function mount(container, canvasElement, labelElements) {
@@ -665,10 +754,10 @@ export function mount(container, canvasElement, labelElements) {
     const pmrem = new THREE.PMREMGenerator(renderer);
     scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), .04).texture;
   } catch (error) { /* không có phản chiếu môi trường vẫn chạy */ }
-  camera = new THREE.PerspectiveCamera(42, 16 / 9, .1, 200);
+  camera = new THREE.PerspectiveCamera(48, 16 / 9, .1, 200);
   scene.add(new THREE.HemisphereLight(0xa9c8ff, 0x2a1840, .42));
   const front = new THREE.DirectionalLight(0xe8f0ff, .45); front.position.set(0, 9, 16); scene.add(front);
-  const sun = new THREE.DirectionalLight(0xffb48a, .9); sun.position.set(-10, 8, -14); scene.add(sun);
+  const sun = new THREE.DirectionalLight(0xffb48a, .55); sun.position.set(-10, 14, -14); scene.add(sun);
   const fill = new THREE.DirectionalLight(0x9fc4ff, .55); fill.position.set(8, 10, 12); scene.add(fill);
   const center = new THREE.PointLight(0x5ab8ff, 3, 16, 1.6); center.position.set(0, 7.5, -2); scene.add(center);
   buildSky(); buildCity(); buildVehicles(); buildRoom(); buildGlobe(); buildAgents(); buildDust();
@@ -682,17 +771,23 @@ export function mount(container, canvasElement, labelElements) {
     composer = null;
   }
   clock = new THREE.Clock();
-  canvas.addEventListener('pointerdown', e => { view.drag = {x: e.clientX, y: e.clientY}; canvas.setPointerCapture(e.pointerId); view.start = Math.min(view.start || 0, performance.now() - 3000); });
+  canvas.addEventListener('pointerdown', e => { view.drag = {x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY}; if (view.goal && !view.focus) view.goal = null; canvas.setPointerCapture(e.pointerId); view.start = Math.min(view.start || 0, performance.now() - 3000); });
   canvas.addEventListener('pointermove', e => {
     if (!view.drag) { pick(e); return; }
     view.theta -= (e.clientX - view.drag.x) * .006;
     view.phi = Math.max(.6, Math.min(1.45, view.phi - (e.clientY - view.drag.y) * .004));
-    view.drag = {x: e.clientX, y: e.clientY};
+    view.drag = {...view.drag, x: e.clientX, y: e.clientY};
+    if (view.focus && Math.hypot(e.clientX - view.drag.sx, e.clientY - view.drag.sy) > 6) { view.goal = null; view.focus = null; }
   });
-  const end = () => { view.drag = null; };
-  canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end);
+  const end = e => {
+    const d = view.drag; view.drag = null;
+    if (!d || !e || Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 6) return;  // kéo xoay, không phải bấm
+    pick(e);
+    focusOn(hovered && hovered !== view.focus ? hovered : null);  // bấm robot: bay tới; bấm lại / bấm chỗ trống: về mặc định
+  };
+  canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', () => { view.drag = null; });
   canvas.addEventListener('pointerleave', () => { hovered = null; });
-  canvas.addEventListener('wheel', e => { e.preventDefault(); view.radius = Math.max(7, Math.min(22, view.radius * (e.deltaY < 0 ? .92 : 1.08))); }, {passive: false});
+  canvas.addEventListener('wheel', e => { e.preventDefault(); const k = e.deltaY < 0 ? .92 : 1.08; if (view.goal) view.goal.radius = Math.max(4, Math.min(22, view.goal.radius * k)); else view.radius = Math.max(5, Math.min(22, view.radius * k)); }, {passive: false});
   new ResizeObserver(resize).observe(host);
   resize();
   return true;
@@ -701,7 +796,8 @@ export function mount(container, canvasElement, labelElements) {
 export function start() { if (!renderer || running) return; running = true; clock.getDelta(); if (!view.start) view.start = performance.now(); raf = requestAnimationFrame(frame); }
 export function stop() { running = false; if (raf) cancelAnimationFrame(raf); raf = 0; }
 export function setAuto(on) { view.auto = on; }
-export function resetView() { Object.assign(view, HOME); }
+export function focus(id) { focusOn(id || null); }
+export function resetView() { focusOn(null); }
 
 // states: {conductor|analyst|writer|studio: waiting/working/done/error}; lines: {id: [{name, pct}]}; pct: % của video đang theo dõi
 export function update(states, lines, pct) {
