@@ -1606,7 +1606,7 @@ function olderVersion(a,b){if(!a||!b)return false;const x=String(a).split('.').m
 function agoText(sec){const s=Math.max(0,Math.round(Date.now()/1000-sec));if(s<60)return 'vừa xong';if(s<3600)return `${Math.floor(s/60)} phút trước`;if(s<86400)return `${Math.floor(s/3600)} giờ trước`;return `${Math.floor(s/86400)} ngày trước`;}
 function renderClientsCard(info){
   $('clientsCard').hidden=!info;if(!info){clearInterval(clientsTimer);clientsTimer=null;return;}
-  $('clientsSetup').hidden=info.enabled;$('clientsWrap').hidden=!info.enabled;
+  $('clientsSetup').hidden=info.enabled;$('clientsWrap').hidden=!info.enabled;$('clientsRepublish').hidden=!info.enabled;
   if(!info.enabled){$('clientsChip').textContent='Chưa bật';$('clientsChip').className='status-chip';$('clientsText').textContent='Bật để thấy máy khách nào đang mở tool, phiên bản app, hạn bản quyền và số video đang chạy. Máy khách gửi nhịp tim mỗi 10 phút, đã mã hóa bằng khóa riêng của bạn (trạm chuyển tin chỉ thấy chuỗi mã hóa).';return;}
   if(!clientsTimer){loadClients();clientsTimer=setInterval(()=>{if(!$('licenseView').hidden)loadClients();},60000);}
 }
@@ -1622,6 +1622,9 @@ async function loadClients(){
   finally{clientsBusy=false;}
 }
 $('clientsRefresh').onclick=()=>loadClients();
+$('clientsRepublish').onclick=async()=>{const b=$('clientsRepublish');b.disabled=true;const label=b.textContent;b.textContent='Đang đăng key…';
+  try{const r=await api('/api/license/beacon',{});toast(r.error?`Đăng được ${r.published}/${r.count} key; lỗi: ${r.error}`:`Đã đăng ${r.published}/${r.count} key. Máy khách (bản 1.1.200 trở lên) tự nhận trong khoảng 15 phút rồi hiện ở bảng.`,Boolean(r.error));}
+  catch(error){toast(error.message,true);}finally{b.disabled=false;b.textContent=label;}};
 $('clientsEnable').onclick=async()=>{if(!confirm('Bật theo dõi máy khách online? Tool cấp lại key (giữ nguyên hạn, role, quyền) cho mọi tài khoản đang hoạt động và đăng lên kênh tự cập nhật.'))return;
   try{const r=await api('/api/license/beacon',{});toast(r.error?`Đã bật. Đăng được ${r.published}/${r.count} key; lỗi: ${r.error}`:`Đã bật theo dõi. ${r.published}/${r.count} máy khách sẽ tự nhận key mới và báo online trong khoảng 15–25 phút.`,Boolean(r.error));await loadLicense();}catch(error){toast(error.message,true);}};
 function renderRevocation(r,scope){

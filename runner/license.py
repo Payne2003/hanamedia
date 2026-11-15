@@ -103,6 +103,12 @@ def update_secret(license_id):
     return f"keys/u-{name}.txt", key
 
 
+class _Conflict(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
 class LicenseError(ValueError):
     pass
 
@@ -358,6 +364,7 @@ class LicenseManager:
             revocation = license_trust.REVOCATION if frozen() else {}
         self.revocation = revocation or {}
         self.http = http or http_request
+        self.sleep = time.sleep
         with store.connect() as db:
             db.executescript(self.SCHEMA)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(licenses)")}
@@ -957,12 +964,24 @@ class LicenseManager:
     def push_file(self, token, r, text, count):
         return self.push_path(token, r, r["file"], text, f"Cập nhật danh sách thu hồi bản quyền ({count} key)")
 
-    def push_path(self, token, r, file, text, message):
+    def push_path(self, token, r, file, text, message, attempts=6):
+        """Ghi một file lên kho. GitHub trả 409/422 khi nhánh vừa đổi (ghi nhiều file liền nhau) → đợi rồi thử lại
+        với mã sha mới nhất."""
+        last = None
+        for attempt in range(attempts):
+            try:
+                return self._push_once(token, r, file, text, message)
+            except _Conflict as conflict:
+                last = conflict
+                self.sleep(min(1.5 * (attempt + 1), 6))
+        raise LicenseError(f"GitHub báo xung đột (mã {last.code}) khi ghi {file}; đã thử lại {attempts} lần. Bấm lại sau ít phút.")
+
+    def _push_once(self, token, r, file, text, message):
         repo, branch = r["repo"], r["branch"]
         explain = {401: "Token GitHub sai hoặc đã hết hạn.",
                    403: f"Token không có quyền ghi (Contents: Read and write) vào kho {repo}.",
                    404: f"Token không truy cập được kho {repo}."}
-        code, data = self.github("GET", f"/repos/{repo}/contents/{file}?ref={branch}", token)
+        code, data = self.github("GET", f"/repos/{repo}/contents/{file}?ref={branch}&t={int(time.time() * 1000)}", token)
         sha = data.get("sha") if code == 200 else None
         if code == 404:
             code, _ = self.github("GET", f"/repos/{repo}/git/ref/heads/{branch}", token)
@@ -975,6 +994,8 @@ class LicenseManager:
                     raise LicenseError(explain.get(code, f"GitHub trả mã {code}."))
                 code, _ = self.github("POST", f"/repos/{repo}/git/refs", token,
                                       {"ref": f"refs/heads/{branch}", "sha": ref.get("object", {}).get("sha")})
+                if code == 422:
+                    raise _Conflict(code)  # nhánh vừa được tạo bởi lần ghi khác
                 if code != 201:
                     raise LicenseError(explain.get(code, f"Không tạo được nhánh {branch} (mã {code})."))
         elif code != 200:
@@ -983,6 +1004,8 @@ class LicenseManager:
         if sha:
             body["sha"] = sha
         code, _ = self.github("PUT", f"/repos/{repo}/contents/{file}", token, body)
+        if code in (409, 422):
+            raise _Conflict(code)
         if code not in (200, 201):
             raise LicenseError(explain.get(code, f"GitHub trả mã {code} khi đăng danh sách."))
         return {"ok": True}
