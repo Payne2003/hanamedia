@@ -1168,3 +1168,14 @@ table.board th:first-child{width:24%}table.board th:last-child{width:12%}table.b
 .gate-code{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.gate-code code{font-size:1.15rem;letter-spacing:.06em;padding:8px 12px;border-radius:8px;background:var(--c-input);border:1px dashed var(--c-accent);overflow-wrap:anywhere}
 .gate-form{display:flex;gap:10px;border:0;padding:0;margin:0}.gate-form input{margin:0;font-family:ui-monospace,Consolas,monospace}
 .gate-form button{white-space:nowrap;flex:none}
+
+/* Máy khách online */
+.clients-card{padding:18px 20px;margin-bottom:16px}.clients-card .rc-head{display:flex;align-items:center;gap:10px}
+.clients-card .rc-actions small{display:block;color:var(--muted);font-size:var(--fs-xs);margin-top:6px;max-width:720px}
+.clients-table{min-width:900px;table-layout:fixed}.clients-table th:nth-child(1){width:34px}.clients-table th:nth-child(2){width:20%}.clients-table th:nth-child(3){width:19%}.clients-table th:nth-child(4){width:10%}.clients-table th:nth-child(5){width:12%}.clients-table th:nth-child(6){width:14%}.clients-table th:nth-child(7){width:11%}.clients-table td{vertical-align:middle}.clients-table td small{display:block;color:var(--c-text-3);font-size:var(--fs-xs)}
+.clients-table td:nth-child(n),.clients-table th:nth-child(n){max-width:none;min-width:0;color:inherit;overflow-wrap:anywhere}.clients-table td small{white-space:normal}
+.clients-table tr.off{opacity:.62}.clients-table code{font-size:var(--fs-xs)}
+.dot-status{display:inline-block;width:11px;height:11px;border-radius:50%;background:#64748b}
+.dot-status.on{background:#34d399;box-shadow:0 0 0 0 #34d39988;animation:onlinePulse 1.8s infinite}
+@keyframes onlinePulse{70%{box-shadow:0 0 0 8px #34d39900}100%{box-shadow:0 0 0 0 #34d39900}}
+.warn-text{color:var(--c-warning,#fbbf24)!important;display:inline!important}

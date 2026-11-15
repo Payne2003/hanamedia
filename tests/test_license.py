@@ -216,6 +216,15 @@ class FakeGitHub:
         self.calls.append((method, url, dict(headers or {})))
         if self.offline:
             raise OSError("mất mạng")
+        if url.startswith("https://ntfy.sh/"):  # trạm chuyển tin nhịp tim (ntfy): POST lưu tin, GET …/json trả NDJSON
+            topic = url[len("https://ntfy.sh/"):].split("/")[0].split("?")[0]
+            self.__dict__.setdefault("relay", {})
+            if method == "POST":
+                self.relay.setdefault(topic, []).append(body.decode())
+                return 200, b"{}"
+            lines = [json.dumps({"event": "open"})] + [json.dumps({"event": "message", "time": int(time.time()), "message": m})
+                                                       for m in self.relay.get(topic, [])]
+            return 200, "\n".join(lines).encode()
         if url.startswith("https://raw.githubusercontent.com/Owner/app/"):
             branch, _, name = url.split("?")[0][len("https://raw.githubusercontent.com/Owner/app/"):].partition("/")
             text = self.files.get((branch, name))
@@ -358,6 +367,34 @@ class RevocationTests(unittest.TestCase):
         self.assertIsNone(other.check_update())
         self.root_m.delete_account(account["id"])
         self.assertFalse(any(name.startswith("keys/u-") and account["id"] in name for _, name in self.github.files))
+
+    def test_online_clients_board(self):
+        from runner import beacon
+        self.root_m.set_publisher_token(TOKEN)
+        account, _ = self.give(self.root_m, self.customer)
+        self.assertEqual(self.customer.beacon_target()[0], None)  # key cũ chưa có kênh nhịp tim
+        self.assertEqual(self.root_m.clients(), {"enabled": False, "clients": [], "error": ""})
+        self.clock.advance(60)
+        result = self.root_m.enable_beacon()
+        self.assertEqual((result["count"], result["published"], result["error"]), (1, 1, ""))
+        self.assertTrue(self.root_m.dashboard()["beacon"]["enabled"])
+        self.customer.check_revocations()  # máy khách tự nhận key mới có kênh nhịp tim
+        target, payload = self.customer.beacon_target()
+        self.assertEqual(target["topic"], self.root_m.beacon_keys.load()["topic"])
+        self.assertTrue(beacon.send(self.github, target, beacon.heartbeat(payload, "AAAA-BBBB-CCCC-DDDD", "1.1.200",
+                                                                          {"running": 2, "waiting": 5}, "active")))
+        sent = self.github.relay[target["topic"]][0]
+        self.assertTrue(sent.startswith("HB1.") and "Khách" not in sent and account["id"] not in sent)  # chỉ có bản mã hóa
+        self.github.relay[target["topic"]].append("tin rác của người khác")
+        board = self.root_m.clients()
+        self.assertEqual(board["error"], "")
+        [row] = board["clients"]
+        self.assertEqual((row["account"], row["machine"], row["ver"], row["running"], row["state"]),
+                         ("Khách user", "AAAA-BBBB-CCCC-DDDD", "1.1.200", 2, "active"))
+        self.assertTrue(row["online"])
+        with self.assertRaises(LicenseError):
+            self.customer.clients()  # máy khách không xem được bảng
+        self.assertNotIn("private", json.dumps(self.root_m.dashboard()))  # khóa riêng không ra giao diện
 
     def test_renewing_a_locked_account_unrevokes_it(self):
         self.root_m.set_publisher_token(TOKEN)

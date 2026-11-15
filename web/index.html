@@ -184,6 +184,12 @@
             <form id="revokeTokenForm" class="rc-token"><input id="revokeToken" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"><button type="submit" class="primary">Lưu token &amp; đăng</button><button type="button" id="revokeTokenRemove" class="danger-outline">Xóa token</button></form>
           </details>
         </section>
+        <section id="clientsCard" class="card clients-card" hidden>
+          <div class="rc-head"><h2>Máy khách online</h2><span id="clientsChip" class="status-chip">—</span><span class="bulk-spacer"></span><button type="button" id="clientsRefresh"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg> Làm mới</button></div>
+          <p id="clientsText" class="detail"></p>
+          <div id="clientsSetup" class="rc-actions" hidden><button type="button" id="clientsEnable" class="primary">Bật theo dõi máy khách</button><small>Tool cấp lại key (giữ nguyên hạn, role) cho mọi khách và đăng lên kênh tự cập nhật; máy khách tự nhận rồi bắt đầu báo online. Cần token GitHub ở mục Thu hồi online.</small></div>
+          <div class="table-scroll" id="clientsWrap" hidden><table class="clients-table"><thead><tr><th></th><th>TÀI KHOẢN</th><th>MÃ MÁY</th><th>PHIÊN BẢN</th><th>HỆ ĐIỀU HÀNH</th><th>BẢN QUYỀN</th><th>VIDEO</th><th>LẦN CUỐI</th></tr></thead><tbody id="clientsRows"></tbody></table></div>
+        </section>
         <div class="license-grid">
           <section class="card license-list"><div class="ll-head"><h2>Danh sách tài khoản</h2><input id="licenseSearch" type="search" placeholder="Tìm theo tên, email…"><button type="button" id="licenseAdd" class="primary">+ Thêm tài khoản</button></div>
             <div class="table-scroll"><table class="license-table"><thead><tr><th>#</th><th>TÊN / EMAIL</th><th>ROLE</th><th>GÓI</th><th>HẾT HẠN</th><th>QUOTA</th><th>MÁY</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody id="licenseRows"></tbody></table></div>
