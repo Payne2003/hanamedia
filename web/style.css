@@ -1179,3 +1179,4 @@ table.board th:first-child{width:24%}table.board th:last-child{width:12%}table.b
 .dot-status.on{background:#34d399;box-shadow:0 0 0 0 #34d39988;animation:onlinePulse 1.8s infinite}
 @keyframes onlinePulse{70%{box-shadow:0 0 0 8px #34d39900}100%{box-shadow:0 0 0 0 #34d39900}}
 .warn-text{color:var(--c-warning,#fbbf24)!important;display:inline!important}
+.hq-label.focus .badge{transform:scale(1.12);box-shadow:0 0 28px var(--c)}.hq-label.focus .tasks{display:block!important}
