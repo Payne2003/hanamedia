@@ -56,7 +56,7 @@ PLAN_DAYS = {"trial": 2}
 PLAN_NAMES = {"trial": "Dùng thử 2 ngày", "1m": "1 tháng", "1y": "1 năm", "3y": "3 năm"}
 PREFIX = "HANA1"
 REV_PREFIX = "HANAREV1"
-CHECK_INTERVAL = 3600  # máy khách tải danh sách thu hồi mỗi giờ (và mỗi lần mở app)
+CHECK_INTERVAL = 900  # máy khách tải danh sách thu hồi + key mới (gia hạn / đổi role) mỗi 15 phút và mỗi lần mở app
 RETRY_INTERVAL = 600  # đang mất kết nối: thử lại mỗi 10 phút
 GRACE_DAYS = 3  # không kiểm tra được quá số ngày này thì tạm khóa đến khi có mạng
 MACHINE = re.compile(r"^[0-9A-F]{4}(-[0-9A-F]{4}){3}$")
@@ -93,6 +93,14 @@ def short_secret(code):
     name = hashlib.sha256(("hana-short-name:" + code).encode()).hexdigest()[:32]
     key = base64.urlsafe_b64encode(hashlib.sha256(("hana-short-key:" + code).encode()).digest())
     return f"keys/{name}.txt", key
+
+
+def update_secret(license_id):
+    """(tên file, khóa Fernet) của kênh cập nhật key theo mã bản quyền: Super Admin gia hạn / đổi role là máy khách tự
+    nhận key mới. Chỉ ai có key (biết mã bản quyền bên trong) mới tìm và giải mã được."""
+    name = hashlib.sha256(("hana-update-name:" + str(license_id)).encode()).hexdigest()[:32]
+    key = base64.urlsafe_b64encode(hashlib.sha256(("hana-update-key:" + str(license_id)).encode()).digest())
+    return f"keys/u-{name}.txt", key
 
 
 class LicenseError(ValueError):
@@ -522,7 +530,8 @@ class LicenseManager:
         rev = self.store.setting("license_rev", {}) or {}
         return {**base, **status, "issuer": bool(context), "issuer_mode": context["mode"] if context else None,
                 "online_check": bool(self.revocation_url()) and status["state"] not in ("owner", "not_enforced"),
-                "checked_at": rev.get("ok_at"), "check_error": rev.get("error") or ""}
+                "checked_at": rev.get("ok_at"), "check_error": rev.get("error") or "",
+                "updated_at": self.store.setting("license_updated_at"), "update_note": self.store.setting("license_update_note") or ""}
 
     def allows(self, permission):
         return permission in self.status()["allowed"]
@@ -623,7 +632,47 @@ class LicenseManager:
         except (OSError, LicenseError, ValueError) as error:
             state["error"] = str(error)[:200] or "Không kết nối được."
         self.store.save_setting("license_rev", state)
-        return {"ok": not state["error"], "error": state["error"], "checked_at": state.get("ok_at")}
+        updated = self.check_update() if not state["error"] else None
+        return {"ok": not state["error"], "error": state["error"], "checked_at": state.get("ok_at"), "updated": updated}
+
+    def check_update(self):
+        """Tải key mới nhất của tài khoản này (Super Admin vừa gia hạn / đổi role / đổi quyền) và thay key cũ.
+        Key mới phải đúng chữ ký, cùng mã bản quyền, cấp sau key hiện tại và cho phép máy này. Trả về thông báo hoặc None."""
+        from cryptography.fernet import Fernet, InvalidToken
+        token = self.store.setting("license_token")
+        r = self.revocation
+        if not token or not r.get("repo") or not r.get("branch"):
+            return None
+        try:
+            current = verify(token, self.trusted)
+        except LicenseError:
+            return None
+        path, key = update_secret(current.get("id"))
+        try:
+            code, raw = self.http("GET", f"https://raw.githubusercontent.com/{r['repo']}/{r['branch']}/{path}?t={int(self.clock())}",
+                                  {"Cache-Control": "no-cache"}, None)
+            if code != 200:
+                return None
+            fresh = Fernet(key).decrypt(raw.strip()).decode()
+            payload = verify(fresh, self.trusted)
+        except (OSError, LicenseError, InvalidToken, ValueError):
+            return None
+        if payload.get("id") != current.get("id") or int(payload.get("issued") or 0) <= int(current.get("issued") or 0):
+            return None
+        if payload.get("devices") and machine_code() not in payload["devices"]:
+            return None
+        self.store.save_setting("license_token", re.sub(r"\s+", "", fresh))
+        self.store.save_setting("license_updated_at", self.clock())
+        changes = []
+        if payload.get("expires") != current.get("expires"):
+            changes.append(f"hạn mới {date.fromisoformat(payload['expires']):%d/%m/%Y}")
+        if payload.get("role") != current.get("role"):
+            changes.append(f"role {ROLE_NAMES.get(payload.get('role'), payload.get('role'))}")
+        if sorted(payload.get("permissions") or []) != sorted(current.get("permissions") or []):
+            changes.append("quyền mới")
+        message = "Đã tự cập nhật bản quyền" + (": " + ", ".join(changes) if changes else "") + "."
+        self.store.save_setting("license_update_note", message)
+        return message
 
     # ---- quota video ---------------------------------------------------------------------------------------------
     def used(self, license_id):
@@ -807,6 +856,7 @@ class LicenseManager:
             db.execute("INSERT INTO license_events(license_id,at,action,actor,detail) VALUES(?,?,?,?,?)",
                        (license_id, self.clock(), "delete", self.actor(context), "Xóa " + row["name"]))
         self.remove_short(short)
+        self.remove_file(update_secret(license_id)[0])
         return self.after_change(context)
 
     # ---- đăng danh sách thu hồi (máy Super Admin) ------------------------------------------------------------------
@@ -947,6 +997,10 @@ class LicenseManager:
         try:
             self.push_path(publisher, self.revocation, path, Fernet(key).encrypt(token.encode()).decode(),
                            "Cập nhật key bản quyền (mã hóa)")
+            # kênh tự cập nhật: máy khách đang dùng key cũ của tài khoản này tự tải key mới (gia hạn, đổi role, quyền…)
+            upath, ukey = update_secret(license_id)
+            self.push_path(publisher, self.revocation, upath, Fernet(ukey).encrypt(token.encode()).decode(),
+                           "Cập nhật key bản quyền (mã hóa)")
         except (OSError, LicenseError) as error:
             return {"code": "", "error": "Chưa đăng được mã ngắn: " + (str(error)[:200] or "không kết nối được GitHub") +
                     ". Gửi key đầy đủ."}
@@ -954,10 +1008,13 @@ class LicenseManager:
 
     def remove_short(self, code):
         """Xóa bản key mã hóa trên kho khi xóa tài khoản (không bắt buộc thành công; thu hồi vẫn chặn key)."""
+        if code:
+            self.remove_file(short_secret(code)[0])
+
+    def remove_file(self, path):
         publisher = self.publisher_token()
-        if not code or not publisher or not self.revocation_url():
+        if not path or not publisher or not self.revocation_url():
             return
-        path, _ = short_secret(code)
         r = self.revocation
         try:
             status, data = self.github("GET", f"/repos/{r['repo']}/contents/{path}?ref={r['branch']}", publisher)

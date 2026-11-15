@@ -22,12 +22,16 @@ from runner.store import Store
 class Clock:
     def __init__(self, today):
         self.day = today
+        self.offset = 0
 
     def today(self):
         return self.day
 
+    def advance(self, seconds):
+        self.offset += seconds
+
     def time(self):
-        return time.mktime(self.day.timetuple()) + 12 * 3600
+        return time.mktime(self.day.timetuple()) + 12 * 3600 + self.offset
 
 
 class LicenseTests(unittest.TestCase):
@@ -323,6 +327,37 @@ class RevocationTests(unittest.TestCase):
         self.assertFalse(any(name.startswith("keys/") for _, name in self.github.files))
         with self.assertRaises(LicenseError):
             self.customer.activate(short["code"])
+
+    def test_renew_and_role_change_reach_the_customer_automatically(self):
+        self.root_m.set_publisher_token(TOKEN)
+        account, status = self.give(self.root_m, self.customer)  # khách kích hoạt bằng key đầy đủ
+        self.assertEqual((status["role"], status["expires"]), ("user", "2026-12-31"))
+        old = self.customer.store.setting("license_token")
+        # Super Admin gia hạn + đổi role trên máy mình (app gọi share_code sau mỗi lần cấp key)
+        self.clock.advance(60)
+        acc, token = self.root_m.renew(account["id"], "1y")
+        self.root_m.share_code(acc["id"], token)
+        self.clock.advance(60)
+        acc, token = self.root_m.save_account({"id": account["id"], "name": "Khách user", "role": "manager", "plan": "1y",
+                                               "devices": [self.customer.request_code()],
+                                               "permissions": ["create_jobs", "upload_media", "view_revenue"]})
+        self.root_m.share_code(acc["id"], token)
+        result = self.customer.check_revocations()
+        self.assertIn("role Manager", result["updated"])
+        self.assertIn("hạn mới 31/12/2027", result["updated"])
+        status = self.customer.status()
+        self.assertEqual((status["state"], status["role"], status["expires"]), ("active", "manager", "2027-12-31"))
+        self.assertNotEqual(self.customer.store.setting("license_token"), old)
+        self.assertIsNone(self.customer.check_update())  # đã là key mới nhất: không đổi nữa
+        stored = [text for (branch, name), text in self.github.files.items() if name.startswith("keys/u-")]
+        self.assertEqual(len(stored), 1)
+        self.assertNotIn("Khách", stored[0])  # trên kho chỉ có bản mã hóa
+        # Key của tài khoản khác không bao giờ thay key của khách này
+        other = self.manager("other")
+        self.give(self.root_m, other)
+        self.assertIsNone(other.check_update())
+        self.root_m.delete_account(account["id"])
+        self.assertFalse(any(name.startswith("keys/u-") and account["id"] in name for _, name in self.github.files))
 
     def test_renewing_a_locked_account_unrevokes_it(self):
         self.root_m.set_publisher_token(TOKEN)

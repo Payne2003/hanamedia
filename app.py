@@ -530,7 +530,8 @@ class Handler(BaseHTTPRequestHandler):
             status = self.server.license.status()
             data["license"] = {k: status.get(k) for k in ("state", "message", "allowed", "enforced", "role", "name",
                                                            "expires", "days_left", "issuer", "issuer_mode",
-                                                           "online_check", "checked_at", "check_error")}
+                                                           "online_check", "checked_at", "check_error", "updated_at", "update_note",
+                                                           "machine", "request_code")}
             update = self.server.updater.status()
             data["update"] = {k: update.get(k) for k in ("supported", "available", "latest", "phase", "progress", "error")}
             data["theme"] = self.server.store.setting("theme", "dark")
