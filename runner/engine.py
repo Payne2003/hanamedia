@@ -15,6 +15,8 @@ from .health import HealthMonitor
 
 from . import hardware  # noqa: E402
 
+SERVER_STREAK = 3      # số lần Muse lỗi máy chủ liền nhau ở cùng tài khoản thì cho tài khoản nghỉ
+SERVER_REST = 3 * 3600  # nghỉ 3 giờ rồi tự dùng lại
 MAX_PARALLEL = hardware.HARD_CAP  # trần tuyệt đối; mỗi máy tự tính mức tối đa của mình (Engine.max_parallel)
 from .muse import MuseBrowser, MuseFailure
 from .video_tools import VideoError, needs_upscale, probe, size_for, stitch, target_size, upscale
@@ -39,6 +41,7 @@ class Engine:
         self.store, self.data = store, Path(data)
         self.flow_profile = default_chrome_profile(self.data)
         self.lock = threading.RLock()
+        self.server_streak = {}  # tài khoản → số lần Muse lỗi máy chủ liền nhau
         self.place_lock = threading.Lock()  # đặt tên 1.mp4, 2.mp4… không trùng khi nhiều luồng xong cùng lúc
         self.changed = threading.Event()
         self.enabled = False
@@ -494,8 +497,17 @@ class Engine:
             if known and getattr(error, "unsent", False) and self.store.requeue_unsent(job["id"], str(error), "ready",
                                                                                       count=False):
                 return
-            if kind == "server" and self.store.requeue_failed(job["id"], "Muse báo lỗi, không tạo video"):
-                return
+            if kind == "server":
+                # Muse lỗi máy chủ liên tục ở cùng tài khoản (thường là hạn mức ẩn / tài khoản bị giới hạn tạm thời):
+                # sau SERVER_STREAK lần liền nhau thì cho tài khoản nghỉ SERVER_REST giây, chia prompt cho tài khoản khác.
+                streak = self.server_streak[account["id"]] = self.server_streak.get(account["id"], 0) + 1
+                if streak >= SERVER_STREAK:
+                    self.server_streak[account["id"]] = 0
+                    self.store.mark_limited(account["id"], time.time() + SERVER_REST,
+                                            f"Muse lỗi máy chủ {streak} lần liền ở tài khoản này (thường do giới hạn tạm thời "
+                                            f"của tài khoản). Tạm nghỉ {SERVER_REST // 3600} giờ, prompt chuyển sang tài khoản khác.")
+                if self.store.requeue_failed(job["id"], "Muse báo lỗi máy chủ, không tạo video"):
+                    return
             if known and getattr(error, "pending", False) and automatic and self.store.requeue_failed(
                     job["id"], "Muse quá lâu không trả video; gửi lại (có thể bằng tài khoản khác)", refund=False, limit=1):
                 return  # vẫn giữ địa chỉ cuộc trò chuyện cũ trong nhật ký; lần chạy mới mở cuộc trò chuyện mới
@@ -583,6 +595,7 @@ class Engine:
         return final
 
     def complete(self, job, target, file, folder=None):
+        self.server_streak.pop(job.get("account_id"), None)  # tạo được video: xoá chuỗi lỗi máy chủ của tài khoản
         final = self.place(job, target, file, folder)
         self.store.finish(job["id"], output=str(final))
         if job.get("resolution") or self.store.batch_stitch(job["batch"]):

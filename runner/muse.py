@@ -167,7 +167,12 @@ QUOTA = re.compile(r"hết (?:hạn mức|lượt|tín dụng|credit)|đã dùng
                    r"reached (?:your|the) (?:\w+ )?limit|usage limit|(?:weekly|daily|monthly) limit|out of credits|"
                    r"no (?:more )?credits|limit (?:will )?resets?|used 100%|quota", re.IGNORECASE)
 SERVER_ERROR = re.compile(r"đã xảy ra lỗi|lỗi không mong muốn|có lỗi xảy ra|đã có lỗi|something went wrong|"
-                          r"an unexpected error|error occurred|internal server error|\b50[023]\b|please try again", re.IGNORECASE)
+                          r"an unexpected error|error occurred|internal server error|\b50[023]\b|please try again|"
+                          r"lỗi nội bộ|lỗi bất ngờ|lỗi (?:từ )?phía máy chủ|trục trặc|gặp sự cố|sự cố tạm thời|"
+                          r"thử lại sau|quay lại sau|internal error|temporar(?:y|ily)", re.IGNORECASE)
+# Muse tự nói lỗi hệ thống/máy chủ (kể cả khi câu có "chưa tạo được video"): là lỗi máy chủ, KHÔNG phải từ chối nội dung
+SERVER_STRONG = re.compile(r"lỗi nội bộ|lỗi bất ngờ|lỗi (?:từ )?phía máy chủ|máy chủ tạo video|trục trặc|sự cố tạm thời|"
+                           r"không phải do (?:nội dung )?prompt|internal (?:server )?error|server error", re.IGNORECASE)
 MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
 
 
@@ -211,6 +216,9 @@ def reply_problem(text):
         return (f"Tài khoản Muse hết hạn mức tạo video{f' (đặt lại {when})' if when else ''}. Tool chuyển prompt sang "
                 "tài khoản khác và tạm dừng tài khoản này tới khi hạn mức đặt lại.", "limited", False, False, False, "quota",
                 until)
+    if SERVER_STRONG.search(text):
+        return ("Muse báo lỗi máy chủ tạo video (không phải do prompt). Tool tự chạy lại, ưu tiên tài khoản khác.",
+                "ready", False, False, False, "server")
     if any(t in text for t in VIDEO_REFUSAL) or REFUSAL.search(text):
         return ("Muse trả lời bằng chữ và không tạo video cho prompt này (xem câu trả lời trên Muse). "
                 "Tool không tự gửi lại; sửa prompt rồi tạo lại.", "ready", False, False, False, "refusal")
