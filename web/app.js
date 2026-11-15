@@ -901,53 +901,120 @@ $('wfStop').onclick=async()=>{try{const r=await wfCall('/api/workflows/stop');wf
 $('wfCopy').onclick=async()=>{try{const r=await wfCall('/api/workflows/prompt',{mode:'run'});await navigator.clipboard.writeText(r.prompt);toast('Đã chép lệnh. Mở Claude desktop với thư mục HanaMedia rồi dán vào.');}catch(error){toast(error.message,true);}};
 
 $('agentsCommand').onclick=()=>navigator.clipboard.writeText('Chạy hanamedia-wildlife-workflow').then(()=>toast('Đã chép lệnh. Dán vào Claude desktop hoặc Codex (mở thư mục HanaMedia).')).catch(()=>toast('Chép không được.',true));
-// ---- HanaMedia AI Voice (F5-TTS trên máy, chỉ máy Super Admin) ----
+// ---- HanaMedia AI Voice (F5-TTS trên máy, chỉ máy Super Admin): văn bản → giọng nói, nhân bản giọng ----
 let voiceData=null,voiceTimer=null;
+const VA_DEFAULT={speed:1,nfe:32,gap:.28,format:'mp3',split:'sentence',voice:''};
+const va={...VA_DEFAULT,...(()=>{try{return JSON.parse(localStorage.getItem('va.settings')||'{}');}catch{return {};}})(),pane:'tts',group:null,editing:null};
+function vaSave(){try{localStorage.setItem('va.settings',JSON.stringify({speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format,split:va.split,voice:va.voice}));}catch{}}
 async function checkVoiceOwner(){try{await api('/api/voice/status',{});$('navVoice').hidden=false;}catch{$('navVoice').hidden=true;}}
 setTimeout(checkVoiceOwner,2500);
-async function loadVoice(){try{voiceData=await api('/api/voice/status',{});renderVoice();}catch(error){$('voiceInstallInfo').textContent=error.message;}}
-function openVoice(){loadVoice();clearInterval(voiceTimer);voiceTimer=setInterval(()=>{if(!$('voiceView').hidden)loadVoice();},3000);}
+async function loadVoice(){try{voiceData=await api('/api/voice/status',{});renderVoice();}catch(error){$('vaEngineText').textContent=error.message;}}
+function openVoice(){loadVoice();clearInterval(voiceTimer);voiceTimer=setInterval(()=>{if(!$('voiceView').hidden)loadVoice();},2500);renderVaControls();}
 function closeVoice(){clearInterval(voiceTimer);voiceTimer=null;}
-const VOICE_STATUS={waiting:['Chờ',''],running:['Đang chạy','running'],done:['Xong','done'],error:['Lỗi','error']};
+const VA_STATUS={draft:['Sẵn sàng',''],waiting:['Chờ',''],running:['Đang tạo','running'],done:['Xong','done'],error:['Lỗi','error']};
 function fmtSec(s){s=Math.round(s||0);return s>=3600?`${Math.floor(s/3600)}:${String(Math.floor(s%3600/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`:`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;}
+function vaShow(pane){va.pane=pane;$('vaEditor').hidden=pane!=='tts';$('vaProject').hidden=pane!=='project';$('vaClone').hidden=pane!=='clone';
+  document.querySelectorAll('.va-link').forEach(b=>b.classList.toggle('active',b.dataset.va===(pane==='project'?'tts':pane)&&!b.querySelector('.count')||pane==='clone'&&b.dataset.va==='clone'&&!b.querySelector('.count')));renderVoice();}
+function renderVaControls(){
+  $('vaSpeed').value=va.speed;$('vaSpeedVal').textContent=Number(va.speed).toFixed(2);$('vaNfe').value=va.nfe;$('vaNfeVal').textContent=va.nfe;
+  $('vaGap').value=va.gap;$('vaGapVal').textContent=`${Number(va.gap).toFixed(2)}s`;
+  document.querySelectorAll('#vaFormat [data-fmt]').forEach(b=>b.classList.toggle('active',b.dataset.fmt===va.format));
+  document.querySelectorAll('.va-split [data-split]').forEach(b=>b.classList.toggle('active',b.dataset.split===va.split));
+  $('vaGenerate').textContent=va.split==='line'?'☰ Tạo dự án (mỗi dòng 1 file)':'✦ Tạo giọng nói';
+  vaCount();
+}
+function vaCount(){const t=$('vaText').value,lines=t.split('\n').filter(x=>x.trim()).length;$('vaCount').textContent=`${t.length.toLocaleString('vi-VN')} ký tự${va.split==='line'?` · ${lines} dòng`:` · ~${Math.max(1,Math.round(t.length/900))} phút đọc`}`;}
+function vaSettings(){return {profile:va.voice,speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format};}
 function renderVoice(){
   const d=voiceData;if(!d)return;const st=d.status,cfg=st.config,ins=st.install;
-  $('voiceEngineChip').textContent=ins.running?'Đang cài…':st.installed?(st.worker.running&&st.worker.ready?`Sẵn sàng · ${st.worker.device||''}`:st.worker.loading?'Đang nạp mô hình…':'Đã cài'):'Chưa cài';
-  $('voiceEngineChip').className='status-chip '+(st.installed?'ok':ins.running?'warn':'');
+  // engine
+  const ready=st.installed&&st.worker.running&&st.worker.ready;
+  $('vaEngineText').textContent=ins.running?`Đang cài AI Engine: ${ins.phase}`:!st.installed?'AI Engine chưa cài':ready?`AI Engine sẵn sàng · ${st.worker.device||''}`:st.worker.loading?'Đang nạp mô hình…':'AI Engine đã cài';
+  $('vaEnginePill').className='va-engine '+(ready?'on':st.installed?'ok':'off');
+  $('vaModelName').textContent=cfg.ckpt?cfg.ckpt.split(/[\\/]/).pop():`${cfg.model} · trên máy`;
+  $('voiceEngineChip').textContent=ins.running?'Đang cài…':st.installed?'Đã cài':'Chưa cài';$('voiceEngineChip').className='status-chip '+(st.installed?'ok':ins.running?'warn':'');
+  if(!st.installed&&!ins.running)$('voiceEngine').open=true;
   $('voiceFacts').innerHTML=[['Python',st.python||'chưa có 3.10–3.12'],['Card đồ hoạ',st.gpu||'không thấy NVIDIA (chạy CPU — chậm)'],['Checkpoint',cfg.ckpt?cfg.ckpt.split(/[\\/]/).pop():`${cfg.model} (chính thức · CC BY-NC)`],['Chế độ',cfg.mode==='commercial'?'Thương mại':'Thử nghiệm']].map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
   $('voiceInstall').textContent=st.installed?'Cài lại / cập nhật':'Cài AI Engine';$('voiceInstall').disabled=ins.running;
-  $('voiceInstallInfo').textContent=ins.running?`Đang cài: ${ins.phase} (lần đầu tải khoảng 3 GB, có thể 10–30 phút)…`:ins.error?`Lỗi cài đặt: ${ins.error}`:st.worker.error?`Engine: ${st.worker.error}`:st.installed?'Lần tạo đầu tiên engine tự tải checkpoint (~1,3 GB) rồi mới đọc.':'Cần Python 3.10–3.12 trên máy. Có card NVIDIA thì nhanh hơn rất nhiều.';
-  if(document.activeElement?.closest?.('#voiceEngine details')==null){$('voiceModel').value=cfg.model;$('voiceCkpt').value=cfg.ckpt;$('voiceVocab').value=cfg.vocab;$('voiceMode').value=cfg.mode;$('voiceNfe').value=String(cfg.nfe);}
+  $('voiceInstallInfo').textContent=ins.running?`Đang cài: ${ins.phase} (lần đầu tải khoảng 3 GB, 10–30 phút)…`:ins.error?`Lỗi cài đặt: ${ins.error}`:st.worker.error?`Engine: ${st.worker.error}`:st.installed?'Lần tạo đầu tiên engine tự tải checkpoint (~1,3 GB) rồi mới đọc.':'Cần Python 3.10–3.12 trên máy. Có card NVIDIA thì nhanh hơn rất nhiều.';
+  if(!$('voiceEngine').contains(document.activeElement)){$('voiceModel').value=cfg.model;$('voiceCkpt').value=cfg.ckpt;$('voiceVocab').value=cfg.vocab;$('voiceMode').value=cfg.mode;}
   const log=$('voiceLog');const atEnd=log.scrollTop+log.clientHeight>=log.scrollHeight-20;log.textContent=(st.install_log||'')+(st.worker_log?`\n\n----- engine -----\n${st.worker_log}`:'');if(atEnd)log.scrollTop=log.scrollHeight;
-  const sel=$('voiceProfile'),keep=sel.value;
-  sel.innerHTML=d.profiles.length?d.profiles.map(p=>`<option value="${p.id}">${esc(p.name)} · ${p.seconds}s</option>`).join(''):'<option value="">— chưa có giọng —</option>';if(keep&&d.profiles.some(p=>p.id===keep))sel.value=keep;
-  $('voiceProfiles').innerHTML=d.profiles.map(p=>`<div class="voice-profile"><div><b>${esc(p.name)}</b><small>${p.seconds}s · ${esc(p.ref_text?p.ref_text.slice(0,80):'(không có lời mẫu)')}</small></div><audio controls preload="none" src="/api/voice/ref/${p.id}"></audio><button type="button" class="text-button" data-voice-del-profile="${p.id}">Xóa</button></div>`).join('')||'<p class="detail">Chưa có giọng nào.</p>';
-  $('voiceJobs').innerHTML=d.jobs.map(j=>{const [label,cls]=VOICE_STATUS[j.status]||[j.status,''];const pct=j.total?Math.round(100*j.done/j.total):0;
-    return `<div class="voice-job"><div class="vj-main"><b>${esc(j.title)}</b><small>${esc(j.profile_name)} · ${j.chars.toLocaleString('vi-VN')} ký tự · ${j.total} đoạn · ${j.format.toUpperCase()} · ${j.speed}×${j.seconds?` · dài ${fmtSec(j.seconds)}`:''}</small>
-      <div class="meter"><i data-w="${pct}"></i></div><small>${esc(j.error||j.note||'')}</small></div>
-      <span class="badge ${cls}">${label} ${j.status==='done'?'':`${j.done}/${j.total}`}</span>
-      <div class="vj-actions">${j.status==='done'?`<audio controls preload="none" src="/api/voice/file/${j.id}"></audio><a href="/api/voice/file/${j.id}?download=1">Tải về</a>`:''}
-      ${['error','done'].includes(j.status)?`<button type="button" data-voice-retry="${j.id}">${j.status==='done'?'Tạo lại':'Thử lại'}</button>`:''}${['waiting','running'].includes(j.status)?`<button type="button" data-voice-cancel="${j.id}">Dừng</button>`:''}
-      <button type="button" data-voice-open="${j.id}">Thư mục</button>${j.status!=='running'?`<button type="button" class="text-button" data-voice-delete="${j.id}">Xóa</button>`:''}</div></div>`;}).join('')||'<p class="detail">Chưa có tác vụ.</p>';
-  $('voiceJobs').querySelectorAll('.meter i').forEach(i=>i.style.width=i.dataset.w+'%');
+  // giọng
+  $('vaVoiceCount').textContent=d.profiles.length;
+  if(!d.profiles.some(p=>p.id===va.voice))va.voice=d.profiles[0]?.id||'';
+  $('vaVoice').innerHTML=d.profiles.length?d.profiles.map(p=>`<option value="${p.id}">${esc(p.name)} · ${p.seconds}s</option>`).join(''):'<option value="">— chưa có giọng: vào Nhân bản giọng nói —</option>';$('vaVoice').value=va.voice;
+  $('vaVoices').innerHTML=d.profiles.map(p=>`<div class="va-voice ${p.id===va.voice?'active':''}"><div><b>${esc(p.name)}</b><small>${p.seconds}s · ${esc(p.ref_text?p.ref_text.slice(0,90):'(không có lời mẫu)')}</small></div><audio controls preload="none" src="/api/voice/ref/${p.id}"></audio><div class="wf-row"><button type="button" data-va-use="${p.id}">${p.id===va.voice?'✓ Đang dùng':'Dùng giọng này'}</button><button type="button" class="text-button" data-va-del="${p.id}">Xóa</button></div></div>`).join('')||'<p class="detail">Chưa có giọng nào. Tải giọng mẫu ở trên.</p>';
+  // dự án
+  if(va.pane==='project'&&va.group){
+    const rows=d.jobs.filter(j=>j.group===va.group).sort((a,b)=>a.index-b.index),done=rows.filter(j=>j.status==='done').length;
+    $('vaProjectTitle').textContent=rows[0]?.group_title||'Dự án';$('vaProgress').textContent=`Hoàn thành: ${done} / ${rows.length}`;
+    $('vaExport').href=`/api/voice/export/${va.group}`;$('vaExport').classList.toggle('disabled',!done);
+    $('vaProjectCount').textContent=`${rows.reduce((n,j)=>n+j.chars,0).toLocaleString('vi-VN')} ký tự · ${rows.length} dòng`;
+    if(!$('vaRows').contains(document.activeElement))$('vaRows').innerHTML=rows.map(j=>{const [label,cls]=VA_STATUS[j.status]||[j.status,''];
+      if(va.editing===j.id)return `<tr class="editing"><td>${j.index}</td><td><input data-edit-name value="${esc(j.title)}"></td><td colspan="3"><textarea data-edit-text rows="2">${esc(j.text)}</textarea></td><td><button type="button" data-va-save="${j.id}">Lưu</button><button type="button" class="text-button" data-va-cancel-edit>Hủy</button></td></tr>`;
+      return `<tr><td>${j.index}</td><td class="va-name">${esc(j.title)}</td><td class="va-text">${esc(j.text)}</td><td><span class="va-badge ${cls}">${label}${j.status==='running'?` ${j.done}/${j.total}`:''}</span>${j.error?`<small class="va-err">${esc(j.error)}</small>`:''}</td>
+        <td>${j.status==='done'?`<audio controls preload="none" src="/api/voice/file/${j.id}"></audio>`:'—'}</td><td class="va-row-actions">${j.status!=='running'?`<button type="button" class="text-button" title="Sửa" data-va-edit="${j.id}">✎</button>`:''}${j.status==='done'?`<a href="/api/voice/file/${j.id}?download=1" title="Tải về">⇩</a>`:''}${j.status==='error'?`<button type="button" class="text-button" data-va-retry="${j.id}" title="Thử lại">↻</button>`:''}</td></tr>`;}).join('');
+  }
+  // lịch sử
+  const groups={},singles=[];for(const j of d.jobs){if(j.group)(groups[j.group]??=[]).push(j);else singles.push(j);}
+  const items=[...Object.entries(groups).map(([g,list])=>({g,list,created:Math.max(...list.map(x=>x.created))})),...singles.map(j=>({j,created:j.created}))].sort((a,b)=>b.created-a.created);
+  $('vaHistory').innerHTML=items.map(it=>{
+    if(it.g){const done=it.list.filter(x=>x.status==='done').length,run=it.list.some(x=>['waiting','running'].includes(x.status));
+      return `<div class="va-hist" data-va-open="${it.g}"><b>☰ ${esc(it.list[0].group_title||'Dự án')}</b><small>${it.list.length} dòng · xong ${done}/${it.list.length}${run?' · đang tạo…':''}</small></div>`;}
+    const j=it.j,[label,cls]=VA_STATUS[j.status]||[j.status,''],pct=j.total?Math.round(100*j.done/j.total):0;
+    return `<div class="va-hist"><b>${esc(j.title)}</b><small>${esc(j.profile_name)} · ${j.chars.toLocaleString('vi-VN')} ký tự${j.seconds?` · ${fmtSec(j.seconds)}`:''}</small><div class="va-hist-row"><span class="va-badge ${cls}">${label}${['running','waiting'].includes(j.status)?` ${j.done}/${j.total}`:''}</span>${j.status!=='done'?`<div class="meter"><i data-w="${pct}"></i></div>`:''}</div>${j.error?`<small class="va-err">${esc(j.error)}</small>`:j.note?`<small>${esc(j.note)}</small>`:''}
+      ${j.status==='done'?`<audio controls preload="none" src="/api/voice/file/${j.id}"></audio>`:''}<div class="wf-row">${j.status==='done'?`<a href="/api/voice/file/${j.id}?download=1">⇩ Tải về</a>`:''}${['error','done'].includes(j.status)?`<button type="button" data-va-retry="${j.id}">${j.status==='done'?'Tạo lại':'Thử lại'}</button>`:''}${['waiting','running'].includes(j.status)?`<button type="button" data-va-stop="${j.id}">Dừng</button>`:''}${j.status!=='running'?`<button type="button" class="text-button" data-va-delete="${j.id}">Xóa</button>`:''}</div></div>`;}).join('')||'<p class="detail">Chưa có lịch sử.</p>';
+  $('vaHistory').querySelectorAll('.meter i').forEach(i=>i.style.width=i.dataset.w+'%');
 }
+document.querySelectorAll('.va-link').forEach(b=>b.onclick=()=>vaShow(b.dataset.va));
+document.querySelectorAll('.va-tabs [data-vtab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.va-tabs [data-vtab]').forEach(x=>x.classList.toggle('active',x===b));$('vaSettings').hidden=b.dataset.vtab!=='settings';$('vaHistory').hidden=b.dataset.vtab!=='history';});
+document.querySelectorAll('.va-split [data-split]').forEach(b=>b.onclick=()=>{va.split=b.dataset.split;vaSave();renderVaControls();});
+document.querySelectorAll('#vaFormat [data-fmt]').forEach(b=>b.onclick=()=>{va.format=b.dataset.fmt;vaSave();renderVaControls();});
+for(const [id,key,parse] of [['vaSpeed','speed',Number],['vaNfe','nfe',Number],['vaGap','gap',Number]])$(id).oninput=e=>{va[key]=parse(e.target.value);vaSave();renderVaControls();};
+$('vaReset').onclick=()=>{Object.assign(va,{speed:1,nfe:32,gap:.28,format:'mp3'});vaSave();renderVaControls();};
+$('vaVoice').onchange=e=>{va.voice=e.target.value;vaSave();renderVoice();};
+$('vaVoicePlay').onclick=()=>{if(!va.voice)return toast('Chưa có giọng.',true);const a=$('vaPreview');a.src=`/api/voice/ref/${va.voice}`;a.play().catch(()=>{});};
+$('vaText').oninput=vaCount;
+function srtToText(t){return t.replace(/\r/g,'').split(/\n\n+/).map(b=>b.split('\n').filter(l=>!/^\d+$/.test(l.trim())&&!/-->/.test(l)).join(' ').trim()).filter(Boolean).join('\n');}
+async function vaReadFile(f){const t=await f.text();return /\.srt$/i.test(f.name)?srtToText(t):t;}
+$('vaUpload').onchange=async e=>{const f=e.target.files[0];if(!f)return;$('vaText').value=await vaReadFile(f);if(!$('vaTitle').value)$('vaTitle').value=f.name.replace(/\.(txt|srt)$/i,'');if(/\.srt$/i.test(f.name)){va.split='line';vaSave();renderVaControls();}vaCount();e.target.value='';};
+$('vaDrop').ondragover=e=>{e.preventDefault();$('vaDrop').classList.add('drag');};$('vaDrop').ondragleave=()=>$('vaDrop').classList.remove('drag');
+$('vaDrop').ondrop=async e=>{e.preventDefault();$('vaDrop').classList.remove('drag');const f=e.dataTransfer.files[0];if(f&&/\.(txt|srt)$/i.test(f.name)){$('vaText').value=await vaReadFile(f);if(!$('vaTitle').value)$('vaTitle').value=f.name.replace(/\.(txt|srt)$/i,'');vaCount();}};
+$('vaNormalize').onclick=async()=>{const t=$('vaText').value;if(!t.trim())return;try{const r=await api('/api/voice/normalize',{text:t});$('vaText').value=r.text;vaCount();toast('Đã chuẩn hóa: số, ngày tháng, giờ, %, tiền, đơn vị, viết tắt → chữ.');}catch(error){toast(error.message,true);}};
+$('vaPause').onclick=()=>{const t=$('vaText'),p=t.selectionStart??t.value.length,sec=prompt('Tạm dừng bao nhiêu giây?','1');if(!sec)return;const tag=` [ngắt ${String(sec).replace(',','.')}s] `;t.value=t.value.slice(0,p)+tag+t.value.slice(t.selectionEnd??p);t.focus();t.selectionStart=t.selectionEnd=p+tag.length;vaCount();};
+$('vaGenerate').onclick=async()=>{if(!va.voice)return toast('Chưa có giọng. Vào “Nhân bản giọng nói” để thêm giọng.',true);const text=$('vaText').value;if(!text.trim())return toast('Nhập văn bản cần đọc.',true);
+  try{if(va.split==='line'){const r=await api('/api/voice/batch',{...vaSettings(),text,title:$('vaTitle').value||'Dự án mới'});va.group=r.group;await loadVoice();vaShow('project');toast(`Đã tạo dự án ${r.jobs.length} dòng. Sửa nếu cần rồi bấm Tạo giọng nói.`);}
+    else{const r=await api('/api/voice/create',{...vaSettings(),text,title:$('vaTitle').value,split:'sentence'});toast(`Đã thêm “${r.job.title}” (${r.job.total} đoạn) vào hàng đợi. Xem tab Lịch sử.`);document.querySelector('.va-tabs [data-vtab="history"]').click();loadVoice();}}
+  catch(error){toast(error.message,true);}};
+$('vaBack').onclick=()=>{va.group=null;va.editing=null;vaShow('tts');};
+$('vaProjectGenerate').onclick=async()=>{if(!va.voice)return toast('Chưa chọn giọng.',true);try{const r=await api('/api/voice/start-group',{group:va.group,settings:vaSettings()});toast(`Đang tạo ${r.started} dòng.`);loadVoice();}catch(error){toast(error.message,true);}};
+$('vaProjectUpload').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const r=await api('/api/voice/batch',{...vaSettings(),text:await vaReadFile(f),group:va.group});toast(`Đã thêm ${r.jobs.length} dòng.`);loadVoice();}catch(error){toast(error.message,true);}e.target.value='';};
+$('vaExport').onclick=e=>{if($('vaExport').classList.contains('disabled')){e.preventDefault();toast('Chưa có dòng nào tạo xong.',true);}};
+$('vaRows').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.vaEdit){va.editing=b.dataset.vaEdit;$('vaRows').innerHTML='';renderVoice();return;}
+  if(b.hasAttribute('data-va-cancel-edit')){va.editing=null;$('vaRows').innerHTML='';renderVoice();return;}
+  if(b.dataset.vaSave){const row=b.closest('tr');try{await api('/api/voice/edit',{id:b.dataset.vaSave,name:row.querySelector('[data-edit-name]').value,text:row.querySelector('[data-edit-text]').value});va.editing=null;$('vaRows').innerHTML='';await loadVoice();}catch(error){toast(error.message,true);}return;}
+  if(b.dataset.vaRetry){try{await api('/api/voice/retry',{id:b.dataset.vaRetry});loadVoice();}catch(error){toast(error.message,true);}}};
+$('vaHistory').onclick=async e=>{const open=e.target.closest('[data-va-open]');if(open&&!e.target.closest('button,a,audio')){va.group=open.dataset.vaOpen;vaShow('project');return;}
+  const b=e.target.closest('button');if(!b)return;const act=[['vaRetry','/api/voice/retry'],['vaStop','/api/voice/cancel'],['vaDelete','/api/voice/delete']].find(([k])=>b.dataset[k]);if(!act)return;
+  if(act[0]==='vaDelete'&&!confirm('Xóa tác vụ và file âm thanh?'))return;try{await api(act[1],{id:b.dataset[act[0]]});loadVoice();}catch(error){toast(error.message,true);}};
+// nhân bản giọng
+$('vaVoiceFile').onchange=e=>{const f=e.target.files[0];$('vaVoiceFileName').textContent=f?`${f.name} · ${(f.size/1048576).toFixed(1)} MB`:'WAV, MP3, M4A, FLAC · 5–15 giây';};
+$('vaVoiceDrop').ondragover=e=>{e.preventDefault();$('vaVoiceDrop').classList.add('drag');};$('vaVoiceDrop').ondragleave=()=>$('vaVoiceDrop').classList.remove('drag');
+$('vaVoiceDrop').ondrop=e=>{e.preventDefault();$('vaVoiceDrop').classList.remove('drag');if(e.dataTransfer.files[0]){const dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);$('vaVoiceFile').files=dt.files;$('vaVoiceFile').onchange({target:$('vaVoiceFile')});}};
+$('vaVoiceSave').onclick=async()=>{const file=$('vaVoiceFile').files[0];if(!file)return toast('Chọn file giọng mẫu.',true);if(!$('vaVoiceConsent').checked)return toast('Cần tick xác nhận quyền dùng giọng.',true);
+  const b=$('vaVoiceSave');b.disabled=true;
+  try{const r=await fetch('/api/voice/upload',{method:'POST',headers:{'X-Runner-Key':key,'Content-Type':'application/octet-stream','X-Voice-File':encodeURIComponent(file.name),'X-Voice-Name':encodeURIComponent($('vaVoiceName').value),'X-Voice-Text':encodeURIComponent($('vaVoiceText').value),'X-Voice-Consent':'1'},body:file});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'Không lưu được giọng.');va.voice=d.profile.id;vaSave();toast(`Đã lưu giọng “${d.profile.name}” (${d.profile.seconds}s) và chọn làm giọng đọc.`);
+    $('vaVoiceName').value='';$('vaVoiceText').value='';$('vaVoiceFile').value='';$('vaVoiceConsent').checked=false;$('vaVoiceFileName').textContent='WAV, MP3, M4A, FLAC · 5–15 giây';loadVoice();}
+  catch(error){toast(error.message,true);}finally{b.disabled=false;}};
+$('vaVoices').onclick=async e=>{const use=e.target.closest('[data-va-use]');if(use){va.voice=use.dataset.vaUse;vaSave();renderVoice();toast('Đã chọn giọng đọc.');return;}
+  const del=e.target.closest('[data-va-del]');if(!del||!confirm('Xóa hồ sơ giọng này?'))return;try{await api('/api/voice/delete-profile',{id:del.dataset.vaDel});loadVoice();}catch(error){toast(error.message,true);}};
+// engine
 $('voiceInstall').onclick=async()=>{if(!confirm('Cài AI Engine (PyTorch + F5-TTS) vào thư mục dữ liệu của tool? Lần đầu tải khoảng 3 GB.'))return;try{await api('/api/voice/install',{});loadVoice();toast('Đang cài AI Engine. Theo dõi trong Nhật ký cài đặt.');}catch(error){toast(error.message,true);}};
 $('voiceRestart').onclick=async()=>{try{await api('/api/voice/restart',{});toast('Lần tạo tới sẽ nạp lại mô hình.');loadVoice();}catch(error){toast(error.message,true);}};
 $('voiceOpenRoot').onclick=()=>api('/api/voice/open',{}).catch(e=>toast(e.message,true));
-$('voiceSaveConfig').onclick=async()=>{try{await api('/api/voice/config',{model:$('voiceModel').value,ckpt:$('voiceCkpt').value,vocab:$('voiceVocab').value,mode:$('voiceMode').value,nfe:Number($('voiceNfe').value)});toast('Đã lưu cấu hình engine.');loadVoice();}catch(error){toast(error.message,true);}};
-$('voiceAddProfile').onclick=async()=>{const file=$('voiceFile').files[0];if(!file)return toast('Chọn file giọng mẫu.',true);if(!$('voiceConsent').checked)return toast('Cần tick xác nhận quyền dùng giọng.',true);
-  const b=$('voiceAddProfile');b.disabled=true;
-  try{const r=await fetch('/api/voice/upload',{method:'POST',headers:{'X-Runner-Key':key,'Content-Type':'application/octet-stream','X-Voice-File':encodeURIComponent(file.name),'X-Voice-Name':encodeURIComponent($('voiceName').value),'X-Voice-Text':encodeURIComponent($('voiceRefText').value),'X-Voice-Consent':'1'},body:file});
-    const d=await r.json();if(!r.ok)throw Error(d.error||'Không lưu được giọng.');toast(`Đã lưu giọng “${d.profile.name}” (${d.profile.seconds}s).`);$('voiceName').value='';$('voiceRefText').value='';$('voiceFile').value='';$('voiceConsent').checked=false;loadVoice();}
-  catch(error){toast(error.message,true);}finally{b.disabled=false;}};
-$('voiceText').oninput=()=>{$('voiceCount').textContent=`${$('voiceText').value.length.toLocaleString('vi-VN')} ký tự · ~${Math.max(1,Math.round($('voiceText').value.length/900))} phút đọc`;};
-$('voiceTxt').onchange=async e=>{const f=e.target.files[0];if(!f)return;$('voiceText').value=await f.text();if(!$('voiceJobTitle').value)$('voiceJobTitle').value=f.name.replace(/\.txt$/i,'');$('voiceText').oninput();e.target.value='';};
-async function voiceCreate(text,title){try{const r=await api('/api/voice/create',{profile:$('voiceProfile').value,text,title,format:$('voiceFormat').value,speed:Number($('voiceSpeed').value)});toast(`Đã thêm “${r.job.title}” (${r.job.total} đoạn) vào hàng đợi.`);loadVoice();}catch(error){toast(error.message,true);}}
-$('voiceCreate').onclick=()=>voiceCreate($('voiceText').value,$('voiceJobTitle').value);
-$('voiceTest').onclick=()=>{const first=($('voiceText').value.split(/(?<=[.!?…])\s+/)[0]||'Xin chào, đây là giọng đọc thử của HanaMedia AI Voice.').slice(0,200);voiceCreate(first,'Nghe thử');};
-$('voiceProfiles').onclick=async e=>{const b=e.target.closest('[data-voice-del-profile]');if(!b||!confirm('Xóa hồ sơ giọng này?'))return;try{await api('/api/voice/delete-profile',{id:b.dataset.voiceDelProfile});loadVoice();}catch(error){toast(error.message,true);}};
-$('voiceJobs').onclick=async e=>{const b=e.target.closest('button');if(!b)return;const act=[['voiceRetry','/api/voice/retry'],['voiceCancel','/api/voice/cancel'],['voiceOpen','/api/voice/open'],['voiceDelete','/api/voice/delete']].find(([k])=>b.dataset[k]);if(!act)return;
-  if(act[0]==='voiceDelete'&&!confirm('Xóa tác vụ và file âm thanh?'))return;try{await api(act[1],{id:b.dataset[act[0]]});loadVoice();}catch(error){toast(error.message,true);}};
+$('voiceSaveConfig').onclick=async()=>{try{await api('/api/voice/config',{model:$('voiceModel').value,ckpt:$('voiceCkpt').value,vocab:$('voiceVocab').value,mode:$('voiceMode').value});toast('Đã lưu cấu hình engine.');loadVoice();}catch(error){toast(error.message,true);}};
 function orderedPrompts(list){
   const first={};for(const j of list){const t=Number(j.created)||0;if(!(j.batch in first)||t<first[j.batch])first[j.batch]=t;}
   return [...list].sort((a,b)=>(first[a.batch]-first[b.batch])||String(a.batch).localeCompare(String(b.batch))||(Number(a.ordinal)||0)-(Number(b.ordinal)||0)||(Number(a.created)||0)-(Number(b.created)||0)).map(j=>String(j.prompt||'').trim()).filter(Boolean);

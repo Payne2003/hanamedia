@@ -110,6 +110,118 @@ def split_text(text, limit=CHUNK_CHARS):
     return chunks
 
 
+PAUSE = re.compile(r"\[\s*(?:ngắt|ngat|nghỉ|nghi|dừng|dung|pause)\s*(\d+(?:[.,]\d+)?)\s*(?:s|giây|giay)?\s*\]", re.IGNORECASE)
+
+
+def build_chunks(text, split="sentence", limit=CHUNK_CHARS):
+    """Đoạn để đọc: [{"text", "pause"}]. split="line": mỗi dòng một đoạn (dòng dài vẫn cắt nhỏ); "sentence": theo câu.
+    Thẻ [ngắt 1.5s] trong văn bản = khoảng lặng đúng 1,5 giây sau đoạn đứng trước nó."""
+    chunks = []
+    position = 0
+    text = str(text or "").replace("\r", "")
+    for match in list(PAUSE.finditer(text)) + [None]:
+        segment = text[position:match.start() if match else len(text)]
+        position = match.end() if match else len(text)
+        if split == "line":
+            pieces = [c for line in segment.split("\n") for c in split_text(line, limit)]
+        else:
+            pieces = split_text(segment, limit)
+        chunks += [{"text": piece, "done": False, "pause": None} for piece in pieces]
+        if match and chunks:
+            chunks[-1]["pause"] = max(0.0, min(10.0, float(match.group(1).replace(",", "."))))
+    return chunks
+
+
+DIGITS = ("không", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín")
+SCALES = ("", "nghìn", "triệu", "tỷ", "nghìn tỷ", "triệu tỷ")
+
+
+def _three(n, full):
+    hundreds, tens, units = n // 100, n % 100 // 10, n % 10
+    words = []
+    if full or hundreds:
+        words += [DIGITS[hundreds], "trăm"]
+    if tens == 0:
+        if units:
+            if full or hundreds:
+                words.append("linh")
+            words.append(DIGITS[units])
+    elif tens == 1:
+        words.append("mười")
+        if units:
+            words.append("lăm" if units == 5 else DIGITS[units])
+    else:
+        words += [DIGITS[tens], "mươi"]
+        if units:
+            words.append({1: "mốt", 4: "tư", 5: "lăm"}.get(units, DIGITS[units]))
+    return words
+
+
+def number_vi(n):
+    """Đọc số nguyên tiếng Việt: 1005 → "một nghìn không trăm linh năm"; 21 → "hai mươi mốt"."""
+    n = int(n)
+    if n == 0:
+        return "không"
+    if n < 0:
+        return "âm " + number_vi(-n)
+    groups = []
+    while n:
+        groups.append(n % 1000)
+        n //= 1000
+    words = []
+    for index in range(len(groups) - 1, -1, -1):
+        group = groups[index]
+        if group == 0:
+            continue
+        words += _three(group, full=bool(words))
+        if SCALES[index] if index < len(SCALES) else "":
+            words.append(SCALES[index])
+    return " ".join(words)
+
+
+def _num(text):
+    """Chuỗi số (1.000.000 / 3,5 / 12) → chữ."""
+    text = text.strip()
+    if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", text):
+        return number_vi(text.replace(".", ""))
+    match = re.fullmatch(r"(\d+)[.,](\d+)", text)
+    if match:
+        decimals = match.group(2)
+        tail = " ".join(DIGITS[int(d)] for d in decimals) if decimals.startswith("0") or len(decimals) > 2 else number_vi(decimals)
+        return f"{number_vi(match.group(1))} phẩy {tail}"
+    return number_vi(text) if text.isdigit() else text
+
+
+UNITS = {"km": "ki lô mét", "kg": "ki lô gam", "cm": "xen ti mét", "mm": "mi li mét", "m": "mét", "g": "gam", "ml": "mi li lít",
+         "l": "lít", "h": "giờ", "ha": "héc ta", "kw": "ki lô oát", "gb": "gi ga bai", "mb": "mê ga bai"}
+ABBREV = [(r"\bTP\.?\s*HCM\b|\bTPHCM\b", "thành phố Hồ Chí Minh"), (r"\bTP\.", "thành phố"), (r"\bHN\b", "Hà Nội"),
+          (r"\bVN\b", "Việt Nam"), (r"\bv\.v\.?", "vân vân"), (r"&", " và "), (r"\bkm/h\b", "ki lô mét trên giờ"),
+          (r"\bUBND\b", "ủy ban nhân dân"), (r"\bTW\b", "trung ương"), (r"\bĐH\b", "đại học")]
+
+
+def normalize_vi(text):
+    """Chuẩn hóa văn bản tiếng Việt cho TTS: số, ngày tháng, giờ, %, tiền, đơn vị, viết tắt thường gặp → chữ."""
+    text = str(text or "")
+    for pattern, repl in ABBREV:
+        text = re.sub(pattern, repl, text)
+    text = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b",
+                  lambda m: f"ngày {number_vi(m.group(1))} tháng {number_vi(m.group(2))} năm {number_vi(m.group(3))}", text)
+    text = re.sub(r"\b(\d{1,2})/(\d{1,2})\b(?!/)", lambda m: f"ngày {number_vi(m.group(1))} tháng {number_vi(m.group(2))}"
+                  if 1 <= int(m.group(1)) <= 31 and 1 <= int(m.group(2)) <= 12 else m.group(0), text)
+    text = re.sub(r"\b([01]?\d|2[0-3])[:h]([0-5]\d)\b", lambda m: f"{number_vi(m.group(1))} giờ" +
+                  (f" {number_vi(m.group(2))} phút" if int(m.group(2)) else ""), text)
+    number = r"(\d{1,3}(?:\.\d{3})+|\d+(?:[.,]\d+)?)"
+    text = re.sub(number + r"\s*%", lambda m: f"{_num(m.group(1))} phần trăm", text)
+    text = re.sub(number + r"\s*(?:đ|đồng|vnđ|vnd)\b", lambda m: f"{_num(m.group(1))} đồng", text, flags=re.IGNORECASE)
+    text = re.sub(r"\$\s*" + number, lambda m: f"{_num(m.group(1))} đô la", text)
+    text = re.sub(number + r"\s*°\s*C\b", lambda m: f"{_num(m.group(1))} độ C", text)
+    text = re.sub(number + r"\s*(km|kg|cm|mm|ml|ha|kw|gb|mb|m|g|l|h)\b",
+                  lambda m: f"{_num(m.group(1))} {UNITS[m.group(2).lower()]}", text, flags=re.IGNORECASE)
+    text = re.sub(number, lambda m: _num(m.group(1)), text)
+    text = re.sub(r"\b([Nn]gày)\s+ngày\b", r"\1", text)
+    return re.sub(r"[ \t]{2,}", " ", text)
+
+
 class VoiceStudio:
     def __init__(self, data_dir, runner=subprocess.run, popen=subprocess.Popen, autostart=True):
         self.root = Path(data_dir) / "voice"
@@ -324,11 +436,11 @@ class VoiceStudio:
                 proc.kill()
         self.worker_info = {"ready": False, "device": "", "error": ""}
 
-    def synth(self, ref_audio, ref_text, text, out, speed=1.0, timeout=900):
+    def synth(self, ref_audio, ref_text, text, out, speed=1.0, timeout=900, nfe=None):
         self.start_worker()
         request_id = uuid.uuid4().hex
         payload = {"id": request_id, "ref_audio": str(ref_audio), "ref_text": ref_text, "text": text, "out": str(out),
-                   "speed": speed, "nfe": self.config()["nfe"]}
+                   "speed": speed, "nfe": int(nfe or self.config()["nfe"])}
         self.worker.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self.worker.stdin.flush()
         deadline = time.time() + timeout
@@ -423,7 +535,8 @@ class VoiceStudio:
     def public(self, job):
         done = sum(1 for c in job["chunks"] if c.get("done"))
         return {k: job.get(k) for k in ("id", "title", "profile", "profile_name", "status", "note", "error", "format", "speed",
-                                         "created", "updated", "output", "seconds")} | {"total": len(job["chunks"]), "done": done,
+                                         "created", "updated", "output", "seconds", "split", "gap", "nfe", "group", "group_title",
+                                         "index")} | {"text": " ".join(c["text"] for c in job["chunks"])[:400]} | {"total": len(job["chunks"]), "done": done,
                                                                                          "chars": sum(len(c["text"]) for c in job["chunks"])}
 
     def jobs(self):
@@ -435,24 +548,116 @@ class VoiceStudio:
                 continue
         return sorted(out, key=lambda j: -j.get("created", 0))
 
-    def create_job(self, profile_id, text, title="", fmt="mp3", speed=1.0):
+    def create_job(self, profile_id, text, title="", fmt="mp3", speed=1.0, split="sentence", gap=SILENCE, nfe=None, extra=None):
         profile = self.profile(profile_id)
         text = str(text or "")
         if len(text) > MAX_TEXT:
             raise VoiceError(f"Văn bản dài quá {MAX_TEXT:,} ký tự.".replace(",", "."))
-        chunks = split_text(text)
+        chunks = build_chunks(text, "line" if split == "line" else "sentence")
         if not chunks:
             raise VoiceError("Nhập văn bản cần đọc.")
         speed = max(.6, min(1.6, float(speed or 1.0)))
         job_id = uuid.uuid4().hex[:12]
         (self.jobs_dir / job_id).mkdir(parents=True)
-        job = {"id": job_id, "title": re.sub(r"\s+", " ", str(title or "")).strip()[:80] or chunks[0][:40],
+        job = {"id": job_id, "title": re.sub(r"\s+", " ", str(title or "")).strip()[:80] or chunks[0]["text"][:40],
                "profile": profile_id, "profile_name": profile["name"], "format": "wav" if fmt == "wav" else "mp3",
-               "speed": speed, "status": "waiting", "note": "", "error": "", "output": "", "seconds": 0,
-               "created": time.time(), "updated": time.time(), "chunks": [{"text": c, "done": False} for c in chunks]}
+               "speed": speed, "split": "line" if split == "line" else "sentence",
+               "gap": max(0.0, min(3.0, float(gap if gap is not None else SILENCE))),
+               "nfe": max(8, min(64, int(nfe or self.config()["nfe"]))),
+               "status": "waiting", "note": "", "error": "", "output": "", "seconds": 0,
+               "created": time.time(), "updated": time.time(), "chunks": chunks, **(extra or {})}
         self.save_job(job)
         self.wake.set()
         return self.public(job)
+
+    def create_batch(self, profile_id, text, title="", fmt="mp3", speed=1.0, gap=SILENCE, nfe=None, group=None, start=False):
+        """Mỗi dòng một file âm thanh riêng, gom thành một dự án (group). group có sẵn = thêm dòng vào dự án đó."""
+        lines = [line.strip() for line in str(text or "").replace("\r", "").split("\n") if line.strip()]
+        if not lines:
+            raise VoiceError("Nhập văn bản: mỗi dòng sẽ thành một file âm thanh.")
+        if len(lines) > 2000:
+            raise VoiceError("Tối đa 2000 dòng mỗi lần.")
+        existing = [j for j in self.jobs() if group and j.get("group") == group]
+        if group and not existing:
+            raise VoiceError("Không tìm thấy dự án.")
+        group = group or uuid.uuid4().hex[:12]
+        project = existing[0].get("group_title") if existing else (re.sub(r"\s+", " ", str(title or "")).strip()[:80] or "Dự án mới")
+        first = max((j.get("index", 0) for j in existing), default=0)
+        created = []
+        for offset, line in enumerate(lines, 1):
+            name = re.sub(r"\s+", " ", PAUSE.sub(" ", line)).strip()[:40] or f"Dòng {first + offset}"
+            created.append(self.create_job(profile_id, line, name, fmt, speed, "sentence", gap, nfe,
+                                           extra={"group": group, "group_title": project, "index": first + offset,
+                                                  "created": time.time() + offset * 1e-3,
+                                                  **({} if start else {"status": "draft"})}))
+        self.wake.set()
+        return {"group": group, "title": project, "jobs": created}
+
+    def start_group(self, group, settings=None):
+        """Bấm "Tạo giọng nói" trong dự án: mọi dòng Sẵn sàng / Lỗi chạy (dùng cài đặt mới nhất nếu có)."""
+        settings = settings or {}
+        count = 0
+        for job in self.jobs():
+            if job.get("group") == group and job["status"] in ("draft", "error"):
+                fields = {"status": "waiting", "error": "", "note": ""}
+                if settings.get("profile"):
+                    profile = self.profile(settings["profile"])
+                    fields.update(profile=profile["id"], profile_name=profile["name"])
+                if settings.get("speed"):
+                    fields["speed"] = max(.6, min(1.6, float(settings["speed"])))
+                if settings.get("format") in ("mp3", "wav"):
+                    fields["format"] = settings["format"]
+                if settings.get("gap") is not None:
+                    fields["gap"] = max(0.0, min(3.0, float(settings["gap"])))
+                if settings.get("nfe"):
+                    fields["nfe"] = max(8, min(64, int(settings["nfe"])))
+                self.update_job(job["id"], **fields)
+                count += 1
+        if not count:
+            raise VoiceError("Không có dòng nào cần tạo (đã xong hết hoặc đang chạy).")
+        self.wake.set()
+        return count
+
+    def edit(self, job_id, text, name=None):
+        """Sửa văn bản của một dòng/tác vụ: đọc lại từ đầu."""
+        job = self.load_job(job_id)
+        if job["status"] == "running":
+            raise VoiceError("Tác vụ đang chạy.")
+        chunks = build_chunks(text, job.get("split", "sentence"))
+        if not chunks:
+            raise VoiceError("Văn bản trống.")
+        folder = self.jobs_dir / job_id
+        for file in folder.glob("*.*"):
+            if file.name != "job.json":
+                file.unlink(missing_ok=True)
+        job.update(chunks=chunks, status="draft" if job.get("group") else "waiting", error="", note="", output="", seconds=0,
+                   updated=time.time())
+        if name is not None and str(name).strip():
+            job["title"] = re.sub(r"\s+", " ", str(name)).strip()[:60]
+        self.save_job(job)
+        self.wake.set()
+        return self.public(job)
+
+    def export_group(self, group):
+        """Zip mọi file đã xong của một dự án: 001_ten.mp3, 002_…"""
+        import zipfile
+        if not re.fullmatch(r"[a-f0-9]{12}", str(group or "")):
+            raise VoiceError("Dự án không hợp lệ.")
+        jobs = sorted((j for j in self.jobs() if j.get("group") == group and j["status"] == "done" and j.get("output")),
+                      key=lambda j: j.get("index", 0))
+        if not jobs:
+            raise VoiceError("Dự án chưa có file nào xong.")
+        target = self.root / "exports"
+        target.mkdir(exist_ok=True)
+        title = re.sub(r"[^\w\- ]+", "", jobs[0].get("group_title") or "du-an", flags=re.UNICODE).strip()[:50] or "du-an"
+        path = target / f"{title}.zip"
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as z:
+            for job in jobs:
+                file = self.jobs_dir / job["id"] / job["output"]
+                if file.is_file():
+                    name = re.sub(r"[^\w\- ]+", "", job["title"], flags=re.UNICODE).strip()[:40] or "dong"
+                    z.write(file, f"{job.get('index', 0):03d}_{name}{file.suffix}")
+        return path
 
     def retry(self, job_id):
         job = self.load_job(job_id)
@@ -514,7 +719,7 @@ class VoiceStudio:
                 self.update_job(job_id, note=f"Đang đọc đoạn {index + 1}/{len(job['chunks'])}")
                 out = folder / f"chunk_{index:04d}.wav"
                 try:
-                    self.synth(ref, profile.get("ref_text", ""), chunk["text"], out, job["speed"])
+                    self.synth(ref, profile.get("ref_text", ""), chunk["text"], out, job["speed"], nfe=job.get("nfe"))
                 except VoiceError as error:
                     self.update_job(job_id, status="error", error=f"Đoạn {index + 1}: {error}", note="")
                     return
@@ -532,14 +737,24 @@ class VoiceStudio:
     def merge(self, job_id):
         job = self.load_job(job_id)
         folder = self.jobs_dir / job_id
-        silence = folder / "silence.wav"
-        video.run([video.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", f"anullsrc=r={SAMPLE_RATE}:cl=mono", "-t", str(SILENCE),
-                   str(silence)], 60)
+        cache = {}
+
+        def silence(seconds):
+            key = f"{round(seconds, 2):.2f}"
+            if key not in cache:
+                path = folder / f"silence_{key.replace('.', '_')}.wav"
+                video.run([video.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", f"anullsrc=r={SAMPLE_RATE}:cl=mono",
+                           "-t", key, "-c:a", "pcm_s16le", str(path)], 60)
+                cache[key] = path
+            return cache[key]
         lines = []
-        for index in range(len(job["chunks"])):
+        gap = float(job.get("gap", SILENCE))
+        for index, chunk in enumerate(job["chunks"]):
             lines.append(f"file '{(folder / f'chunk_{index:04d}.wav').as_posix()}'")
-            if index < len(job["chunks"]) - 1:
-                lines.append(f"file '{silence.as_posix()}'")
+            pause = chunk.get("pause")
+            seconds = pause if pause is not None else (gap if index < len(job["chunks"]) - 1 else 0)
+            if seconds > 0.01:
+                lines.append(f"file '{silence(seconds).as_posix()}'")
         listing = folder / "concat.txt"
         listing.write_text("\n".join(lines) + "\n", encoding="utf-8")
         safe = re.sub(r"[^\w\- ]+", "", job["title"], flags=re.UNICODE).strip()[:50] or "voice"
