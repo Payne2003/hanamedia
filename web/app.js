@@ -1488,6 +1488,26 @@ function renderLicenseBanner(){
   if(l.state==='expiring')$('licenseBanner').hidden=false;
 }
 setInterval(renderLicenseBanner,1500);
+// Popup kích hoạt: máy mới cài (chưa có key), key sai hoặc key không cấp cho máy này → hiện mã máy để gửi người bán.
+let gateShown=false,lastUpdateNote=null;
+function renderLicenseGate(){
+  const l=state?.license;if(!l||!l.enforced)return;
+  if(lastUpdateNote===null)lastUpdateNote=l.update_note||'';
+  else if(l.update_note&&l.update_note!==lastUpdateNote){lastUpdateNote=l.update_note;toast('🔑 '+l.update_note);}
+  const need=['missing','invalid','wrong_device'].includes(l.state);
+  if(!need){if($('licenseGate').open)$('licenseGate').close();return;}
+  $('gateMachine').textContent=l.request_code||l.machine||'…';
+  const phone=state?.support?.phone;$('gateContact').textContent=phone?`qua Zalo / SĐT ${phone}`:'qua Zalo / Messenger';
+  $('gateTitle').textContent=l.state==='missing'?'Chào mừng đến HANA MEDIA':'Cần kích hoạt lại';
+  $('gateReason').innerHTML=l.state==='missing'?'Máy này chưa được kích hoạt. Gửi <b>mã máy</b> bên dưới cho người bán để nhận mã kích hoạt.':esc(l.message)+' Gửi <b>mã máy</b> bên dưới cho người bán.';
+  if(!gateShown){gateShown=true;try{$('licenseGate').showModal();}catch{}}
+}
+setInterval(renderLicenseGate,1500);
+$('gateClose').onclick=()=>$('licenseGate').close();
+$('gateCopy').onclick=()=>navigator.clipboard.writeText($('gateMachine').textContent).then(()=>toast('Đã sao chép mã máy. Dán gửi cho người bán.')).catch(()=>toast('Chọn và sao chép mã máy.',true));
+$('gateForm').onsubmit=async e=>{e.preventDefault();const k=$('gateKey').value.trim();if(!k)return toast('Dán mã kích hoạt người bán gửi.',true);
+  try{const r=await api('/api/license/activate',{key:k});$('gateKey').value='';await refresh();$('licenseGate').close();toast(r.status?.message||'Đã kích hoạt.');}catch(error){toast(error.message,true);}};
+
 function renderUpdate(){
   const u=state?.update;if(!u)return;
   const busy=u.phase==='downloading'||u.phase==='installing';
@@ -1632,13 +1652,13 @@ $('ldSave').onclick=async()=>{
   if(old&&old.name.trim()!==body.name.trim()&&!confirm(`Bạn đang SỬA tài khoản “${old.name}” thành “${body.name.trim()}”, KHÔNG tạo tài khoản mới.\n\nMuốn thêm khách mới: bấm Hủy rồi bấm “+ Thêm tài khoản”.\n\nVẫn đổi tên tài khoản này?`))return;
   try{const r=await api('/api/license/accounts',body);await loadLicense();
     if(old)fillLicenseForm(r.account);else fillLicenseForm(null);  // tạo xong: khung trở về "Thêm tài khoản" để nhập khách tiếp theo
-    renderLicenseRows();showKey(r.key,r.account.name,r.short);toast(old?'Đã lưu thay đổi và tạo key mới.':`Đã tạo tài khoản ${r.account.name}. Sao chép key gửi cho khách.`);}catch(error){toast(error.message,true);}
+    renderLicenseRows();showKey(r.key,r.account.name,r.short);toast(old?(r.short?.code?'Đã lưu. Máy khách tự nhận thay đổi trong khoảng 15 phút (hoặc khi mở lại app), không cần gửi key mới.':`Đã lưu và tạo key mới. ${r.short?.error||''} Gửi key mới cho khách.`):`Đã tạo tài khoản ${r.account.name}. Sao chép mã kích hoạt gửi cho khách.`);}catch(error){toast(error.message,true);}
 };
 async function renewAccount(id){
   const a=licenseData.dashboard.accounts.find(x=>x.id===id);if(!a)return;
   const plan=prompt(`Gia hạn "${a.name}" (hết hạn ${dmy(a.expires)}).\nNhập gói: 1m = 1 tháng, 1y = 1 năm, 3y = 3 năm, trial = thêm 2 ngày dùng thử`,'1y');if(plan===null)return;
   const amount=prompt('Số tiền thu (VNĐ, để 0 nếu không tính):','0');if(amount===null)return;
-  try{const r=await api('/api/license/renew',{id,plan:plan.trim(),amount:Number(amount)||0});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();showKey(r.key,r.account.name,r.short);toast(`Đã gia hạn tới ${dmy(r.account.expires)}. Gửi key mới cho khách.`);}catch(error){toast(error.message,true);}
+  try{const r=await api('/api/license/renew',{id,plan:plan.trim(),amount:Number(amount)||0});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();showKey(r.key,r.account.name,r.short);toast(r.short?.code?`Đã gia hạn tới ${dmy(r.account.expires)}. Máy khách tự cập nhật trong khoảng 15 phút (hoặc khi mở lại app).`:`Đã gia hạn tới ${dmy(r.account.expires)}. ${r.short?.error||''} Gửi key mới cho khách.`);}catch(error){toast(error.message,true);}
 }
 $('ldRenew').onclick=()=>licenseEditing&&renewAccount(licenseEditing);
 $('ldLock').onclick=async()=>{const a=licenseData.dashboard.accounts.find(x=>x.id===licenseEditing);if(!a)return;

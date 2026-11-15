@@ -1159,3 +1159,12 @@ table.board th:first-child{width:24%}table.board th:last-child{width:12%}table.b
 @media(max-width:900px){.hq-label .tasks{display:none}}
 .hq-label.compact .tasks li:not(.who){display:none}.hq-label.compact .tasks{width:auto;padding:.2em .6em}
 .hq-label.hover .badge{transform:scale(1.08);box-shadow:0 0 24px var(--c)}.hq-label .badge{transition:transform .2s,box-shadow .2s}
+
+/* Popup kích hoạt bản quyền */
+.license-gate{width:min(620px,94vw)}
+.gate-step{display:grid;grid-template-columns:34px minmax(0,1fr);gap:12px;margin:16px 0;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--c-surface-2)}
+.gate-step small{display:block;color:var(--muted);font-size:var(--fs-xs);margin:2px 0 10px}
+.gate-num{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:var(--c-accent);color:var(--c-surface-2)}
+.gate-code{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.gate-code code{font-size:1.15rem;letter-spacing:.06em;padding:8px 12px;border-radius:8px;background:var(--c-input);border:1px dashed var(--c-accent);overflow-wrap:anywhere}
+.gate-form{display:flex;gap:10px;border:0;padding:0;margin:0}.gate-form input{margin:0;font-family:ui-monospace,Consolas,monospace}
+.gate-form button{white-space:nowrap;flex:none}
