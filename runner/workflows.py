@@ -1,0 +1,387 @@
+"""Nhiều workflow trong Không gian Agent (chỉ máy Super Admin dùng).
+
+Mỗi workflow là một thư mục  <HanaMedia>/workflows/<slug>/ :
+  workflow.json      tên, câu lệnh chạy, vai của từng agent (Master + 3 bàn) gắn với kỹ năng nào
+  skills/<tên>/      BẢN GỐC các kỹ năng (SKILL.md + tài liệu) — AI sửa ở đây khi có yêu cầu thay đổi
+  requests.md        yêu cầu sửa kỹ năng chưa xử lý (nhập từ ô "Yêu cầu thay đổi" trong tool)
+  requests-done.md   yêu cầu đã xử lý (AI chuyển sang sau khi sửa)
+  CHANGELOG.md       AI ghi tóm tắt mỗi lần sửa kỹ năng
+  runs/<thời gian>.log  nhật ký mỗi lần tool tự gọi Claude Code / Codex
+Trước khi chạy, tool chép kỹ năng sang  <HanaMedia>/.claude/skills/  (Claude Code) và  ~/.codex/skills/  (Codex),
+và đóng gói zip cho Claude desktop (dist/). Tiến độ: AI ghi  output/_status/<slug>.json .
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import threading
+import time
+import unicodedata
+import zipfile
+from pathlib import Path
+
+SLOTS = ("conductor", "analyst", "writer", "studio")  # Master + 3 bàn trong không gian 3D
+SLOT_NAMES = {"conductor": "Master Agent", "analyst": "Agent 1", "writer": "Agent 2", "studio": "Agent 3"}
+MAX_REQUEST = 6000
+MAX_LOG = 400_000
+DEFAULT = {
+    "slug": "wildlife", "name": "Động vật hoang dã", "builtin": True,
+    "command": "Chạy hanamedia-wildlife-workflow",
+    "description": "Phân tích video đối thủ → prompt 8–10 giây cho Meta Muse → Studio.",
+    "agents": {
+        "conductor": {"name": "Master Agent", "role": "Điều phối", "skill": "hanamedia-wildlife-workflow"},
+        "analyst": {"name": "Agent 1", "role": "Phân tích video", "skill": "phan-tich-video-doi-thu"},
+        "writer": {"name": "Agent 2", "role": "Viết prompt", "skill": "wildlife-motion-prompt-meta"},
+        "studio": {"name": "Agent 3", "role": "Studio · Muse", "skill": ""},
+    },
+}
+
+
+class WorkflowError(ValueError):
+    pass
+
+
+def slugify(text):
+    text = str(text or "").replace("đ", "d").replace("Đ", "D")
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "-", text).strip("-")[:40] or "workflow"
+
+
+def clean(text, limit):
+    return re.sub(r"[\x00-\x08\x0b-\x1f]", "", str(text or "")).strip()[:limit]
+
+
+class Workflows:
+    def __init__(self, folder_getter):
+        self.folder_getter = folder_getter  # trả về thư mục HanaMedia hiện tại (đổi được trong cài đặt)
+        self.lock = threading.Lock()
+        self.runs = {}  # slug -> {"process", "log", "engine", "mode", "started", "code"}
+
+    # ---- thư mục ----
+    @property
+    def home(self):
+        return Path(self.folder_getter())
+
+    @property
+    def root(self):
+        return self.home / "workflows"
+
+    def folder(self, slug):
+        if not re.fullmatch(r"[a-z0-9-]{1,40}", str(slug or "")):
+            raise WorkflowError("Workflow không hợp lệ.")
+        path = self.root / slug
+        if not (path / "workflow.json").is_file() and slug != "wildlife":
+            raise WorkflowError("Không tìm thấy workflow.")
+        return path
+
+    def ensure_default(self):
+        path = self.root / "wildlife"
+        if not (path / "workflow.json").is_file():
+            (path / "skills").mkdir(parents=True, exist_ok=True)
+            self.write_json(path / "workflow.json", {k: v for k, v in DEFAULT.items() if k != "slug"})
+
+    @staticmethod
+    def write_json(path, data):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_suffix(".tmp")
+        temp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(temp, path)
+
+    def load(self, slug):
+        path = self.folder(slug)
+        try:
+            data = json.loads((path / "workflow.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {k: v for k, v in DEFAULT.items() if k != "slug"} if slug == "wildlife" else {}
+        agents = data.get("agents") if isinstance(data.get("agents"), dict) else {}
+        data["agents"] = {s: {"name": clean((agents.get(s) or {}).get("name"), 40) or SLOT_NAMES[s],
+                              "role": clean((agents.get(s) or {}).get("role"), 60),
+                              "skill": clean((agents.get(s) or {}).get("skill"), 80)} for s in SLOTS}
+        data["slug"] = slug
+        data["name"] = clean(data.get("name"), 60) or slug
+        data["command"] = clean(data.get("command"), 300)
+        data["description"] = clean(data.get("description"), 400)
+        data["skills"] = self.skills(slug)
+        data["requests"] = self.requests(slug)
+        data["changelog"] = self.read_tail(path / "CHANGELOG.md", 4000)
+        return data
+
+    def list(self):
+        self.ensure_default()
+        items = []
+        for path in sorted(self.root.iterdir()) if self.root.is_dir() else []:
+            if (path / "workflow.json").is_file():
+                try:
+                    items.append(self.load(path.name))
+                except WorkflowError:
+                    continue
+        items.sort(key=lambda w: (w["slug"] != "wildlife", w["name"].lower()))
+        return items
+
+    # ---- tạo / sửa ----
+    def save(self, data):
+        name = clean(data.get("name"), 60)
+        if not name:
+            raise WorkflowError("Đặt tên workflow.")
+        slug = data.get("slug") or slugify(name)
+        if not data.get("slug"):
+            base, n = slug, 2
+            while (self.root / slug).exists():
+                slug, n = f"{base}-{n}", n + 1
+        path = self.root / slug
+        current = {}
+        if (path / "workflow.json").is_file():
+            current = json.loads((path / "workflow.json").read_text(encoding="utf-8"))
+        agents = data.get("agents") if isinstance(data.get("agents"), dict) else current.get("agents", {})
+        record = {"name": name, "builtin": bool(current.get("builtin")),
+                  "command": clean(data.get("command", current.get("command")), 300),
+                  "description": clean(data.get("description", current.get("description")), 400),
+                  "agents": {s: {k: clean((agents.get(s) or {}).get(k), 80) for k in ("name", "role", "skill")} for s in SLOTS},
+                  "updated": int(time.time())}
+        (path / "skills").mkdir(parents=True, exist_ok=True)
+        self.write_json(path / "workflow.json", record)
+        return self.load(slug)
+
+    def delete(self, slug):
+        path = self.folder(slug)
+        if slug == "wildlife":
+            raise WorkflowError("Không xóa workflow mặc định.")
+        if self.running(slug):
+            raise WorkflowError("Workflow đang chạy.")
+        trash = self.home / "workflows-deleted" / f"{slug}-{int(time.time())}"
+        trash.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), str(trash))  # không xóa hẳn: chuyển sang workflows-deleted/
+
+    # ---- kỹ năng ----
+    def skills(self, slug):
+        base = self.root / slug / "skills"
+        out = []
+        for skill in sorted(base.glob("*/SKILL.md")) if base.is_dir() else []:
+            text = skill.read_text(encoding="utf-8", errors="replace")
+            match = re.search(r'^description:\s*"?(.*?)"?\s*$', text, re.M)
+            out.append({"name": skill.parent.name, "description": (match.group(1) if match else "")[:200],
+                        "chars": len(text), "updated": int(skill.stat().st_mtime)})
+        return out
+
+    def import_skills(self, slug, source):
+        """Chép kỹ năng từ một thư mục: chính nó có SKILL.md, hoặc các thư mục con có SKILL.md, hoặc file .zip."""
+        path = self.folder(slug)
+        source = Path(str(source or "").strip().strip('"')).expanduser()
+        if not source.exists():
+            raise WorkflowError("Không thấy thư mục / file kỹ năng.")
+        temp = None
+        if source.is_file() and source.suffix.lower() == ".zip":
+            temp = path / ".import"
+            shutil.rmtree(temp, ignore_errors=True)
+            with zipfile.ZipFile(source) as z:
+                for member in z.namelist():
+                    target = (temp / member).resolve()
+                    if not str(target).startswith(str(temp.resolve())):
+                        raise WorkflowError("File zip không hợp lệ.")
+                z.extractall(temp)
+            source = temp
+        found = [source] if (source / "SKILL.md").is_file() else sorted(p.parent for p in source.rglob("SKILL.md"))
+        found = [p for p in found if ".git" not in p.parts][:20]
+        if not found:
+            raise WorkflowError("Không có SKILL.md nào trong thư mục này.")
+        names = []
+        for skill in found:
+            name = slugify(skill.name) if skill != temp else slugify(source.name)
+            target = path / "skills" / name
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(skill, target, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", "node_modules"))
+            names.append(name)
+        if temp:
+            shutil.rmtree(temp, ignore_errors=True)
+        return names
+
+    def remove_skill(self, slug, name):
+        target = self.folder(slug) / "skills" / slugify(name)
+        if target.is_dir():
+            shutil.rmtree(target)
+
+    def sync(self, slug):
+        """Chép bản gốc kỹ năng sang chỗ Claude Code / Codex đọc, đóng gói zip cho Claude desktop."""
+        path = self.folder(slug)
+        done = {"claude": 0, "codex": 0, "zip": 0}
+        targets = [("claude", self.home / ".claude" / "skills"), ("codex", Path.home() / ".codex" / "skills")]
+        dist = path / "dist"
+        dist.mkdir(exist_ok=True)
+        for skill in (path / "skills").glob("*/SKILL.md"):
+            src = skill.parent
+            for key, base in targets:
+                try:
+                    dst = base / src.name
+                    if dst.exists():
+                        shutil.rmtree(dst)
+                    shutil.copytree(src, dst)
+                    done[key] += 1
+                except OSError:
+                    pass
+            with zipfile.ZipFile(dist / f"{src.name}.zip", "w", zipfile.ZIP_DEFLATED) as z:
+                for file in src.rglob("*"):
+                    if file.is_file():
+                        z.write(file, f"{src.name}/{file.relative_to(src).as_posix()}")
+            done["zip"] += 1
+        return done
+
+    # ---- yêu cầu thay đổi ----
+    def requests(self, slug):
+        text = self.read_tail(self.root / slug / "requests.md", 20000)
+        return [block.strip() for block in re.split(r"\n(?=## )", text) if block.strip().startswith("## ")]
+
+    def add_request(self, slug, text, target=""):
+        path = self.folder(slug)
+        text = clean(text, MAX_REQUEST)
+        if not text:
+            raise WorkflowError("Nhập nội dung cần thay đổi.")
+        target = clean(target, 80)
+        entry = f"## {time.strftime('%Y-%m-%d %H:%M')}" + (f" · kỹ năng: {target}" if target else "") + f"\n{text}\n\n"
+        with open(path / "requests.md", "a", encoding="utf-8") as handle:
+            handle.write(entry)
+        return self.requests(slug)
+
+    def clear_requests(self, slug):
+        path = self.folder(slug)
+        (path / "requests.md").unlink(missing_ok=True)
+
+    @staticmethod
+    def read_tail(path, limit):
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+        return text[-limit:]
+
+    # ---- chạy bằng Claude Code / Codex ----
+    @staticmethod
+    def engines():
+        return {"claude": bool(shutil.which("claude")), "codex": bool(shutil.which("codex"))}
+
+    def prompt(self, slug, mode):
+        data = self.load(slug)
+        rel = f"workflows/{slug}"
+        roles = "; ".join(f"{SLOT_NAMES[s]} = {a['skill'] or '—'} ({a['role'] or a['name']})" for s, a in data["agents"].items())
+        lines = [
+            f"Bạn đang làm việc trong thư mục HanaMedia. Workflow: «{data['name']}».",
+            f"Bản gốc các kỹ năng của workflow nằm ở {rel}/skills/<tên kỹ năng>/SKILL.md. Vai các agent: {roles}.",
+            "",
+            f"BƯỚC 1 — YÊU CẦU THAY ĐỔI: đọc {rel}/requests.md (nếu có).",
+            f"- Với từng mục: sửa ĐÚNG phần được yêu cầu trong file SKILL.md liên quan ở {rel}/skills/ (không viết lại phần khác,"
+            " giữ nguyên định dạng file, giữ khối frontmatter name/description).",
+            f"- Ghi tóm tắt đã sửa gì, ở file nào vào cuối {rel}/CHANGELOG.md (kèm ngày giờ).",
+            f"- Chuyển các mục đã xử lý từ requests.md sang cuối {rel}/requests-done.md rồi xóa chúng khỏi requests.md.",
+            "- Không có requests.md hoặc file trống thì bỏ qua bước này.",
+            "",
+        ]
+        if mode == "apply":
+            lines.append("BƯỚC 2 — CHỈ sửa kỹ năng theo yêu cầu, KHÔNG chạy workflow. Trả lời ngắn gọn đã sửa những gì.")
+        else:
+            lines += [
+                f"BƯỚC 2 — CHẠY WORKFLOW: {data['command'] or 'chạy kỹ năng điều phối của workflow này'}.",
+                f"- Dùng các kỹ năng trong {rel}/skills/ (đọc SKILL.md của kỹ năng tương ứng khi cần gọi nó).",
+                "- Video / dữ liệu vào: thư mục input/ ; kết quả: output/ (theo quy ước trong kỹ năng).",
+                f"- Trong lúc chạy, ghi tiến độ vào output/_status/{slug}.json dạng "
+                '{"agents": {"<tên kỹ năng>": "working|done|error"}, "item": "<video/việc đang làm>", "percent": 0-100, '
+                '"note": "<một câu>"} — cập nhật mỗi khi chuyển bước.',
+                "- Không hỏi lại người dùng giữa chừng.",
+            ]
+        return "\n".join(lines)
+
+    def running(self, slug):
+        run = self.runs.get(slug)
+        return bool(run and run["process"].poll() is None)
+
+    def run(self, slug, engine, mode="run"):
+        if engine not in ("claude", "codex"):
+            raise WorkflowError("Chọn Claude Code hoặc Codex.")
+        if mode not in ("run", "apply"):
+            raise WorkflowError("Thao tác không hợp lệ.")
+        exe = shutil.which(engine)
+        if not exe:
+            raise WorkflowError(("Máy chưa cài Claude Code (lệnh claude)." if engine == "claude" else
+                                 "Máy chưa cài Codex CLI (lệnh codex).") + " Dùng nút Chép lệnh để chạy tay.")
+        with self.lock:
+            if self.running(slug):
+                raise WorkflowError("Workflow này đang chạy.")
+            path = self.folder(slug)
+            self.sync(slug)
+            (self.home / "input").mkdir(parents=True, exist_ok=True)
+            (self.home / "output" / "_status").mkdir(parents=True, exist_ok=True)
+            prompt = self.prompt(slug, mode)
+            if engine == "claude":
+                args = [exe, "-p", "--permission-mode", "acceptEdits",
+                        "--allowedTools", "Bash,Read,Write,Edit,MultiEdit,Glob,Grep,Skill"]
+            else:
+                args = [exe, "exec", "--full-auto", "--skip-git-repo-check", "-C", str(self.home), "-"]
+            runs = path / "runs"
+            runs.mkdir(exist_ok=True)
+            log_path = runs / f"{time.strftime('%Y%m%d-%H%M%S')}-{engine}-{mode}.log"
+            log = open(log_path, "w", encoding="utf-8", errors="replace")
+            log.write(f"# {engine} · {'chỉ sửa kỹ năng' if mode == 'apply' else 'chạy workflow'} · {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            log.flush()
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            process = subprocess.Popen(args, cwd=str(self.home), stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
+                                       creationflags=flags, text=True, encoding="utf-8", errors="replace")
+            try:
+                process.stdin.write(prompt)
+                process.stdin.close()
+            except OSError:
+                pass
+            self.runs[slug] = {"process": process, "log": log_path, "engine": engine, "mode": mode,
+                               "started": time.time(), "handle": log}
+            threading.Thread(target=self._finish, args=(slug, process, log, mode), daemon=True).start()
+        return self.status(slug)
+
+    def _finish(self, slug, process, log, mode):
+        process.wait()
+        try:
+            log.write(f"\n\n# Kết thúc (mã {process.returncode}) · {time.strftime('%H:%M:%S')}\n")
+            log.close()
+        except OSError:
+            pass
+        try:
+            self.sync(slug)  # AI vừa sửa kỹ năng gốc → chép lại cho Claude Code / Codex / zip
+        except (OSError, WorkflowError):
+            pass
+
+    def stop(self, slug):
+        run = self.runs.get(slug)
+        if run and run["process"].poll() is None:
+            run["process"].terminate()
+        return self.status(slug)
+
+    def status(self, slug):
+        run = self.runs.get(slug)
+        info = {"running": False, "engine": "", "mode": "", "log": "", "code": None, "started": None}
+        if run:
+            info.update(running=run["process"].poll() is None, engine=run["engine"], mode=run["mode"],
+                        code=run["process"].poll(), started=run["started"], log=self.read_tail(run["log"], 6000))
+        status_file = self.home / "output" / "_status" / f"{slug}.json"
+        try:
+            info["progress"] = json.loads(status_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            info["progress"] = None
+        return info
+
+    def board(self, slug):
+        """Tiến độ cho không gian 3D (cùng dạng bảng của workflow động vật): đọc output/_status/<slug>.json."""
+        data = self.load(slug)
+        progress = self.status(slug).get("progress") or {}
+        states = progress.get("agents") if isinstance(progress.get("agents"), dict) else {}
+        running = self.running(slug)
+        stages = {"tool": "done"}
+        for slot in SLOTS:
+            skill = data["agents"][slot]["skill"]
+            value = str(states.get(skill) or states.get(slot) or "")
+            stages[slot] = value if value in ("working", "done", "error") else ("working" if running and slot == "conductor" else "waiting")
+        if not progress and not running:
+            return []
+        percent = progress.get("percent")
+        item = {"name": clean(progress.get("item"), 40) or data["name"], "video": clean(progress.get("note"), 120),
+                "stages": stages, "studio": {"total": 0, "done": 0, "running": 0, "error": 0, "waiting": 0},
+                "percent": int(percent) if isinstance(percent, (int, float)) else
+                round(100 * sum(1 for s in SLOTS if stages[s] == "done") / len(SLOTS)), "updated": time.time()}
+        return [item]
