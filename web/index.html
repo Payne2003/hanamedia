@@ -16,6 +16,7 @@
       <button type="button" class="active" data-nav="studio" id="navStudio"><i><svg class="ic" aria-hidden="true"><use href="#i-home"/></svg></i>Studio · Video Queue<b id="sideRuns" class="nav-badge" hidden>0</b></button>
       <button type="button" data-nav="agents" id="navAgents"><i><svg class="ic" aria-hidden="true"><use href="#i-sparkles"/></svg></i>Không gian Agent 3D</button>
       <button type="button" data-nav="production" id="navProduction" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-film"/></svg></i>Wildlife · Sản xuất phim</button>
+      <button type="button" data-nav="voice" id="navVoice" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-message"/></svg></i>AI Voice</button>
       <button type="button" data-nav="content" id="openContent"><i><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg></i>Content Studio</button>
       <button type="button" data-nav="media" id="openLibrary"><i><svg class="ic" aria-hidden="true"><use href="#i-images"/></svg></i>Thư viện Video &amp; Ảnh</button>
       <button type="button" id="accountsButton"><i><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg></i>Tài khoản Muse <b id="accountCount" class="nav-badge">0</b></button>
@@ -82,6 +83,44 @@
       </aside>
     </div>
     </div>
+    <section id="voiceView" class="voice-page" hidden aria-labelledby="voiceTitle">
+      <div class="agents-top card"><div><h1 id="voiceTitle">HanaMedia AI Voice</h1><p>Nhân bản giọng + đọc văn bản bằng F5-TTS chạy ngay trên máy (GPU của bạn). Giọng mẫu và văn bản không gửi lên máy chủ nào. Chỉ máy Super Admin.</p></div></div>
+      <div class="voice-grid">
+        <section class="card voice-box" id="voiceEngine"><h2>① AI Engine <span id="voiceEngineChip" class="status-chip">—</span></h2>
+          <dl class="voice-facts" id="voiceFacts"></dl>
+          <div class="wf-row"><button type="button" id="voiceInstall" class="primary">Cài AI Engine</button><button type="button" id="voiceRestart">Nạp lại mô hình</button><button type="button" id="voiceOpenRoot">Mở thư mục</button></div>
+          <p class="detail" id="voiceInstallInfo"></p>
+          <details><summary>Checkpoint &amp; giấy phép</summary>
+            <p class="detail">Mã nguồn F5-TTS: MIT. Checkpoint chính thức <b>F5TTS_v1_Base</b>: <b>CC BY-NC 4.0</b> — chỉ để thử nghiệm, không dùng cho sản phẩm thu phí. Bản gốc chủ yếu đọc tiếng Anh/Trung; đọc tiếng Việt tốt cần checkpoint tiếng Việt (kiểm tra giấy phép của checkpoint đó).</p>
+            <label>Model<input id="voiceModel" placeholder="F5TTS_v1_Base"></label>
+            <label>Checkpoint riêng (.pt / .safetensors) <small>để trống = checkpoint chính thức</small><input id="voiceCkpt" placeholder="D:\models\f5-vi\model.safetensors"></label>
+            <label>File vocab (vocab.txt của checkpoint riêng)<input id="voiceVocab"></label>
+            <div class="wf-row"><label class="voice-inline">Chế độ<select id="voiceMode"><option value="development">Development (thử nghiệm)</option><option value="commercial">Commercial (chỉ checkpoint đã có quyền thương mại)</option></select></label>
+              <label class="voice-inline">Chất lượng (NFE)<select id="voiceNfe"><option value="16">16 · nhanh</option><option value="32">32 · chuẩn</option><option value="48">48 · kỹ</option></select></label></div>
+            <button type="button" id="voiceSaveConfig">Lưu cấu hình</button>
+          </details>
+          <details><summary>Nhật ký cài đặt / engine</summary><pre id="voiceLog" class="wf-log"></pre></details>
+        </section>
+        <section class="card voice-box"><h2>② Nhân bản giọng</h2>
+          <label>Tên giọng<input id="voiceName" maxlength="60" placeholder="Ví dụ: Giọng nam trầm kể chuyện"></label>
+          <label>Giọng mẫu (5–15 giây, rõ, không nhạc nền) <small>WAV, MP3, M4A, FLAC…</small><input id="voiceFile" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,.webm,audio/*"></label>
+          <label>Lời mẫu <small>(đúng từng chữ trong file mẫu — để trống thì engine tự nhận dạng, chậm hơn)</small><textarea id="voiceRefText" rows="3" maxlength="1000"></textarea></label>
+          <label class="voice-consent"><input id="voiceConsent" type="checkbox"> Tôi xác nhận đây là giọng của tôi hoặc đã được chủ giọng đồng ý cho nhân bản.</label>
+          <button type="button" id="voiceAddProfile" class="primary">Lưu hồ sơ giọng</button>
+          <h3>Thư viện giọng</h3><div id="voiceProfiles" class="voice-profiles"></div>
+        </section>
+        <section class="card voice-box"><h2>③ Tạo Voice AI</h2>
+          <label>Giọng đọc<select id="voiceProfile"></select></label>
+          <label>Tiêu đề<input id="voiceJobTitle" maxlength="80" placeholder="Tập 1 – Báo săn mồi"></label>
+          <label>Văn bản cần đọc <small id="voiceCount">0 ký tự</small><textarea id="voiceText" rows="9" maxlength="200000" placeholder="Dán kịch bản (20–60 phút đọc cũng được). Tool tự cắt theo câu và ghép lại."></textarea></label>
+          <div class="wf-row"><label class="voice-inline">Tải .txt<input id="voiceTxt" type="file" accept=".txt,text/plain"></label>
+            <label class="voice-inline">Tốc độ<select id="voiceSpeed"><option value="0.85">0.85×</option><option value="1" selected>1×</option><option value="1.1">1.1×</option><option value="1.2">1.2×</option></select></label>
+            <label class="voice-inline">Định dạng<select id="voiceFormat"><option value="mp3">MP3</option><option value="wav">WAV</option></select></label></div>
+          <div class="wf-row"><button type="button" id="voiceCreate" class="primary">▶ Tạo voice</button><button type="button" id="voiceTest">Nghe thử 1 câu</button></div>
+        </section>
+      </div>
+      <section class="card voice-box"><h2>④ Hàng đợi &amp; lịch sử</h2><div id="voiceJobs" class="voice-jobs"></div></section>
+    </section>
     <section id="agentsView" class="agents-page" hidden aria-labelledby="agentsTitle">
       <div class="agents-top card"><div><h1 id="agentsTitle">Không gian Agent 3D</h1><p>Master Agent điều phối 3 robot agent: Phân tích video → Viết prompt → Studio · Muse. Theo dõi từng video ngay trong phòng điều khiển.</p></div>
         <div class="agents-actions"><label class="wf-pick" id="wfPick" hidden>Workflow<select id="wfSelect"></select></label><button id="wfNew" type="button" hidden>＋ Workflow mới</button><button id="agentsSend" type="button" class="primary"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg> Gửi video cho agent</button><button id="agentsSpin" type="button" aria-pressed="true">⟳ Tự lia camera</button><button id="agentsReset" type="button">Góc nhìn mặc định</button><button id="agentsCommand" type="button">Chép lệnh chạy workflow</button></div></div>
