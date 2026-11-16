@@ -846,7 +846,7 @@ async function loadWorkflows(){
   if(!wf.owner){wf.slug='wildlife';return;}
   if(!wf.list.some(w=>w.slug===wf.slug))wf.slug='wildlife';
   $('wfSelect').innerHTML=wf.list.map(w=>`<option value="${esc(w.slug)}">${esc(w.name)}</option>`).join('');$('wfSelect').value=wf.slug;
-  renderWorkflow();
+  renderWorkflow();loadNarration();
 }
 function applyWfLabels(w){
   for(const [slot] of WF_SLOTS){const a=w?.agents?.[slot],d=HQ_DEFAULTS[slot],el=document.querySelector(`.hq-label[data-agent="${slot}"] .badge`);
@@ -867,7 +867,7 @@ function renderWorkflow(){
   $('wfChangelog').textContent=w.changelog||'(chưa có)';
   $('wfEngines').textContent=`· Claude Code: ${wf.engines.claude?'có ✓':'chưa cài'} · Codex: ${wf.engines.codex?'có ✓':'chưa cài'}`;
   $('wfRunClaude').disabled=!wf.engines.claude;$('wfRunCodex').disabled=!wf.engines.codex;$('wfApply').disabled=!(wf.engines.claude||wf.engines.codex);
-  $('wfDelete').hidden=w.slug==='wildlife';
+  $('wfDelete').hidden=w.slug==='wildlife'||w.slug==='thoai-phim';
   renderWfStatus();
 }
 function renderWfStatus(){
@@ -880,7 +880,7 @@ async function pollWorkflow(){if(!wf.owner)return;try{const r=await api('/api/wo
   const i=wf.list.findIndex(w=>w.slug===wf.slug);if(i>=0)wf.list[i]=r.workflow;
   if(was&&!r.status.running){toast(r.status.code===0?'Workflow đã chạy xong.':`Workflow dừng (mã ${r.status.code}). Xem nhật ký.`,r.status.code!==0);renderWorkflow();}else renderWfStatus();}catch{}}
 async function wfCall(path,body={}){const r=await api(path,{slug:wf.slug,...body});if(r.workflow){const i=wf.list.findIndex(w=>w.slug===r.workflow.slug);if(i>=0)wf.list[i]=r.workflow;else wf.list.push(r.workflow);}return r;}
-$('wfSelect').onchange=e=>{wf.slug=e.target.value;try{localStorage.setItem('hq.workflow',wf.slug);}catch{}wf.status=null;renderWorkflow();pollAgents();};
+$('wfSelect').onchange=e=>{wf.slug=e.target.value;try{localStorage.setItem('hq.workflow',wf.slug);}catch{}wf.status=null;renderWorkflow();pollAgents();loadNarration();};
 $('wfNew').onclick=async()=>{const name=prompt('Tên workflow mới (ví dụ: Phim hoạt hình, Review sản phẩm…)');if(!name||!name.trim())return;
   try{const r=await api('/api/workflows/save',{name:name.trim(),command:'',agents:{}});wf.list.push(r.workflow);wf.slug=r.workflow.slug;try{localStorage.setItem('hq.workflow',wf.slug);}catch{}
     $('wfSelect').insertAdjacentHTML('beforeend',`<option value="${esc(wf.slug)}">${esc(r.workflow.name)}</option>`);$('wfSelect').value=wf.slug;renderWorkflow();$('wfPanel').open=true;toast('Đã tạo workflow. Nạp kỹ năng rồi gắn kỹ năng cho từng agent.');}catch(error){toast(error.message,true);}};
@@ -899,6 +899,39 @@ $('wfRunClaude').onclick=()=>wfRun('claude','run');$('wfRunCodex').onclick=()=>w
 $('wfApply').onclick=()=>wfRun(wf.engines.claude?'claude':'codex','apply');
 $('wfStop').onclick=async()=>{try{const r=await wfCall('/api/workflows/stop');wf.status=r.status;renderWfStatus();}catch(error){toast(error.message,true);}};
 $('wfCopy').onclick=async()=>{try{const r=await wfCall('/api/workflows/prompt',{mode:'run'});await navigator.clipboard.writeText(r.prompt);toast('Đã chép lệnh. Mở Claude desktop với thư mục HanaMedia rồi dán vào.');}catch(error){toast(error.message,true);}};
+
+// ---- Thoại phim (chỉ máy Super Admin): thể loại, bài thoại → AI Voice → ghép vào video ----
+const NR_SLUG='thoai-phim';let nr=null,nrBusy=false;
+function nrVisible(){return wf.owner&&wf.slug===NR_SLUG;}
+async function loadNarration(){$('nrPanel').hidden=!nrVisible();if(!nrVisible()||nrBusy)return;try{nr=await api('/api/narration/status',{});renderNarration();}catch{}}
+function nrKeep(el,html){if(el.dataset.html!==html){el.dataset.html=html;el.innerHTML=html;}}
+function renderNarration(){
+  if(!nr)return;const g=$('nrGenre'),active=document.activeElement;
+  if(active!==g){const v=g.value||nr.brief.genre||'';g.innerHTML=nr.genres.map(x=>`<option value="${esc(x.slug)}">${esc(x.name)} · ${x.samples} mẫu</option>`).join('');g.value=[...g.options].some(o=>o.value===v)?v:(nr.genres[0]?.slug||'');}
+  const l=$('nrLanguage');if(!l.options.length){l.innerHTML=Object.entries(nr.languages).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('');l.value=nr.brief.language||'vi';$('nrNote').value=nr.brief.note||'';}
+  const cur=nr.genres.find(x=>x.slug===g.value);$('nrGenreInfo').textContent=cur?`· ${cur.name}: ${cur.samples} kịch bản mẫu`:'';
+  const p=$('nrProfile');if(active!==p){const v=p.value||va.voice||'';p.innerHTML=nr.profiles.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')||'<option value="">(chưa có giọng — vào AI Voice để nhân bản)</option>';if([...p.options].some(o=>o.value===v))p.value=v;}
+  $('nrCount').textContent=nr.results.length?`· ${nr.results.length} bài`:'';
+  nrKeep($('nrResults'),nr.results.map(r=>{const path=esc(r.path);
+    const meta=r.error?`<small class="bad">${esc(r.error)}</small>`:`<small>${r.lines} đoạn · ${r.spoken}s có thoại${r.duration?` / ${Number(r.duration).toLocaleString('vi-VN')}s`:''}${r.genre?` · ${esc(r.genre)}`:''}</small><small class="nr-preview">${r.preview.map(esc).join(' ')}</small>`;
+    const voice=r.group?`<small class="${r.voice_done===r.voice_total?'ok':''}">AI Voice: ${r.voice_done}/${r.voice_total} dòng đã có giọng</small>`:'';
+    const buttons=r.error?'':`<div class="wf-row"><button type="button" data-nr-voice="${path}" data-again="${r.group?1:0}">${r.group?'Đưa lại sang AI Voice':'→ Đưa sang AI Voice'}</button>${r.group?`<button type="button" data-nr-open="${esc(r.group)}">Mở dự án giọng</button><button type="button" class="primary" data-nr-mux="${path}" ${r.voice_done===r.voice_total&&r.has_video?'':'disabled'} title="${r.has_video?'Ghép giọng vào video đúng mốc giây, giữ nhạc nền (hạ nhỏ)':'Không thấy video gốc trong input/ hoặc input-done/'}">🎬 Ghép vào video</button>`:''}<button type="button" class="text-button" data-nr-reveal="${path}">Mở file</button></div>${r.muxed?`<small class="ok">Đã ghép: ${esc(r.muxed.split(/[\\/]/).pop())}</small>`:''}`;
+    return `<div class="nr-item"><b>${esc(r.name)}</b>${meta}${voice}${buttons}</div>`;}).join('')||'<p class="detail">Chưa có bài thoại nào. Gửi video, lưu thiết lập rồi bấm Chạy workflow.</p>');
+}
+async function nrCall(path,body,done){if(nrBusy)return;nrBusy=true;try{nr=await api(path,body);renderNarration();done?.(nr);}catch(error){toast(error.message,true);}finally{nrBusy=false;}}
+$('nrGenre').onchange=renderNarration;
+$('nrSaveBrief').onclick=()=>nrCall('/api/narration/brief',{genre:$('nrGenre').value,language:$('nrLanguage').value,note:$('nrNote').value},()=>toast('Đã lưu thiết lập. Bấm Chạy workflow để viết thoại.'));
+$('nrOpenGenre').onclick=()=>api('/api/narration/open-genre',{genre:$('nrGenre').value}).catch(e=>toast(e.message,true));
+$('nrAddSample').onclick=()=>nrCall('/api/narration/sample',{genre:$('nrGenre').value,text:$('nrSample').value,title:$('nrSampleTitle').value},r=>{$('nrSample').value='';$('nrSampleTitle').value='';toast(`Đã lưu mẫu ${r.saved} vào thể loại. Lần chạy tới AI sẽ đọc mẫu này.`);});
+$('nrAddGenre').onclick=()=>nrCall('/api/narration/genre',{name:$('nrNewGenre').value},r=>{$('nrNewGenre').value='';$('nrGenre').value=r.created;renderNarration();toast('Đã thêm thể loại. Dán vài kịch bản mẫu rồi mở thư mục để sửa phong-cach.md nếu muốn.');});
+$('nrResults').onclick=e=>{const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.nrVoice){if(!$('nrProfile').value)return toast('Chưa có giọng đọc. Vào AI Voice để nhân bản giọng trước.',true);
+    if(b.dataset.again==='1'&&!confirm('Tạo lại dự án giọng mới từ bài thoại này? (Dự án cũ vẫn còn trong AI Voice.)'))return;
+    return nrCall('/api/narration/to-voice',{path:b.dataset.nrVoice,profile:$('nrProfile').value,settings:{speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format}},r=>toast(`Đã tạo dự án “${r.made.title}” (${r.made.lines} dòng) trong AI Voice. Sửa chữ nếu cần rồi bấm Tạo giọng nói.`));}
+  if(b.dataset.nrOpen){va.group=b.dataset.nrOpen;$('navVoice').click();setTimeout(()=>{try{vaShow('project');}catch{}},400);return;}
+  if(b.dataset.nrMux){toast('Đang ghép giọng vào video…');return nrCall('/api/narration/mux',{path:b.dataset.nrMux},r=>toast(`Đã ghép xong: ${r.muxed.output.split(/[\\/]/).pop()}${r.muxed.late.length?` · dòng ${r.muxed.late.slice(0,8).join(', ')} bắt đầu trễ vì dòng trước đọc dài hơn cảnh`:''}${r.muxed.over?` · giọng dài hơn video ${r.muxed.over}s (phần cuối bị cắt)`:''}`,!!(r.muxed.late.length||r.muxed.over)));}
+  if(b.dataset.nrReveal)api('/api/narration/reveal',{path:b.dataset.nrReveal}).catch(err=>toast(err.message,true));};
+setInterval(()=>{if(!$('agentsView').hidden)loadNarration();},5000);
 
 $('agentsCommand').onclick=()=>navigator.clipboard.writeText('Chạy hanamedia-wildlife-workflow').then(()=>toast('Đã chép lệnh. Dán vào Claude desktop hoặc Codex (mở thư mục HanaMedia).')).catch(()=>toast('Chép không được.',true));
 // ---- HanaMedia AI Voice (F5-TTS trên máy, chỉ máy Super Admin): văn bản → giọng nói, nhân bản giọng ----
