@@ -1332,3 +1332,8 @@ details.claude-flow{display:block}details.claude-flow:not([open]){padding:12px 1
 .wf-tabs button span{grid-row:1/3;font-size:22px}.wf-tabs button b{font-size:var(--fs-sm)}
 .wf-tabs button small{font-size:11px;color:var(--c-text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wf-tabs button.active{border-color:var(--c-accent);box-shadow:0 0 0 3px var(--c-accent-soft)}.wf-tabs button.active b{color:var(--c-accent-text)}
+/* Giao diện phòng 3D theo workflow */
+.hq[data-theme="studio"] .hq-checklist{border-color:#ffb347;background:linear-gradient(180deg,#4a1d0ee6,#2a0f08e6);box-shadow:0 0 18px #ff8a3d55}
+.hq-flow[data-theme="studio"]{background:linear-gradient(90deg,#3a160c,#5a2410,#3a160c);border-color:#ffb34766}
+.hq[data-theme="lab"] .hq-checklist{border-color:#4fe3c0;background:linear-gradient(180deg,#0c3a34e6,#06201ce6);box-shadow:0 0 18px #2ad0a855}
+.hq-flow[data-theme="lab"]{background:linear-gradient(90deg,#082a26,#0e4038,#082a26);border-color:#4fe3c066}
