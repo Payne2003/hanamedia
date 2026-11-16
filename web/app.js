@@ -848,6 +848,11 @@ async function loadWorkflows(){
   $('wfSelect').innerHTML=wf.list.map(w=>`<option value="${esc(w.slug)}">${esc(w.name)}</option>`).join('');$('wfSelect').value=wf.slug;
   renderWorkflow();loadNarration();
 }
+const WF_ICONS={wildlife:'🐾','thoai-phim':'🎬'};
+function renderWfTabs(){const el=$('wfTabs');el.hidden=!wf.owner||wf.list.length<2;if(el.hidden)return;
+  el.innerHTML=wf.list.map(w=>`<button type="button" role="tab" data-wf-tab="${esc(w.slug)}" class="${w.slug===wf.slug?'active':''}" aria-selected="${w.slug===wf.slug}"><span>${WF_ICONS[w.slug]||'🧩'}</span><b>${esc(w.name)}</b><small>${esc(w.description||'')}</small></button>`).join('');}
+$('wfTabs').onclick=e=>{const b=e.target.closest('[data-wf-tab]');if(!b||b.dataset.wfTab===wf.slug)return;$('wfSelect').value=b.dataset.wfTab;$('wfSelect').onchange({target:$('wfSelect')});
+  if(b.dataset.wfTab==='thoai-phim')setTimeout(()=>{$('nrPanel').open=true;$('nrPanel').scrollIntoView({behavior:'smooth',block:'start'});},300);};
 function applyWfLabels(w){
   for(const [slot] of WF_SLOTS){const a=w?.agents?.[slot],d=HQ_DEFAULTS[slot],el=document.querySelector(`.hq-label[data-agent="${slot}"] .badge`);
     HQ_AGENTS[slot].title=a?.name||d.title;HQ_AGENTS[slot].sub=a?.role||d.sub;HQ_AGENTS[slot].skill=a?.skill||d.skill;
@@ -856,7 +861,7 @@ function applyWfLabels(w){
 }
 function renderWorkflow(){
   const w=currentWf();if(!w)return;applyWfLabels(w);
-  $('wfTitle').textContent=w.name;$('wfName').value=w.name;$('wfCommand').value=w.command||'';$('wfDesc').value=w.description||'';
+  renderWfTabs();$('wfTitle').textContent=w.name;$('wfName').value=w.name;$('wfCommand').value=w.command||'';$('wfDesc').value=w.description||'';
   const options=['<option value="">— chưa gắn —</option>'].concat(w.skills.map(k=>`<option value="${esc(k.name)}">${esc(k.name)}</option>`)).join('');
   $('wfAgents').innerHTML=WF_SLOTS.map(([slot,label])=>{const a=w.agents[slot]||{};return `<div class="wf-agent" data-slot="${slot}"><b>${label}</b><input data-k="name" maxlength="40" value="${esc(a.name||'')}" placeholder="Tên hiển thị"><input data-k="role" maxlength="60" value="${esc(a.role||'')}" placeholder="Vai trò"><select data-k="skill">${options}</select></div>`;}).join('');
   $('wfAgents').querySelectorAll('.wf-agent').forEach(row=>{const v=w.agents[row.dataset.slot]?.skill||'';const sel=row.querySelector('select');if(v&&![...sel.options].some(o=>o.value===v))sel.insertAdjacentHTML('beforeend',`<option value="${esc(v)}">${esc(v)} (chưa nạp)</option>`);sel.value=v;});
