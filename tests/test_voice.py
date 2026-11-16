@@ -129,6 +129,8 @@ class WorkerProtocolTests(unittest.TestCase):
                 "        print('đang nạp mô hình', model)  # thư viện in ra stdout: không được làm hỏng giao thức\n"
                 "        self.device = 'cpu'\n"
                 "    def infer(self, ref_file, ref_text, gen_text, file_wave=None, speed=1.0, nfe_step=32, **kw):\n"
+                "        import shutil\n"
+                "        if 'engine' not in (shutil.which('ffmpeg') or ''): raise ValueError('ffmpeg was not found')  # phải là bản của tool\n"
                 "        if 'HỎNG' in gen_text: raise RuntimeError('lỗi giả')\n"
                 "        subprocess.run([FFMPEG, '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=duration=0.3', file_wave], check=True)\n"
                 "        return None, 24000, None\n", encoding="utf-8")

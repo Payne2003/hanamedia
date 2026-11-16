@@ -38,8 +38,15 @@ def send(obj):
     proto.write(json.dumps(obj, ensure_ascii=False) + "\n"); proto.flush()
 p = argparse.ArgumentParser()
 p.add_argument("--model", default="F5TTS_v1_Base"); p.add_argument("--ckpt", default=""); p.add_argument("--vocab", default="")
-p.add_argument("--device", default="")
+p.add_argument("--device", default=""); p.add_argument("--ffmpeg", default="")
 a = p.parse_args()
+if a.ffmpeg:
+    os.environ["PATH"] = os.path.dirname(a.ffmpeg) + os.pathsep + os.environ.get("PATH", "")
+    try:
+        from pydub import AudioSegment
+        AudioSegment.converter = a.ffmpeg
+    except Exception:
+        pass
 try:
     from f5_tts.api import F5TTS
     kw = {"model": a.model}
@@ -394,6 +401,13 @@ class VoiceStudio:
         log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} nạp mô hình {config['model']} {config['ckpt']}\n")
         log.flush()
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+        # F5-TTS (pydub) và bộ nhận dạng lời mẫu (transformers) gọi chương trình tên "ffmpeg": đưa bản ffmpeg có sẵn của tool
+        # vào thư mục bin riêng với đúng tên đó rồi đặt lên đầu PATH của engine.
+        ffmpeg_bin = self.ensure_ffmpeg()
+        if ffmpeg_bin:
+            env["PATH"] = str(ffmpeg_bin.parent) + os.pathsep + env.get("PATH", "")
+            env["FFMPEG_BINARY"] = env["IMAGEIO_FFMPEG_EXE"] = str(ffmpeg_bin)
+            args += ["--ffmpeg", str(ffmpeg_bin)]
         self.worker = self.popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True, encoding="utf-8",
                                  errors="replace", cwd=str(self.engine_dir), env=env, creationflags=FLAGS)
         self.worker_info = {"ready": False, "device": "", "error": "", "loading": True}
@@ -408,6 +422,23 @@ class VoiceStudio:
             error = self.worker_info.get("error") or "AI Engine không khởi động được (xem nhật ký engine)."
             self.stop_worker()
             raise VoiceError(error)
+
+    def ensure_ffmpeg(self):
+        """Bản sao ffmpeg của tool mang đúng tên ffmpeg(.exe) trong engine/bin. None nếu tool không có ffmpeg."""
+        try:
+            source = Path(video.ffmpeg())
+        except Exception:
+            return None
+        target = self.engine_dir / "bin" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+        try:
+            if not target.is_file() or target.stat().st_size != source.stat().st_size:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+                if os.name != "nt":
+                    target.chmod(0o755)
+        except OSError:
+            return None
+        return target
 
     def _read_worker(self, proc):
         for line in proc.stdout:
