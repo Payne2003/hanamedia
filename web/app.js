@@ -945,7 +945,8 @@ function renderVoice(){
   $('vaVoiceCount').textContent=d.profiles.length;
   if(!d.profiles.some(p=>p.id===va.voice))va.voice=d.profiles[0]?.id||'';
   $('vaVoice').innerHTML=d.profiles.length?d.profiles.map(p=>`<option value="${p.id}">${esc(p.name)} · ${p.seconds}s</option>`).join(''):'<option value="">— chưa có giọng: vào Nhân bản giọng nói —</option>';$('vaVoice').value=va.voice;
-  vaPaint($('vaVoices'),d.profiles.map(p=>`<div class="va-voice ${p.id===va.voice?'active':''}"><div><b>${esc(p.name)}</b><small>${p.seconds}s · ${esc(p.ref_text?p.ref_text.slice(0,90):'(không có lời mẫu)')}</small></div><audio controls preload="none" src="/api/voice/ref/${p.id}"></audio><div class="wf-row"><button type="button" data-va-use="${p.id}">${p.id===va.voice?'✓ Đang dùng':'Dùng giọng này'}</button><button type="button" class="text-button" data-va-del="${p.id}">Xóa</button></div></div>`).join('')||'<p class="detail">Chưa có giọng nào. Tải giọng mẫu ở trên.</p>');
+  $('vaVoicesCount').textContent=d.profiles.length?`${d.profiles.length} giọng`:'';
+  vaPaint($('vaVoices'),d.profiles.map(p=>`<div class="va-voice ${p.id===va.voice?'active':''}"><div class="vc-voice-top"><span class="vc-avatar">${esc((p.name||'?').trim().charAt(0).toUpperCase())}</span><div class="vc-voice-info"><b>${esc(p.name)}</b><div class="vc-tags"><span>${p.seconds}s</span><span class="${p.ref_text?'ok':''}">${p.ref_text?(p.ref_text_auto?'Lời mẫu tự nhận dạng':'Có lời mẫu'):'Chưa có lời mẫu'}</span></div></div>${p.id===va.voice?'<span class="vc-using">Đang dùng</span>':''}</div>${p.ref_text?`<small class="vc-ref">“${esc(p.ref_text.slice(0,110))}${p.ref_text.length>110?'…':''}”</small>`:''}<audio controls preload="none" src="/api/voice/ref/${p.id}"></audio><div class="vc-voice-actions">${p.id===va.voice?'':`<button type="button" class="vc-use" data-va-use="${p.id}">Dùng giọng này</button>`}<button type="button" class="vc-del" data-va-del="${p.id}" title="Xóa giọng">Xóa</button></div></div>`).join('')||'<div class="vc-empty"><span>🎙</span><b>Chưa có giọng nào</b><small>Tải giọng mẫu ở trên để bắt đầu.</small></div>');
   // dự án
   if(va.pane==='project'&&va.group){
     const rows=d.jobs.filter(j=>j.group===va.group).sort((a,b)=>a.index-b.index),done=rows.filter(j=>j.status==='done').length;
@@ -1003,14 +1004,20 @@ $('vaHistory').onclick=async e=>{const open=e.target.closest('[data-va-open]');i
   const b=e.target.closest('button');if(!b)return;if(b.dataset.vaDownload)return vaDownload({id:b.dataset.vaDownload});const act=[['vaRetry','/api/voice/retry'],['vaStop','/api/voice/cancel'],['vaDelete','/api/voice/delete'],['vaFolder','/api/voice/open']].find(([k])=>b.dataset[k]);if(!act)return;
   if(act[0]==='vaDelete'&&!confirm('Xóa tác vụ và file âm thanh?'))return;try{await api(act[1],{id:b.dataset[act[0]]});loadVoice();}catch(error){toast(error.message,true);}};
 // nhân bản giọng
-$('vaVoiceFile').onchange=e=>{const f=e.target.files[0];$('vaVoiceFileName').textContent=f?`${f.name} · ${(f.size/1048576).toFixed(1)} MB`:'WAV, MP3, M4A, FLAC · 5–12 giây';};
+let vaLocalUrl='';
+function vaLocalPreview(f){const a=$('vaVoiceLocal');if(vaLocalUrl){URL.revokeObjectURL(vaLocalUrl);vaLocalUrl='';}
+  $('vaVoiceDrop').classList.toggle('has-file',!!f);
+  if(!f){a.hidden=true;a.removeAttribute('src');$('vaVoiceFileName').textContent='WAV, MP3, M4A, FLAC · 5–12 giây';return;}
+  vaLocalUrl=URL.createObjectURL(f);a.src=vaLocalUrl;a.hidden=false;$('vaVoiceFileName').textContent=`${f.name} · ${(f.size/1048576).toFixed(1)} MB`;
+  a.onloadedmetadata=()=>{if(isFinite(a.duration))$('vaVoiceFileName').textContent=`${f.name} · ${a.duration.toFixed(1)} giây${a.duration>12?' (sẽ cắt còn 12 giây)':a.duration<4?' (hơi ngắn, nên 5–12 giây)':''}`;};}
+$('vaVoiceFile').onchange=e=>vaLocalPreview(e.target.files[0]);
 $('vaVoiceDrop').ondragover=e=>{e.preventDefault();$('vaVoiceDrop').classList.add('drag');};$('vaVoiceDrop').ondragleave=()=>$('vaVoiceDrop').classList.remove('drag');
 $('vaVoiceDrop').ondrop=e=>{e.preventDefault();$('vaVoiceDrop').classList.remove('drag');if(e.dataTransfer.files[0]){const dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);$('vaVoiceFile').files=dt.files;$('vaVoiceFile').onchange({target:$('vaVoiceFile')});}};
 $('vaVoiceSave').onclick=async()=>{const file=$('vaVoiceFile').files[0];if(!file)return toast('Chọn file giọng mẫu.',true);if(!$('vaVoiceConsent').checked)return toast('Cần tick xác nhận quyền dùng giọng.',true);
   const b=$('vaVoiceSave');b.disabled=true;
   try{const r=await fetch('/api/voice/upload',{method:'POST',headers:{'X-Runner-Key':key,'Content-Type':'application/octet-stream','X-Voice-File':encodeURIComponent(file.name),'X-Voice-Name':encodeURIComponent($('vaVoiceName').value),'X-Voice-Text':encodeURIComponent($('vaVoiceText').value),'X-Voice-Consent':'1'},body:file});
     const d=await r.json();if(!r.ok)throw Error(d.error||'Không lưu được giọng.');va.voice=d.profile.id;vaSave();toast(`Đã lưu giọng “${d.profile.name}” (${d.profile.seconds}s) và chọn làm giọng đọc.`);
-    $('vaVoiceName').value='';$('vaVoiceText').value='';$('vaVoiceFile').value='';$('vaVoiceConsent').checked=false;$('vaVoiceFileName').textContent='WAV, MP3, M4A, FLAC · 5–12 giây';loadVoice();}
+    $('vaVoiceName').value='';$('vaVoiceText').value='';$('vaVoiceFile').value='';$('vaVoiceConsent').checked=false;vaLocalPreview(null);loadVoice();}
   catch(error){toast(error.message,true);}finally{b.disabled=false;}};
 $('vaVoices').onclick=async e=>{const use=e.target.closest('[data-va-use]');if(use){va.voice=use.dataset.vaUse;vaSave();renderVoice();toast('Đã chọn giọng đọc.');return;}
   const del=e.target.closest('[data-va-del]');if(!del||!confirm('Xóa hồ sơ giọng này?'))return;try{await api('/api/voice/delete-profile',{id:del.dataset.vaDel});loadVoice();}catch(error){toast(error.message,true);}};
