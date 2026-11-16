@@ -173,6 +173,29 @@ SERVER_ERROR = re.compile(r"đã xảy ra lỗi|lỗi không mong muốn|có l�
 # Muse tự nói lỗi hệ thống/máy chủ (kể cả khi câu có "chưa tạo được video"): là lỗi máy chủ, KHÔNG phải từ chối nội dung
 SERVER_STRONG = re.compile(r"lỗi nội bộ|lỗi bất ngờ|lỗi (?:từ )?phía máy chủ|máy chủ tạo video|trục trặc|sự cố tạm thời|"
                            r"không phải do (?:nội dung )?prompt|internal (?:server )?error|server error", re.IGNORECASE)
+# Muse hỏi lại thay vì tạo video ("Bạn muốn video dài bao lâu?", "Bạn có muốn mình tạo luôn không?"…): tool tự trả lời
+# đồng ý để Muse tạo tiếp, không cần người trực Chrome. Câu trả lời có cụm cố định để nhận ra lượt của tool.
+AUTO_REPLY_TAG = "Đồng ý, hãy tạo video ngay"
+AUTO_REPLY = (AUTO_REPLY_TAG + " theo đúng mô tả ở trên. Phần nào chưa rõ thì bạn tự chọn phương án hợp lý nhất "
+              "(giữ đúng thời lượng, tỉ lệ khung hình và phong cách đã ghi), không cần hỏi lại.")
+AUTO_REPLY_MAX = 2
+QUESTION = re.compile(r"\?|\b(?:bạn|anh|chị|em) (?:có )?muốn\b|bạn (?:thích|chọn|cần)\b|vui lòng (?:cho|xác nhận|chọn)|"
+                      r"hãy cho (?:mình|tôi|em) biết|xác nhận giúp|mình nên|có nên|"
+                      r"would you like|do you want|should i\b|shall i\b|let me know|which (?:one|option|style)|"
+                      r"\bprefer\b|can you (?:confirm|clarify)|please (?:confirm|clarify|specify)", re.IGNORECASE)
+
+
+def needs_answer(text):
+    """True nếu đoạn trả lời mới nhất của Muse là câu HỎI (không phải lỗi / từ chối / hết hạn mức)."""
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    if AUTO_REPLY_TAG in text:
+        text = text.split(AUTO_REPLY_TAG)[-1]
+        text = text.split("không cần hỏi lại.", 1)[-1].strip()
+    if len(text) < 8 or reply_problem(text):
+        return False
+    return bool(QUESTION.search(text))
+
+
 MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
 
 
@@ -1032,6 +1055,22 @@ return before>0 ? 'scrolled' : 'top';
         if automatic:
             box.send_keys(Keys.ENTER)
 
+    def answer_question(self):
+        """Gõ câu trả lời đồng ý vào ô chat của Muse và gửi. True nếu đã gửi."""
+        from selenium.webdriver.common.keys import Keys
+        try:
+            with self.exclusive():
+                box = self.composer()
+                if not box:
+                    return False
+                box.clear()
+                box.click()
+                box.send_keys(AUTO_REPLY)
+                box.send_keys(Keys.ENTER)
+            return True
+        except Exception:
+            return False
+
     def finish_generation(self, marker, before, files_before, automatic, timeout):
         self.phase("Muse đang tạo video" if automatic else "Prompt đã điền; bấm Gửi trên cửa sổ Muse")
         new_card = self.wait_for_card(marker, before, timeout)
@@ -1064,6 +1103,7 @@ if (!marker.startsWith('Mã tác vụ:')) {
     const sameKind=t => role ? t.getAttribute('data-message-role')===role : t.className===myTurn.className;
     const later=[...root.querySelectorAll('[data-message-turn-id]')].filter(t => t!==myTurn && !t.contains(node)
       && sameKind(t) && t.getAttribute('data-message-turn-id')!==myTurn.getAttribute('data-message-turn-id')
+      && !(t.innerText||'').includes('Đồng ý, hãy tạo video ngay')   // lượt tool tự trả lời Muse: vẫn là tác vụ này
       && follows(myTurn,t) && follows(t,node));
     if (later.length) return false;
   }
@@ -1081,6 +1121,7 @@ return !leaves.some(e => e!==mine && !e.innerText.includes(marker)
         until = time.monotonic() + timeout
         new_card = None
         seen_url = None
+        last_reply, reply_since, answered = None, time.monotonic(), 0
         while time.monotonic() < until:
             try:  # báo địa chỉ cuộc trò chuyện (đổi sau khi gửi) để Chrome có tắt ngang vẫn mở lại lấy được video
                 url = self.driver.current_url
@@ -1105,12 +1146,22 @@ return !leaves.some(e => e!==mine && !e.innerText.includes(marker)
                     continue
             if new_card:
                 break
-            problem = reply_problem(self.reply_text(marker))
+            reply = self.reply_text(marker)
+            problem = reply_problem(reply.split(AUTO_REPLY_TAG)[-1] if AUTO_REPLY_TAG in reply else reply)
             if problem:
                 raise MuseFailure(*problem)
             notice = self.quota_notice()
             if notice:
                 raise notice
+            # Muse hỏi lại: đợi Muse viết xong (chữ đứng yên ~8 giây, không còn nút Dừng) rồi tự trả lời đồng ý.
+            if reply != last_reply:
+                last_reply, reply_since = reply, time.monotonic()
+            elif (needs_answer(reply) and time.monotonic() - reply_since >= 8 and answered < AUTO_REPLY_MAX
+                  and not self.named("button", {"Dừng", "Stop"})):
+                if self.answer_question():
+                    answered += 1
+                    self.phase(f"Muse hỏi lại — tool đã tự trả lời đồng ý (lần {answered}), Muse tạo tiếp")
+                    last_reply, reply_since = None, time.monotonic()
             time.sleep(3)
         if not new_card:
             self.write_video_debug()
