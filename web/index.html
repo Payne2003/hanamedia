@@ -158,7 +158,7 @@
       </aside>
     </section>
     <section id="agentsView" class="agents-page" hidden aria-labelledby="agentsTitle">
-      <div class="agents-top card"><div><h1 id="agentsTitle">Không gian Agent 3D</h1><p>Master Agent điều phối 3 robot agent: Phân tích video → Viết prompt → Studio · Muse. Theo dõi từng video ngay trong phòng điều khiển.</p></div>
+      <div class="agents-top card"><div><h1 id="agentsTitle">Không gian Agent 3D</h1><p id="agentsIntro">Master Agent điều phối 3 robot agent: Phân tích video → Viết prompt → Studio · Muse. Theo dõi từng video ngay trong phòng điều khiển.</p></div>
         <div class="agents-actions"><label class="wf-pick" id="wfPick" hidden>Workflow<select id="wfSelect"></select></label><button id="wfNew" type="button" hidden>＋ Workflow mới</button><button id="agentsSend" type="button" class="primary"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg> Gửi video cho agent</button><button id="agentsSpin" type="button" aria-pressed="true">⟳ Tự lia camera</button><button id="agentsReset" type="button">Góc nhìn mặc định</button><button id="agentsCommand" type="button">Chép lệnh chạy workflow</button></div></div>
       <div class="wf-tabs" id="wfTabs" hidden role="tablist" aria-label="Chọn workflow"></div>
       <div class="hq card" id="hq" aria-label="Phòng điều khiển 3D: Master Agent và các robot agent">
@@ -227,7 +227,7 @@
         <div class="claude-options"><label><input id="claudeAuto" type="checkbox" checked> Có kết quả là tự đưa vào Studio</label><label><input id="claudeCuts" type="checkbox" checked> Gửi kèm điểm cắt cảnh của tool</label><label><input id="claudePack" type="checkbox" checked> Làm sẵn tờ ảnh + đo chuyển động (Codex cần)</label></div>
         <div id="claudeList" class="claude-list"></div>
       </details>
-      <section class="workflow-board card"><div class="board-head"><h2>Bảng workflow</h2><small id="boardFolder"></small></div>
+      <section class="workflow-board card"><div class="board-head"><h2 id="boardTitle">Bảng workflow</h2><small id="boardFolder"></small></div>
         <div class="board-scroll"><table class="board"><thead><tr id="boardHead"></tr></thead><tbody id="boardRows"></tbody></table></div>
         <div id="boardEmpty" class="empty-small">Chưa có video nào. Bấm <b>Gửi video cho agent</b>, rồi mở Claude desktop / Codex trong thư mục HanaMedia và gõ: <code>Chạy hanamedia-wildlife-workflow</code></div></section>
     </section>

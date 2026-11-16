@@ -64,6 +64,7 @@ function buildSky() {
       g.fillStyle = grad; g.fillRect(0, 0, w, h);
     })}));
   scene.add(sky);
+  parts.sky = {mesh: sky, maps: {default: sky.material.map}};
   // sao mờ
   const stars = [];
   for (let i = 0; i < 400; i++) { const a = rand() * Math.PI * 2, y = 20 + rand() * 60, r = 85; stars.push(Math.cos(a) * r, y, Math.sin(a) * r); }
@@ -417,7 +418,7 @@ class Panel {
   }
   frame(g, w, h, c) {
     g.clearRect(0, 0, w, h);
-    const bg = g.createLinearGradient(0, 0, 0, h); bg.addColorStop(0, rgba(0x2a6bea, .42)); bg.addColorStop(1, rgba(0x0b2a7a, .26));
+    const bg = g.createLinearGradient(0, 0, 0, h); bg.addColorStop(0, rgba(theme.panel[0], .42)); bg.addColorStop(1, rgba(theme.panel[1], .26));
     g.fillStyle = bg; g.fillRect(0, 0, w, h);
     g.fillStyle = 'rgba(255,255,255,.045)'; for (let y = (this.t * 40) % 4; y < h; y += 4) g.fillRect(0, y, w, 1);
     g.strokeStyle = c; g.lineWidth = 4; g.strokeRect(3, 3, w - 6, h - 6);
@@ -639,6 +640,15 @@ function frame() {
   const gl = parts.globe;
   if (gl) { gl.group.rotation.y += dt * .15; gl.wire.rotation.y -= dt * .04; for (const o of gl.orbits) o.pivot.rotation.y += dt * o.sp; gl.group.position.y = 6.55 + Math.sin(t * .6) * .08; }
   for (const scan of parts.scan) scan.rotation.z -= dt * .3;
+  if (parts.studio && parts.studio.group.visible) {  // phòng thu: vòng sóng âm nhảy theo nhịp + biển ON AIR nhấp nháy
+    const busy = Object.values(state).some(v => v === 'working') ? 1 : .45;
+    parts.studio.bars.forEach((bar, i) => {
+      const level = .25 + busy * (Math.abs(Math.sin(t * 2.6 + i * .55)) * .9 + Math.abs(Math.sin(t * 5.1 + i * 1.3)) * .5);
+      bar.scale.y = level; bar.position.y = .06 + level * .5 * bar.userData.h;
+    });
+    parts.studio.reels.forEach((reel, i) => { reel.rotation.z += dt * (i ? -.5 : .5) * (busy + .3); });
+    parts.studio.signs.forEach(sign => { sign.material.opacity = .75 + Math.sin(t * 3) * .25; });
+  }
   if (parts.halo) parts.halo.rotation.z += dt * .4;
   if (parts.dust) {
     const p = parts.dust.geometry.attributes.position, sp = parts.dust.userData.speed;
@@ -791,6 +801,88 @@ export function mount(container, canvasElement, labelElements) {
   new ResizeObserver(resize).observe(host);
   resize();
   return true;
+}
+
+// ---------- giao diện theo workflow ----------
+// default: phòng điều khiển xanh tím (động vật hoang dã) · studio: phòng thu hoàng hôn vàng cam (thoại phim) · lab: xanh ngọc (workflow khác)
+const THEMES = {
+  default: {panel: [0x2a6bea, 0x0b2a7a]},
+  studio: {panel: [0xe8742a, 0x7a2a0b], band: [.045, .14], sat: 1.05, sky: ['#120608', '#3a1420', '#7a2a2a', '#e0703a', '#ffc46a', '#40202a', '#0d0606']},
+  lab: {panel: [0x1fa890, 0x0b5a4a], band: [.40, .50], sat: .95, sky: ['#04100f', '#0a2a30', '#14505a', '#2a9a8a', '#a8f0c8', '#143a3a', '#040c0c']},
+};
+let theme = THEMES.default, themeName = 'default', themed = null;
+function collectThemed() {
+  themed = [];
+  const seen = new Set(), add = color => { if (color && color.isColor && !seen.has(color)) { seen.add(color); themed.push({color, base: color.clone()}); } };
+  const skip = new Set();
+  for (const bot of Object.values(parts.robots)) bot.traverse(o => skip.add(o));  // robot giữ màu riêng của từng agent
+  if (parts.studio) parts.studio.group.traverse(o => skip.add(o));
+  scene.traverse(o => {
+    if (skip.has(o)) return;
+    if (o.isLight) { add(o.color); add(o.groundColor); }
+    for (const m of Array.isArray(o.material) ? o.material : o.material ? [o.material] : []) { add(m.color); add(m.emissive); if (m.uniforms && m.uniforms.color) add(m.uniforms.color.value); }
+  });
+  add(scene.background); add(scene.fog && scene.fog.color);
+}
+function skyTexture(stops) {
+  return canvasTexture(16, 512, (g, w, h) => {
+    const grad = g.createLinearGradient(0, 0, 0, h);
+    [0, .3, .42, .48, .52, .56, 1].forEach((at, i) => grad.addColorStop(at, stops[i]));
+    g.fillStyle = grad; g.fillRect(0, 0, w, h);
+  });
+}
+function buildStudio() {
+  const group = new THREE.Group(); group.visible = false;
+  const bars = [];
+  for (let i = 0; i < 72; i++) {  // vòng sóng âm quanh bục Master
+    const a = i / 72 * Math.PI * 2, h = .38 + (i % 3) * .14;
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(.09, h, .09), glow(i % 2 ? 0xffb347 : 0xff6a3d, .85));
+    bar.position.set(Math.cos(a) * 2.95, .3, Math.sin(a) * 2.95 - 1.9); bar.rotation.y = -a; bar.userData.h = h;
+    group.add(bar); bars.push(bar);
+  }
+  const reels = [], signs = [];
+  for (const side of [-1, 1]) {
+    // cuộn phim quay hai bên quả cầu
+    const reel = new THREE.Group();
+    reel.add(new THREE.Mesh(new THREE.TorusGeometry(1.25, .07, 10, 64), glow(0xffc46a, .9)));
+    reel.add(new THREE.Mesh(new THREE.TorusGeometry(.28, .06, 8, 32), glow(0xffe2a8, .9)));
+    for (let k = 0; k < 6; k++) { const hole = new THREE.Mesh(new THREE.RingGeometry(.2, .27, 24), glow(0xff8a4a, .8)); const a = k / 6 * Math.PI * 2; hole.position.set(Math.cos(a) * .75, Math.sin(a) * .75, 0); reel.add(hole); }
+    reel.position.set(side * 6.6, 6.7, -5.2); reel.rotation.y = -side * .5; group.add(reel); reels.push(reel);
+    // biển ON AIR
+    const tex = canvasTexture(512, 160, (g, w, h) => {
+      g.clearRect(0, 0, w, h); g.strokeStyle = '#ff5a4a'; g.lineWidth = 10; g.strokeRect(8, 8, w - 16, h - 16);
+      g.fillStyle = '#ff5a4a'; g.beginPath(); g.arc(70, h / 2, 22, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#ffe9d8'; g.font = 'bold 84px Arial'; g.textBaseline = 'middle'; g.fillText('ON AIR', 120, h / 2 + 4);
+    });
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.3, .72), new THREE.MeshBasicMaterial({map: tex, transparent: true, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false}));
+    sign.position.set(side * 6.6, 4.75, -5.2); sign.rotation.y = -side * .5; group.add(sign); signs.push(sign);
+  }
+  scene.add(group);
+  parts.studio = {group, bars, reels, signs};
+}
+// name: default | studio | lab; titles: {analyst|writer|studio: chữ trên bảng lớn sau lưng agent}
+export function setTheme(name, titles) {
+  if (!scene) return;
+  const next = THEMES[name] ? name : 'default';
+  if (titles) for (const panel of parts.panels) if (panel.title && panel.extra.agent && titles[panel.extra.agent]) panel.title = titles[panel.extra.agent];
+  if (next === themeName) return;
+  themeName = next; theme = THEMES[next];
+  if (!parts.studio) buildStudio();
+  if (!themed) collectThemed();
+  const hsl = {};
+  for (const {color, base} of themed) {
+    color.copy(base);
+    if (!theme.band) continue;
+    base.getHSL(hsl);
+    if (hsl.s < .08 || hsl.h < .47 || hsl.h > .86) continue;  // xám / trắng và màu ấm giữ nguyên; dải xanh–tím đổi sang dải màu của giao diện
+    const k = (hsl.h - .47) / .39;
+    color.setHSL(theme.band[0] + k * (theme.band[1] - theme.band[0]), Math.min(1, hsl.s * theme.sat), hsl.l);
+  }
+  if (parts.sky) {
+    if (theme.sky && !parts.sky.maps[next]) parts.sky.maps[next] = skyTexture(theme.sky);
+    parts.sky.mesh.material.map = parts.sky.maps[next] || parts.sky.maps.default; parts.sky.mesh.material.needsUpdate = true;
+  }
+  parts.studio.group.visible = next === 'studio';
 }
 
 export function start() { if (!renderer || running) return; running = true; clock.getDelta(); if (!view.start) view.start = performance.now(); raf = requestAnimationFrame(frame); }

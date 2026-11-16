@@ -778,6 +778,41 @@ const HQ_AGENTS={
     tasks:['Nhận prompt vào hàng đợi','Chia tài khoản Muse','Tạo video từng cảnh','Lưu & ghép video']},
 };
 const HQ_FLOW=[['tool','Nhận video'],['analyst','Phân tích cảnh'],['writer','Viết prompt'],['conductor','Xuất file cho tool'],['studio','Tạo video Muse'],['done','Hoàn tất']];
+// Giao diện riêng của từng workflow: thứ tự bước, tên cột, việc của từng agent, tông màu phòng 3D
+const WF_UI={
+  wildlife:{theme:'default',order:['tool','analyst','writer','conductor','studio'],flow:HQ_FLOW,
+    cols:{tool:'Tool',analyst:'Agent 1 · Phân tích',writer:'Agent 2 · Viết prompt',conductor:'Master · Điều phối',studio:'Agent 3 · Studio'},
+    icons:{tool:'📥',analyst:'🔍',writer:'✍️',conductor:'🎛️',studio:'🎬',done:'✅'},item:'video',board:'Bảng workflow · Động vật hoang dã',
+    intro:'Master Agent điều phối 3 robot agent: Phân tích video → Viết prompt → Studio · Muse. Theo dõi từng video ngay trong phòng điều khiển.',
+    empty:'Chưa có video nào. Bấm <b>Gửi video cho agent</b>, rồi mở Claude desktop / Codex trong thư mục HanaMedia và gõ: <code>Chạy hanamedia-wildlife-workflow</code>',
+    titles:{analyst:'LIVE · PHÂN TÍCH',writer:'LIVE · VIẾT PROMPT',studio:'LIVE · STUDIO MUSE'}},
+  'thoai-phim':{theme:'studio',order:['tool','analyst','writer','studio','conductor'],
+    flow:[['tool','Nhận video đã dựng'],['analyst','Phân tích cảnh'],['writer','Viết thoại theo thể loại'],['studio','Kiểm duyệt thoại'],['conductor','Xuất file thoại'],['done','Sang AI Voice']],
+    cols:{tool:'Tool',analyst:'Agent 1 · Phân tích cảnh',writer:'Agent 2 · Biên kịch thoại',studio:'Agent 3 · Kiểm duyệt',conductor:'Master · Xuất file thoại'},
+    icons:{tool:'🎞️',analyst:'🔍',writer:'🖋️',studio:'🧐',conductor:'📄',done:'🎙️'},item:'bài thoại',board:'Bảng thoại phim',
+    intro:'Phòng thu: Master Agent điều phối Phân tích cảnh → Biên kịch thoại → Kiểm duyệt, rồi chuyển bài thoại sang AI Voice và ghép vào video.',
+    empty:'Chưa có bài thoại nào đang chạy. Bấm <b>Gửi video cho agent</b> (video đã dựng), chọn thể loại ở khung <b>Thoại phim</b>, rồi bấm <b>▶ Chạy</b> — hoặc gõ trong Claude / Codex: <code>Chạy thoai-phim-workflow</code>',
+    titles:{analyst:'LIVE · PHÂN TÍCH CẢNH',writer:'LIVE · BIÊN KỊCH THOẠI',studio:'LIVE · KIỂM DUYỆT'},
+    master:[['tool','Nhận video đã dựng'],['analyst','Lập bảng cảnh & nhân vật'],['writer','Giao thể loại cho biên kịch'],['studio','Duyệt thoại khớp hình'],['conductor','Xuất .txt · .srt · JSON']],
+    tasks:{analyst:['Xem tờ ảnh từng cảnh','Ghi nhân vật & hành động','Đo số giây từng cảnh','Xuất bảng cảnh'],
+      writer:['Đọc gói thể loại & mẫu','Chia đoạn thoại 4–12 giây','Viết thoại khớp số giây','Đếm âm tiết từng đoạn'],
+      studio:['Đối chiếu thoại với hình','Kiểm thời lượng & từ cấm','Soát lỗi đọc TTS','Trả đoạn cần sửa']}},
+};
+function wfUi(){const slug=wf.owner?wf.slug:'wildlife';if(WF_UI[slug])return WF_UI[slug];const w=currentWf(),n=k=>w?.agents?.[k]?.role||w?.agents?.[k]?.name||k;
+  return {...WF_UI.wildlife,theme:'lab',cols:{tool:'Tool',analyst:`Agent 1 · ${n('analyst')}`,writer:`Agent 2 · ${n('writer')}`,conductor:`Master · ${n('conductor')}`,studio:`Agent 3 · ${n('studio')}`},
+    flow:[['tool','Nhận dữ liệu'],['analyst',n('analyst')],['writer',n('writer')],['conductor',n('conductor')],['studio',n('studio')],['done','Hoàn tất']],item:'việc',board:`Bảng workflow · ${w?.name||''}`,
+    intro:w?.description||'Workflow riêng của bạn.',empty:`Chưa có việc nào đang chạy. Bấm <b>▶ Chạy</b> ở khung Workflow${w?.command?` — hoặc gõ: <code>${esc(w.command)}</code>`:''}`,
+    titles:{analyst:`LIVE · ${n('analyst')}`.toUpperCase().slice(0,26),writer:`LIVE · ${n('writer')}`.toUpperCase().slice(0,26),studio:`LIVE · ${n('studio')}`.toUpperCase().slice(0,26)}};}
+let hqUiKey='';
+function applyWfUi(){const ui=wfUi(),k=(wf.owner?wf.slug:'wildlife')+'|'+JSON.stringify(ui.cols);
+  hq3d?.setTheme(ui.theme,ui.titles);
+  if(k===hqUiKey)return;hqUiKey=k;
+  $('hq').dataset.theme=ui.theme;$('hqFlow').dataset.theme=ui.theme;
+  $('hqFlow').innerHTML=ui.flow.map(([id,label],i)=>`<div class="fstep" data-step="${id}"><span class="fnum">${i+1}</span><span class="fico">${ui.icons[id]||'▫️'}</span><span class="flabel">${esc(label)}</span></div>${i<ui.flow.length-1?'<span class="farrow">➜</span>':''}`).join('');
+  $('boardTitle').textContent=ui.board;$('boardEmpty').innerHTML=ui.empty;$('agentsIntro').textContent=ui.intro;
+  for(const id of ['analyst','writer','studio'])HQ_AGENTS[id].tasks=ui.tasks?.[id]||(ui===WF_UI.wildlife?HQ_DEFAULTS[id].tasks:WF_GENERIC_TASKS);
+  HQ_AGENTS.conductor.tasks=ui.master||HQ_DEFAULTS.conductor.tasks;
+}
 let agentsData=null,agentsTimer=null,agentsRaf=0,hqBuilt=false;const hqCam={x:0,y:0,tx:0,ty:0,auto:true,t:0};
 let hq3d=null;
 function buildHQ(){
@@ -788,16 +823,17 @@ function buildHQ(){
     el.innerHTML=id==='conductor'?`<div class="badge master"><b>${a.title}</b><small>(${a.sub})</small></div>`:`<div class="badge"><span class="ico">${a.icon}</span><b>${a.title}</b><small>(${a.sub})</small></div><ul class="tasks"></ul>`;
     $('hqLabels').appendChild(el);labelEls[id]=el;
   }
-  $('hqFlow').innerHTML=HQ_FLOW.map(([id,label],i)=>`<div class="fstep" data-step="${id}"><span class="fnum">${i+1}</span><span class="fico">${{tool:'📥',analyst:'🔍',writer:'✍️',conductor:'🎛️',studio:'🎬',done:'✅'}[id]}</span><span class="flabel">${label}</span></div>${i<HQ_FLOW.length-1?'<span class="farrow">➜</span>':''}`).join('');
   import('/hq3d.js').then(mod=>{
     if(!mod.mount($('hq'),$('hqCanvas'),labelEls)){$('hqFallback').hidden=false;return;}
-    hq3d=mod;mod.setAuto(hqCam.auto);if(!$('agentsView').hidden)mod.start();renderAgents();
+    hq3d=mod;mod.setAuto(hqCam.auto);hqUiKey='';if(!$('agentsView').hidden)mod.start();renderAgents();
   }).catch(()=>{$('hqFallback').hidden=false;});
 }
 function renderSpin(){$('agentsSpin').setAttribute('aria-pressed',String(hqCam.auto));$('agentsSpin').classList.toggle('active',hqCam.auto);}
-function currentStage(item){return ['tool','analyst','writer','conductor','studio'].find(id=>item.stages[id]!=='done')||'done';}
+function currentStage(item){return wfUi().order.find(id=>item.stages[id]!=='done')||'done';}
 function renderAgents(){
   const data=agentsData;if(!data)return;
+  try{applyWfUi();}catch{}
+  const ui=wfUi();
   const board=data.board||[];
   const focus=board.find(b=>currentStage(b)!=='done')||board[0];
   $('boardFolder').textContent=`Thư mục chung: ${data.folder}`;
@@ -811,17 +847,17 @@ function renderAgents(){
     if(id==='conductor')continue;
     const fs=focus?focus.stages[id]:'waiting';
     el.querySelector('.tasks').innerHTML=a.tasks.map((t,i)=>{const on=fs==='done'||(fs==='working'&&i<2);const spin=fs==='working'&&i===2;return `<li class="${on?'on':spin?'spin':''}"><i></i>${esc(t)}</li>`;}).join('')+
-      `<li class="who">${st==='working'?`Đang làm ${board.filter(b=>b.stages[id]==='working').length} video`:st==='done'?`Đã xong ${board.filter(b=>b.stages[id]==='done').length} video`:'Đang chờ'}</li>`;
+      `<li class="who">${st==='working'?`Đang làm ${board.filter(b=>b.stages[id]==='working').length} ${ui.item}`:st==='done'?`Đã xong ${board.filter(b=>b.stages[id]==='done').length} ${ui.item}`:'Đang chờ'}</li>`;
   }
   hq3d?.update(states,screens,focus?focus.percent:null);
   const m=HQ_AGENTS.conductor;
-  $('hqMasterList').innerHTML=`<div class="cl-title">${focus?esc(focus.name):'Chưa có video'}</div>`+m.tasks.map(([stage,label])=>{const s=focus?focus.stages[stage]:'waiting';return `<div class="cl ${s==='done'?'on':s==='working'?'spin':''}"><i></i>${esc(label)}</div>`;}).join('');
+  $('hqMasterList').innerHTML=`<div class="cl-title">${focus?esc(focus.name):`Chưa có ${ui.item}`}</div>`+m.tasks.map(([stage,label])=>{const s=focus?focus.stages[stage]:'waiting';return `<div class="cl ${s==='done'?'on':s==='working'?'spin':''}"><i></i>${esc(label)}</div>`;}).join('');
   const active=focus?currentStage(focus):null;
   document.querySelectorAll('#hqFlow .fstep').forEach(f=>{const id=f.dataset.step,s=id==='done'?(active==='done'?'done':'waiting'):focus?focus.stages[id]:'waiting';f.className='fstep '+s+(id===active?' now':'');});
   // bảng workflow
-  const order=['tool','analyst','writer','conductor','studio'],name={tool:'Tool',analyst:'Agent 1 · Phân tích',writer:'Agent 2 · Viết prompt',conductor:'Master · Điều phối',studio:'Agent 3 · Studio'};
+  const order=ui.order,name=ui.cols;
   const text={waiting:'Chờ',working:'Đang làm',done:'Xong',error:'Lỗi'};
-  $('boardHead').innerHTML='<th>Video</th>'+order.map(id=>`<th>${name[id]}</th>`).join('')+'<th>Tiến độ</th>';
+  $('boardHead').innerHTML=`<th>${ui.item.charAt(0).toUpperCase()+ui.item.slice(1)}</th>`+order.map(id=>`<th>${name[id]}</th>`).join('')+'<th>Tiến độ</th>';
   $('boardRows').innerHTML=board.map(item=>`<tr><td><b>${esc(item.name)}</b><small>${esc(item.video||'(không còn video trong input)')}</small></td>${order.map(id=>{const st=item.stages[id];
       const extra=id==='studio'&&item.studio.total?`<small>${item.studio.done}/${item.studio.total} video${item.studio.running?` · ${item.studio.running} đang chạy`:''}${item.studio.error?` · ${item.studio.error} lỗi`:''}</small>`:'';
       return `<td><span class="stage ${st}">${text[st]||st}</span>${extra}</td>`;}).join('')}<td><div class="meter"><i data-w="${item.percent}"></i></div><small>${item.percent}%</small></td></tr>`).join('');
@@ -857,7 +893,6 @@ $('wfTabs').onclick=e=>{const b=e.target.closest('[data-wf-tab]');if(!b||b.datas
 function applyWfLabels(w){
   for(const [slot] of WF_SLOTS){const a=w?.agents?.[slot],d=HQ_DEFAULTS[slot],el=document.querySelector(`.hq-label[data-agent="${slot}"] .badge`);
     HQ_AGENTS[slot].title=a?.name||d.title;HQ_AGENTS[slot].sub=a?.role||d.sub;HQ_AGENTS[slot].skill=a?.skill||d.skill;
-    if(slot!=='conductor')HQ_AGENTS[slot].tasks=w?.slug&&w.slug!=='wildlife'?WF_GENERIC_TASKS:d.tasks;
     if(el){el.querySelector('b').textContent=HQ_AGENTS[slot].title;el.querySelector('small').textContent=`(${HQ_AGENTS[slot].sub})`;}}
 }
 function renderWorkflow(){
@@ -939,7 +974,7 @@ $('nrResults').onclick=e=>{const b=e.target.closest('button');if(!b)return;
   if(b.dataset.nrReveal)api('/api/narration/reveal',{path:b.dataset.nrReveal}).catch(err=>toast(err.message,true));};
 setInterval(()=>{if(!$('agentsView').hidden)loadNarration();},5000);
 
-$('agentsCommand').onclick=()=>navigator.clipboard.writeText('Chạy hanamedia-wildlife-workflow').then(()=>toast('Đã chép lệnh. Dán vào Claude desktop hoặc Codex (mở thư mục HanaMedia).')).catch(()=>toast('Chép không được.',true));
+$('agentsCommand').onclick=()=>navigator.clipboard.writeText((wf.owner&&currentWf()?.command)||'Chạy hanamedia-wildlife-workflow').then(()=>toast('Đã chép lệnh. Dán vào Claude desktop hoặc Codex (mở thư mục HanaMedia).')).catch(()=>toast('Chép không được.',true));
 // ---- HanaMedia AI Voice (F5-TTS trên máy, chỉ máy Super Admin): văn bản → giọng nói, nhân bản giọng ----
 let voiceData=null,voiceTimer=null;
 const VA_DEFAULT={speed:1,nfe:32,gap:.28,format:'mp3',split:'sentence',voice:''};
