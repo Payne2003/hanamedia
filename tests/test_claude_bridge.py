@@ -31,6 +31,56 @@ class ClaudeBridgeTests(unittest.TestCase):
         bridge.send(self.root, video, None)  # không gửi điểm cắt: xóa bảng cũ để Claude tự dò
         self.assertFalse((self.root / "input" / "soi-xam_cuts.txt").exists())
 
+    def test_new_video_moves_old_project_out_of_input(self):
+        first = Path(self.temp.name) / "Video 1.mp4"
+        second = Path(self.temp.name) / "Video 2.mp4"
+        first.write_bytes(b"1")
+        second.write_bytes(b"2")
+        bridge.send(self.root, first, [1.0])
+        (self.root / "input" / "video-1_pack").mkdir()
+        bridge.send(self.root, second, [2.0])
+        self.assertEqual(sorted(p.name for p in (self.root / "input").iterdir()), ["video-2.mp4", "video-2_cuts.txt"])
+        done = self.root / "input-done" / "video-1"
+        self.assertEqual(sorted(p.name for p in done.iterdir()), ["video-1.mp4", "video-1_cuts.txt", "video-1_pack"])
+        self.assertIn("input-done", (self.root / "AGENTS.md").read_text(encoding="utf-8"))
+
+    def test_output_folder_named_after_character(self):
+        import os, time
+        video = Path(self.temp.name) / "clip.mp4"
+        video.write_bytes(b"v")
+        bridge.send(self.root, video, None)
+        out = self.root / "output" / "clip"
+        out.mkdir(parents=True)
+        (out / "phan-tich-canh_clip.md").write_text(
+            "# Phân tích\n\n## 2. Bible nhân vật\n\n| Tên cố định | Loài |\n|---|---|\n| **Báo mẹ** | báo hoa mai |\n"
+            "| Báo con 1 | báo |\n\n## 3. Bảng cảnh\n| # | x |\n|---|---|\n| 1 | y |\n", encoding="utf-8")
+        self.assertEqual(bridge.character(out), "Báo mẹ, Báo con 1")
+        path = out / "hanamedia_clip.json"
+        path.write_text(json.dumps({"character": "Sư tử đực", "scenes": [{"scene": 1, "duration": 8, "prompt": "SCENE 1 | a"}]}),
+                        encoding="utf-8")
+        self.assertEqual(bridge.results(self.root)[0]["name"], "clip")  # vừa ghi xong: chưa đổi tên
+        old = time.time() - 120
+        for item in out.iterdir():
+            os.utime(item, (old, old))
+        [item] = bridge.results(self.root)
+        self.assertEqual(item["name"], "Sư tử đực - clip")
+        self.assertEqual(bridge.source_name(self.root / "output" / "Sư tử đực - clip"), "clip")
+        self.assertFalse((self.root / "input" / "clip.mp4").exists())  # dự án xong: dọn khỏi input/
+        self.assertTrue((self.root / "input-done" / "clip" / "clip.mp4").exists())
+        self.assertEqual(bridge.pending(self.root), [])
+        [row] = bridge.progress(self.root)
+        self.assertEqual(row["name"], "Sư tử đực - clip")
+
+    def test_imported_result_is_not_renamed(self):
+        import os, time
+        path = self.write_result("da-nhap", [{"scene": 1, "duration": 8, "prompt": "SCENE 1 | a"}])
+        data = json.loads(path.read_text(encoding="utf-8"))
+        path.write_text(json.dumps(dict(data, character="Voi")), encoding="utf-8")
+        old = time.time() - 120
+        os.utime(path, (old, old))
+        imported = {bridge.signature(path): 1}
+        self.assertEqual(bridge.results(self.root, imported)[0]["name"], "da-nhap")
+
     def write_result(self, name, scenes):
         folder = self.root / "output" / name
         folder.mkdir(parents=True)

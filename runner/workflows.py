@@ -282,7 +282,10 @@ class Workflows:
             lines += [
                 f"BƯỚC 2 — CHẠY WORKFLOW: {data['command'] or 'chạy kỹ năng điều phối của workflow này'}.",
                 f"- Dùng các kỹ năng trong {rel}/skills/ (đọc SKILL.md của kỹ năng tương ứng khi cần gọi nó).",
-                "- Video / dữ liệu vào: thư mục input/ ; kết quả: output/ (theo quy ước trong kỹ năng).",
+                "- Video / dữ liệu vào: thư mục input/ ; kết quả: output/ (theo quy ước trong kỹ năng). Chỉ làm dự án đang "
+                "có trong input/, KHÔNG đọc input-done/ hay kết quả của dự án cũ trong output/.",
+                "- Trong file JSON kết quả cho tool, thêm trường \"character\": tên nhân vật chính (tiếng Việt) để tool đặt "
+                "tên thư mục kết quả theo nhân vật.",
                 f"- Trong lúc chạy, ghi tiến độ vào output/_status/{slug}.json dạng "
                 '{"agents": {"<tên kỹ năng>": "working|done|error"}, "item": "<video/việc đang làm>", "percent": 0-100, '
                 '"note": "<một câu>"} — cập nhật mỗi khi chuyển bước.',
