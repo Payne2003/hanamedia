@@ -751,7 +751,7 @@ async function claudeImport(path,sig,auto=false,again=false){
 async function pollClaude(){
   if(!key||claudeBusy)return;
   try{await claudeCall('/api/claude/status');}catch{return;}
-  if(claude.auto)for(const r of claude.results)if(!r.imported&&!r.folder_imported&&!r.error&&Date.now()/1000-r.updated>20)await claudeImport(r.path,r.signature,true);
+  if(claude.auto)for(const r of claude.results)if(!r.imported&&!r.folder_imported&&!r.error&&Date.now()/1000-r.updated>40)await claudeImport(r.path,r.signature,true);
 }
 setInterval(pollClaude,6000);setTimeout(pollClaude,1500);
 $('claudeSend').onclick=async()=>{const b=$('claudeSend');b.disabled=true;claudeBusy=true;const label=b.innerHTML;b.textContent='Đang chép video, đo điểm cắt, làm tờ ảnh… (video dài mất vài phút)';

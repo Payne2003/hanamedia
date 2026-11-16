@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import shutil
+import time
 import unicodedata
 import uuid
 from pathlib import Path
@@ -46,7 +47,10 @@ Dành cho Claude hoặc Codex khi được yêu cầu "Chạy hanamedia-wildlife
   opencv. Xem đủ TẤT CẢ các tờ ảnh trong sheets/.
 - Ghi kết quả vào output/<ten-ngan>/: Wildlife_Prompts_EN_<ten-ngan>.txt (mỗi dòng một cảnh, dòng N = cảnh N)
   và hanamedia_<ten-ngan>.json nếu làm được. Tool tự đưa prompt vào hàng đợi Studio khi thấy file.
-- Không sửa hay xoá video trong input/.
+- Trong hanamedia_<ten-ngan>.json thêm "character": tên nhân vật chính (tiếng Việt, vd "Báo mẹ và đàn con") — tool
+  dùng để đặt tên thư mục kết quả.
+- Không sửa hay xoá video trong input/. Mỗi lần tool chỉ để MỘT dự án trong input/ (dự án cũ đã chuyển sang input-done/),
+  chỉ làm video đang có trong input/, không đọc input-done/.
 """
 
 
@@ -55,7 +59,11 @@ def ensure(folder):
     for sub in ("input", "output"):
         (root / sub).mkdir(parents=True, exist_ok=True)
     agents = root / "AGENTS.md"
-    if not agents.exists():
+    try:
+        old = agents.read_text(encoding="utf-8") if agents.exists() else ""
+    except OSError:
+        old = AGENTS_TEXT
+    if not old or (old != AGENTS_TEXT and old.startswith("# Thư mục HanaMedia (dùng chung")):  # bản cũ của tool → cập nhật
         try:
             agents.write_text(AGENTS_TEXT, encoding="utf-8", newline="\n")
         except OSError:
@@ -82,6 +90,7 @@ def send(folder, video, cuts=None, duration=None, pack=False, stop=None, status=
     root = ensure(folder)
     name = short_name(source.name)
     target = root / "input" / f"{name}{source.suffix.lower()}"
+    archive_inputs(root, keep=name, source=source)
     try:
         same = target.exists() and target.resolve() == source.resolve()
     except OSError:
@@ -106,6 +115,155 @@ def send(folder, video, cuts=None, duration=None, pack=False, stop=None, status=
     elif pack_dir.exists():
         shutil.rmtree(pack_dir, ignore_errors=True)
     return {"name": name, "video": str(target), "cuts": count, "folder": str(root), "pack": packed}
+
+
+def input_group(path):
+    """Dự án của một mục trong input/: <ten>.mp4, <ten>_cuts.txt/.csv, <ten>_pack/ → <ten>."""
+    name = path.name
+    if path.is_dir():
+        return short_name(name[:-5] if name.endswith("_pack") else name)
+    for tail in ("_cuts.txt", "_cuts.csv"):
+        if name.endswith(tail):
+            return short_name(name[:-len(tail)])
+    if name.endswith(".copying"):
+        return short_name(name[:-len(".copying")])
+    return short_name(name)
+
+
+def archive_inputs(root, keep=None, source=None, only=None):
+    """Chuyển các dự án cũ trong input/ sang input-done/<ten>/ (không xoá) để Claude / Codex chỉ đọc dự án mới."""
+    root = Path(root)
+    moved = []
+    try:
+        items = list((root / "input").iterdir())
+    except OSError:
+        return moved
+    for path in items:
+        group = input_group(path)
+        if group == keep or path.name.startswith(".") or (only is not None and group != only):
+            continue
+        try:
+            if source is not None and path.resolve() == Path(source).resolve():
+                continue  # người dùng chọn chính file trong input/: không chuyển đi
+        except OSError:
+            pass
+        destination = root / "input-done" / group
+        try:
+            destination.mkdir(parents=True, exist_ok=True)
+            final = destination / path.name
+            if final.exists():
+                final = destination / f"{path.stem} ({time.strftime('%Y%m%d-%H%M%S')}){path.suffix}"
+            shutil.move(str(path), str(final))
+            moved.append(group)
+        except OSError:
+            continue
+    return sorted(set(moved))
+
+
+MARKER = ".hanamedia-source"
+
+
+def source_name(out_dir):
+    """<ten-ngan> gốc của một thư mục output (thư mục đã đổi tên theo nhân vật giữ tên gốc trong .hanamedia-source)."""
+    try:
+        value = (Path(out_dir) / MARKER).read_text(encoding="utf-8").strip()
+        if value:
+            return value
+    except OSError:
+        pass
+    return Path(out_dir).name
+
+
+def _clean_label(text):
+    text = re.sub(r"[*_`#|\[\]]+", " ", str(text or ""))
+    text = re.sub(r'[<>:"/\\?*\x00-\x1f]+', " ", text)
+    return re.sub(r"\s+", " ", text).strip(" .,-;")
+
+
+def character(out_dir):
+    """Tên nhân vật chính: "character" trong hanamedia_*.json, không có thì lấy từ bảng Bible nhân vật của bản phân tích."""
+    out_dir = Path(out_dir)
+    for file in sorted(out_dir.glob("hanamedia_*.json")):
+        try:
+            info = json.loads(file.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(info, dict):
+            for key in ("character", "characters", "main_character", "animal", "species"):
+                value = info.get(key)
+                if isinstance(value, list):
+                    value = ", ".join(str(v.get("name") if isinstance(v, dict) else v) for v in value[:3])
+                label = _clean_label(value)
+                if label:
+                    return label[:60].rstrip(" ,")
+    for file in sorted(out_dir.glob("phan-tich-canh_*.md")):
+        try:
+            lines = file.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+        except OSError:
+            continue
+        names, inside, header = [], False, False
+        for line in lines:
+            if re.match(r"\s*#+\s|\s*\d+\.\s*\*\*|\s*\*\*\d", line) and "nhân vật" in line.lower():
+                inside, header = True, False
+                continue
+            if inside and re.match(r"\s*#+\s", line):
+                break
+            if inside and line.strip().startswith("|"):
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                if not header:
+                    header = True  # dòng tiêu đề bảng
+                    continue
+                if not cells or set(cells[0]) <= set("-: "):
+                    continue
+                label = _clean_label(cells[0])
+                if label and label.lower() not in ("tên", "tên cố định", "nhân vật"):
+                    names.append(label)
+            elif inside and names and not line.strip():
+                break
+        if names:
+            label = ", ".join(names[:3]) + (" …" if len(names) > 3 else "")
+            return label[:60].rstrip(" ,")
+    return ""
+
+
+def label_outputs(folder, imported=None, settle=30):
+    """Kết quả đã xong (có hanamedia_*.json, không ghi thêm trong settle giây) và chưa vào Studio: đổi tên thư mục
+    output/<ten-ngan>/ thành "<Nhân vật> - <ten-ngan>" để dễ nhận ra dự án."""
+    from .store import folder_name
+    imported = imported or {}
+    root = Path(folder).expanduser() / "output"
+    renamed = []
+    if not root.is_dir():
+        return renamed
+    for sub in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(("_", "."))):
+        if (sub / MARKER).exists():
+            continue
+        finals = sorted(sub.glob("hanamedia_*.json"))
+        if not finals:
+            continue
+        try:
+            newest = max(p.stat().st_mtime for p in sub.iterdir())
+        except (OSError, ValueError):
+            continue
+        if time.time() - newest < settle:
+            continue
+        results = [p for p in [finals[0], *sorted(sub.glob("Wildlife_Prompts_EN_*.txt"))]]
+        if any(imported.get(signature(p)) for p in results) or imported.get(folder_key(finals[0])):
+            continue  # đã vào Studio: giữ tên để không nhập trùng
+        label = character(sub)
+        if not label or label.lower() in sub.name.lower():
+            continue
+        target = root / folder_name(f"{label} - {sub.name}")
+        if target.exists():
+            continue
+        try:
+            (sub / MARKER).write_text(sub.name, encoding="utf-8")
+            sub.rename(target)
+            renamed.append(target.name)
+            archive_inputs(root.parent, only=sub.name)  # dự án đã xong: dọn khỏi input/ để lần chạy sau không làm lại
+        except OSError:
+            (sub / MARKER).unlink(missing_ok=True)
+    return renamed
 
 
 SHEET_SCENES = 14   # 14 cảnh một tờ, mỗi cảnh 3 khung (đầu / giữa / cuối) giống sheets.py của kỹ năng phân tích
@@ -250,10 +408,15 @@ def pending(folder):
     """Video đang chờ Claude xử lý (có trong input/ mà chưa có kết quả trong output/)."""
     root = Path(folder).expanduser()
     items = []
+    outputs = {}
+    if (root / "output").is_dir():
+        for sub in (root / "output").iterdir():
+            if sub.is_dir():
+                outputs[source_name(sub)] = sub
     for path in sorted((root / "input").glob("*")) if (root / "input").is_dir() else []:
         if path.is_file() and path.suffix.lower() in VIDEO_TYPES:
             name = short_name(path.name)
-            if not (root / "output" / name / f"hanamedia_{name}.json").is_file():
+            if not (outputs.get(name, root / "output" / name) / f"hanamedia_{name}.json").is_file():
                 items.append({"name": name, "video": path.name, "cuts": (root / "input" / f"{name}_cuts.txt").is_file()})
     return items
 
@@ -341,9 +504,9 @@ def parse(path):
         # nhưng chỉ khi số dòng khớp (không gán số giây của từng góc máy cho prompt đã gộp nhiều cảnh).
         lengths = group_lengths(path.parent)
         if len(lengths) != len(lines) and len(path.parents) > 2:
-            lengths = group_lengths(path.parents[2] / "input" / f"{path.parent.name}_pack", "groups.json")
+            lengths = group_lengths(path.parents[2] / "input" / f"{source_name(path.parent)}_pack", "groups.json")
         if len(lengths) != len(lines):
-            lengths = pack_lengths(path.parents[2] / "input" / f"{path.parent.name}_pack" / "shots.txt") \
+            lengths = pack_lengths(path.parents[2] / "input" / f"{source_name(path.parent)}_pack" / "shots.txt") \
                 if len(path.parents) > 2 else []
         if len(lengths) != len(lines):
             lengths = []
@@ -403,6 +566,10 @@ def results(folder, imported=None):
     """Danh sách kết quả của Claude (mới nhất trước) để hiện trên giao diện."""
     imported = imported or {}
     items = []
+    try:
+        label_outputs(folder, imported)
+    except OSError:
+        pass
     for path in result_files(folder):
         try:
             data = parse(path)
@@ -447,8 +614,8 @@ def progress(folder, imported=None, jobs=None):
                 names.setdefault(short_name(path.name), {})["video"] = path
     if (root / "output").is_dir():
         for path in (root / "output").iterdir():
-            if path.is_dir():
-                names.setdefault(path.name, {})["out"] = path
+            if path.is_dir() and not path.name.startswith(("_", ".")):
+                names.setdefault(source_name(path), {})["out"] = path
     board = []
     for name, found in names.items():
         video, out = found.get("video"), found.get("out") or root / "output" / name
@@ -463,7 +630,7 @@ def progress(folder, imported=None, jobs=None):
         stages["writer"] = "done" if prompts else "working" if analysis or has("groups_*.json") else "waiting"
         stages["conductor"] = "done" if final or (prompts and not video) else "working" if started else "waiting"
         files = result_files(root)
-        result = next((f for f in files if f.parent.name == name), None)
+        result = next((f for f in files if f.parent == out), None)
         studio = {"total": 0, "done": 0, "running": 0, "error": 0, "waiting": 0}
         if result is not None:
             counts = jobs.get(batch_id(result), {})
@@ -481,7 +648,7 @@ def progress(folder, imported=None, jobs=None):
         updated = max((p.stat().st_mtime for p in [video, out] if p and p.exists()), default=0)
         order = ["tool", "analyst", "writer", "conductor", "studio"]
         done = sum(1 for k in order if stages[k] == "done")
-        board.append({"name": name, "video": video.name if video else "", "stages": stages, "studio": studio,
+        board.append({"name": out.name if out.is_dir() else name, "video": video.name if video else "", "stages": stages, "studio": studio,
                       "percent": round(100 * (done + 0.5 * sum(1 for k in order if stages[k] == "working")) / len(order)),
                       "updated": updated})
     board.sort(key=lambda item: -item["updated"])
