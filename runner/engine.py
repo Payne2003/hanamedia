@@ -91,7 +91,7 @@ class Engine:
 
     # ---- hậu kỳ --------------------------------------------------------------------------------------------------
     def post_worker(self):
-        """Nâng độ phân giải video vừa tải (giữ file gốc) rồi ghép các lượt đã xong hết cảnh. Sau khi khởi động lại,
+        """Nâng độ phân giải video vừa tải (thay file gốc) rồi ghép các lượt đã xong hết cảnh. Sau khi khởi động lại,
         tự làm tiếp phần còn dở."""
         while not self.closing:
             try:
@@ -109,12 +109,13 @@ class Engine:
                     for batch in self.store.stitch_candidates():
                         self.stitch_batch(batch)
             except Exception:
-                self.post_status = "Hậu kỳ gặp lỗi không mong muốn. Video gốc vẫn được giữ."
+                self.post_status = "Hậu kỳ gặp lỗi không mong muốn. Video tải về vẫn còn nguyên."
             finally:
                 self.changed.set()
 
     def post_job(self, job_id):
-        """Video tải về nhỏ hơn độ phân giải đã chọn thì phóng lên (file mới "Prompt N (4K).mp4", giữ file gốc)."""
+        """Video tải về nhỏ hơn độ phân giải đã chọn thì phóng lên và THAY file gốc (chỉ giữ một bản đúng chất lượng đã
+        chọn, cùng tên "Prompt N.mp4")."""
         job = self.store.job_post_info(job_id)
         if not job or job["status"] != "done" or not job["resolution"] or not job["output"]:
             return
@@ -127,9 +128,10 @@ class Engine:
                 self.store.set_post(job_id, f"ok:{info['width']}x{info['height']}")
                 return
             self.post_status = f"Đang nâng {source.name} lên {job['resolution']}"
-            output = upscale(source, source.with_name(f"{source.stem} ({job['resolution']}).mp4"), size,
-                             video_args=self.video_args())
-            self.store.set_post(job_id, f"upscaled:{size[0]}x{size[1]}", str(output))
+            temporary = upscale(source, source.with_name(f"{source.stem} ({job['resolution']}).mp4"), size,
+                                video_args=self.video_args())
+            os.replace(temporary, source)  # một file duy nhất: bản đúng chất lượng đã chọn
+            self.store.set_post(job_id, f"upscaled:{size[0]}x{size[1]}", str(source))
         except (VideoError, OSError) as error:
             self.store.set_post(job_id, "error:" + (str(error) if isinstance(error, VideoError)
                                                     else "Không đọc/ghi được file video."))
