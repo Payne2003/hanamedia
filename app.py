@@ -848,6 +848,62 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({"error": str(error)[:300]}, 400)
         return self.reply({"error": "Không tìm thấy."}, 404)
 
+    def narration_action(self, path, body):
+        """Thoại phim (chỉ máy Super Admin): gói thể loại, bài thoại của workflow → AI Voice → ghép vào video."""
+        from runner import narration
+        from runner.narration_skills import SLUG
+        from runner.voice import VoiceError
+        from runner.workflows import WorkflowError
+        from runner.video_tools import VideoError
+        if not self.is_owner():
+            return self.reply({"error": "Chỉ máy Super Admin dùng được phần này."}, 403)
+        flows, voice = self.server.workflows, self.server.voice
+        home = flows.home
+
+        def status():
+            flows.ensure_default()
+            return {"genres": narration.genres(home), "brief": flows.brief(SLUG), "languages": narration.LANGUAGES,
+                    "results": narration.results(home, voice.jobs()),
+                    "profiles": [{"id": p["id"], "name": p["name"]} for p in voice.profiles()]}
+        try:
+            if path == "/api/narration/status":
+                return self.reply(status())
+            if path == "/api/narration/brief":
+                genre = str(body.get("genre") or "")
+                if genre:
+                    narration.genre_folder(home, genre)
+                language = str(body.get("language") or "vi")
+                flows.save_brief(SLUG, {"genre": genre, "language": language if language in narration.LANGUAGES else "vi",
+                                        "note": body.get("note") or ""})
+                return self.reply(status())
+            if path == "/api/narration/genre":
+                slug = narration.add_genre(home, body.get("name"))
+                return self.reply(dict(status(), created=slug))
+            if path == "/api/narration/sample":
+                name = narration.add_sample(home, str(body.get("genre") or ""), body.get("text"), body.get("title"))
+                return self.reply(dict(status(), saved=name))
+            if path == "/api/narration/open-genre":
+                if not open_folder(narration.genre_folder(home, str(body.get("genre") or ""))):
+                    raise narration.NarrationError("Không mở được thư mục thể loại.")
+                return self.reply({"ok": True})
+            file = str(body.get("path") or "")
+            if path in ("/api/narration/to-voice", "/api/narration/mux", "/api/narration/reveal"):
+                if not narration.inside(home, file):
+                    raise narration.NarrationError("File thoại không nằm trong thư mục output của HanaMedia.")
+            if path == "/api/narration/to-voice":
+                made = narration.to_voice(voice, file, str(body.get("profile") or ""), body.get("settings") or {})
+                return self.reply(dict(status(), made=made))
+            if path == "/api/narration/mux":
+                done = narration.mux(home, voice, file, keep_original=body.get("keep_original") is not False)
+                reveal_file(done["output"])
+                return self.reply(dict(status(), muxed=done))
+            if path == "/api/narration/reveal":
+                reveal_file(file)
+                return self.reply({"ok": True})
+        except (narration.NarrationError, VoiceError, WorkflowError, VideoError, OSError) as error:
+            return self.reply({"error": str(error)[:400]}, 400)
+        return self.reply({"error": "Không tìm thấy."}, 404)
+
     def voice_action(self, path, body):
         from runner.voice import VoiceError
         if not self.is_owner():
@@ -1420,6 +1476,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.workflow_action(path, body)
             elif path.startswith("/api/voice/"):
                 return self.voice_action(path, body)
+            elif path.startswith("/api/narration/"):
+                return self.narration_action(path, body)
             elif path == "/api/content/review-rules":
                 store.save_setting("review_rules", str(body.get("rules") or "").strip()[:6000])
                 store.save_setting("review_lock", str(body.get("lock") or "").strip()[:2000])

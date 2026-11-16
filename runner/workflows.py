@@ -38,6 +38,9 @@ DEFAULT = {
 }
 
 
+BUILTIN = ("wildlife", "thoai-phim")
+
+
 class WorkflowError(ValueError):
     pass
 
@@ -71,8 +74,10 @@ class Workflows:
         if not re.fullmatch(r"[a-z0-9-]{1,40}", str(slug or "")):
             raise WorkflowError("Workflow không hợp lệ.")
         path = self.root / slug
-        if not (path / "workflow.json").is_file() and slug != "wildlife":
-            raise WorkflowError("Không tìm thấy workflow.")
+        if not (path / "workflow.json").is_file():
+            if slug not in BUILTIN:
+                raise WorkflowError("Không tìm thấy workflow.")
+            self.ensure_default()
         return path
 
     def ensure_default(self):
@@ -80,6 +85,28 @@ class Workflows:
         if not (path / "workflow.json").is_file():
             (path / "skills").mkdir(parents=True, exist_ok=True)
             self.write_json(path / "workflow.json", {k: v for k, v in DEFAULT.items() if k != "slug"})
+        self.ensure_narration()
+
+    def ensure_narration(self):
+        """Workflow "Thoại phim": tạo lần đầu kèm bộ kỹ năng gốc; file đã có trên máy thì KHÔNG ghi đè (bản máy là bản chính)."""
+        from . import narration_skills as pack
+        path = self.root / pack.SLUG
+        if not (path / "workflow.json").is_file():
+            self.write_json(path / "workflow.json", pack.WORKFLOW)
+        # Agent 1 dùng lại kỹ năng phân tích của workflow động vật (nếu đã nạp ở đó)
+        source = self.root / "wildlife" / "skills" / "phan-tich-video-doi-thu"
+        target = path / "skills" / "phan-tich-video-doi-thu"
+        if source.is_dir() and not target.exists():
+            shutil.copytree(source, target, ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
+        marker = path / "skills" / ".builtin"
+        if marker.is_file():
+            return
+        for rel, text in pack.files().items():
+            target = path / "skills" / rel
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8", newline="\n")
+        marker.write_text("1", encoding="utf-8")
 
     @staticmethod
     def write_json(path, data):
@@ -145,7 +172,7 @@ class Workflows:
 
     def delete(self, slug):
         path = self.folder(slug)
-        if slug == "wildlife":
+        if slug in BUILTIN:
             raise WorkflowError("Không xóa workflow mặc định.")
         if self.running(slug):
             raise WorkflowError("Workflow đang chạy.")
@@ -291,7 +318,24 @@ class Workflows:
                 '"note": "<một câu>"} — cập nhật mỗi khi chuyển bước.',
                 "- Không hỏi lại người dùng giữa chừng.",
             ]
+            brief = self.brief(slug)
+            if brief:
+                lines.append("- THIẾT LẬP LẦN CHẠY NÀY (cũng lưu ở " + f"{rel}/brief.json): "
+                             + "; ".join(f"{k} = {v}" for k, v in brief.items() if v) + ".")
         return "\n".join(lines)
+
+    def brief(self, slug):
+        try:
+            data = json.loads((self.root / slug / "brief.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return {str(k)[:30]: clean(v, 600) for k, v in data.items()} if isinstance(data, dict) else {}
+
+    def save_brief(self, slug, data):
+        path = self.folder(slug)
+        record = {str(k)[:30]: clean(v, 600) for k, v in (data or {}).items()}
+        self.write_json(path / "brief.json", record)
+        return record
 
     def running(self, slug):
         run = self.runs.get(slug)

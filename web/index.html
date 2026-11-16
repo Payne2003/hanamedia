@@ -195,6 +195,28 @@
           </section>
         </div>
       </details>
+      <details class="card wf-panel nr-panel" id="nrPanel" open hidden>
+        <summary class="claude-summary">🎬 Thoại phim · thể loại, bài thoại &amp; ghép giọng <small>(chỉ máy Super Admin)</small></summary>
+        <div class="wf-grid nr-grid">
+          <section class="wf-box"><h3>Thiết lập lần chạy</h3>
+            <label>Thể loại<select id="nrGenre"></select></label>
+            <label>Ngôn ngữ thoại<select id="nrLanguage"></select></label>
+            <label>Ghi chú riêng cho video này <small>(không bắt buộc)</small><textarea id="nrNote" rows="2" maxlength="600" placeholder="Ví dụ: nhân vật chính là báo mẹ tên Sara, kết bằng câu hỏi mở."></textarea></label>
+            <div class="wf-row"><button type="button" id="nrSaveBrief" class="primary">Lưu thiết lập</button><button type="button" id="nrOpenGenre">Mở thư mục thể loại</button></div>
+            <p class="detail">Cách dùng: ① Gửi video đã dựng cho agent ② Lưu thiết lập ③ Bấm Chạy ở khung Workflow phía trên ④ Bài thoại hiện ở cột bên phải.</p>
+          </section>
+          <section class="wf-box"><h3>Huấn luyện thể loại <small id="nrGenreInfo"></small></h3>
+            <label>Dán kịch bản thoại mẫu bạn ưng <small>(AI bắt chước nhịp và cách kể, không chép câu)</small><textarea id="nrSample" rows="6" maxlength="60000" placeholder="Dán nguyên một bài thoại của thể loại đang chọn…"></textarea></label>
+            <div class="wf-row"><input id="nrSampleTitle" maxlength="60" placeholder="Tên mẫu (không bắt buộc)"><button type="button" id="nrAddSample" class="primary">＋ Lưu mẫu vào thể loại</button></div>
+            <div class="wf-row"><input id="nrNewGenre" maxlength="60" placeholder="Tên thể loại mới (vd: Hài hước động vật)"><button type="button" id="nrAddGenre">＋ Thêm thể loại</button></div>
+            <p class="detail">Muốn đổi giọng văn (câu ngắn hơn, cấm từ…): gõ vào ô “Yêu cầu thay đổi kỹ năng” phía trên — AI sửa gói thể loại khi chạy.</p>
+          </section>
+          <section class="wf-box"><h3>Bài thoại <small id="nrCount"></small></h3>
+            <label>Giọng đọc<select id="nrProfile"></select></label>
+            <div id="nrResults" class="nr-results"></div>
+          </section>
+        </div>
+      </details>
       <details class="claude-flow card" id="claudeFlow" aria-label="Workflow Claude / Codex"><summary class="claude-summary">⚙ Cài đặt workflow &amp; kết quả từ Claude / Codex <small id="claudeSummaryInfo"></small></summary>
         <div class="claude-head"><div><h2>Workflow Claude / Codex <small>hanamedia-wildlife-workflow · không dùng Gemini / ChatGPT</small></h2>
           <p id="claudeFolderInfo">Thư mục chung: …</p></div>
