@@ -861,6 +861,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"status": voice.install()})
             if path == "/api/voice/config":
                 return self.reply({"config": voice.save_config(body)})
+            if path == "/api/voice/warm":
+                return self.reply({"started": voice.warm()})
             if path == "/api/voice/restart":
                 voice.stop_worker()
                 return self.reply({"ok": True})
