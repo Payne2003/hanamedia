@@ -16,6 +16,7 @@
       <button type="button" class="active" data-nav="studio" id="navStudio"><i><svg class="ic" aria-hidden="true"><use href="#i-home"/></svg></i>Studio · Video Queue<b id="sideRuns" class="nav-badge" hidden>0</b></button>
       <button type="button" data-nav="agents" id="navAgents"><i><svg class="ic" aria-hidden="true"><use href="#i-sparkles"/></svg></i>Không gian Agent 3D</button>
       <button type="button" data-nav="production" id="navProduction" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-film"/></svg></i>Wildlife · Sản xuất phim</button>
+      <button type="button" id="navNarration" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-film"/></svg></i>Thoại phim</button>
       <button type="button" data-nav="voice" id="navVoice" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-message"/></svg></i>AI Voice</button>
       <button type="button" data-nav="content" id="openContent"><i><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg></i>Content Studio</button>
       <button type="button" data-nav="media" id="openLibrary"><i><svg class="ic" aria-hidden="true"><use href="#i-images"/></svg></i>Thư viện Video &amp; Ảnh</button>
@@ -159,6 +160,7 @@
     <section id="agentsView" class="agents-page" hidden aria-labelledby="agentsTitle">
       <div class="agents-top card"><div><h1 id="agentsTitle">Không gian Agent 3D</h1><p>Master Agent điều phối 3 robot agent: Phân tích video → Viết prompt → Studio · Muse. Theo dõi từng video ngay trong phòng điều khiển.</p></div>
         <div class="agents-actions"><label class="wf-pick" id="wfPick" hidden>Workflow<select id="wfSelect"></select></label><button id="wfNew" type="button" hidden>＋ Workflow mới</button><button id="agentsSend" type="button" class="primary"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg> Gửi video cho agent</button><button id="agentsSpin" type="button" aria-pressed="true">⟳ Tự lia camera</button><button id="agentsReset" type="button">Góc nhìn mặc định</button><button id="agentsCommand" type="button">Chép lệnh chạy workflow</button></div></div>
+      <div class="wf-tabs" id="wfTabs" hidden role="tablist" aria-label="Chọn workflow"></div>
       <div class="hq card" id="hq" aria-label="Phòng điều khiển 3D: Master Agent và các robot agent">
         <canvas id="hqCanvas"></canvas>
         <div class="hq-labels" id="hqLabels"></div>
