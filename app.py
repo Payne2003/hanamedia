@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -38,6 +39,26 @@ def camera_count(custom=None):
 from runner.instance import InstanceLock
 from runner.paths import data_root, frozen, resource_root
 from runner.version import APP_VERSION
+
+def reveal_file(file):
+    """Mở thư mục chứa file và chọn sẵn file đó (Explorer / Finder). False nếu máy không hỗ trợ."""
+    if os.name == "nt":
+        subprocess.Popen(["explorer", "/select,", str(file)])
+        return True
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(file)])
+        return True
+    return False
+
+
+def downloads_folder():
+    """Thư mục Downloads của người dùng (Windows/macOS/Linux)."""
+    home = Path.home()
+    for name in ("Downloads", "Tải xuống"):
+        if (home / name).is_dir():
+            return home / name
+    return home
+
 
 def open_folder(folder):
     """Mở thư mục trong Explorer (Windows) hoặc Finder (macOS). False nếu máy không hỗ trợ."""
@@ -868,6 +889,20 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/voice/delete":
                 voice.delete_job(str(body.get("id")))
                 return self.reply({"ok": True})
+            if path == "/api/voice/save":
+                # Lưu file vào Downloads/HanaMedia Voice rồi mở thư mục, chọn sẵn file (cửa sổ app không tải link được).
+                if body.get("group"):
+                    source = voice.export_group(str(body.get("group")))
+                else:
+                    source = voice.output_file(str(body.get("id")))
+                target_dir = downloads_folder() / "HanaMedia Voice"
+                target_dir.mkdir(parents=True, exist_ok=True)
+                target, n = target_dir / source.name, 2
+                while target.exists():
+                    target, n = target_dir / f"{source.stem} ({n}){source.suffix}", n + 1
+                shutil.copy2(source, target)
+                reveal_file(target)
+                return self.reply({"ok": True, "path": str(target)})
             if path == "/api/voice/open":
                 target = voice.jobs_dir / str(body.get("id")) if body.get("id") else voice.root
                 if not re.fullmatch(r"[a-f0-9]{12}", str(body.get("id") or "a" * 12)) or not target.exists():
