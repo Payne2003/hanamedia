@@ -142,7 +142,7 @@ class PostProcessingTests(unittest.TestCase):
             shutil.copy(video, target)
             self.store.finish(job["id"], output=str(target))
 
-    def test_upscale_keeps_original_and_skips_when_big_enough(self):
+    def test_upscale_replaces_original_and_skips_when_big_enough(self):
         self.store.enqueue(["nhỏ", "đủ"], 1, uuid.uuid4().hex, options={"aspect": "16:9", "resolution": "720p"})
         self.finish_all([self.small, self.hd])
         self.assertEqual(len(self.store.post_pending()), 2)  # khởi động lại giữa chừng vẫn làm tiếp
@@ -151,8 +151,9 @@ class PostProcessingTests(unittest.TestCase):
         jobs = sorted(self.store.snapshot()["jobs"], key=lambda j: j["ordinal"])
         self.assertEqual(jobs[0]["post_status"], "upscaled:1280x720")
         self.assertEqual(video_tools.probe(jobs[0]["upscaled_output"])["height"], 720)
-        self.assertTrue(Path(jobs[0]["output"]).is_file())  # file gốc vẫn còn
-        self.assertTrue(jobs[0]["upscaled_output"].endswith("Prompt 1 (720p).mp4"))
+        self.assertEqual(jobs[0]["upscaled_output"], jobs[0]["output"])  # chỉ một file, đúng chất lượng đã chọn
+        self.assertTrue(jobs[0]["output"].endswith("Prompt 1.mp4"))
+        self.assertEqual(sorted(p.name for p in Path(jobs[0]["output"]).parent.iterdir()), ["Prompt 1.mp4"])
         self.assertEqual((jobs[1]["post_status"], jobs[1]["upscaled_output"]), ("ok:1280x720", None))
         self.assertEqual(self.store.post_pending(), [])
 
