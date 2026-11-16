@@ -290,6 +290,7 @@ function showView(view){
   if(isLicense)loadLicense();
   if(isSettings){applyAutoSettings(true);renderSettings(true);}
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav===view));
+  try{markNarrationNav();}catch{}
   if(isContent){$('contentBrief').value=content.brief;$('contentVideo').value=content.video;renderVideoFile();$('contentLanguage').value=content.language;renderRunnerVersion();applyAutoSettings(true);renderAuto();renderScenes();$('englishInput').value=content.englishInput;$('englishStyle').value=content.englishStyle;$('englishAspect').value=content.englishAspect;$('englishStructured').checked=content.englishStructured;$('englishSeconds').value=String(content.englishSeconds);$('englishAngles').value=String(content.englishAngles??'3');renderEnglishEngine();openCharacters();}
   const hash=isVoice?'#voice':isAgents?'#agents':isProduction?'#production':isContent?'#content':isSettings?'#settings':isMedia?'#media':isCommunity?'#community':isLicense?'#license':'';if(location.hash!==hash)history.replaceState(null,'',location.pathname+hash);
   window.scrollTo(0,0);markSidebar();
@@ -849,7 +850,7 @@ async function loadWorkflows(){
   renderWorkflow();loadNarration();
 }
 const WF_ICONS={wildlife:'🐾','thoai-phim':'🎬'};
-function renderWfTabs(){const el=$('wfTabs');el.hidden=!wf.owner||wf.list.length<2;if(el.hidden)return;
+function renderWfTabs(){markNarrationNav();const el=$('wfTabs');el.hidden=!wf.owner||wf.list.length<2;if(el.hidden)return;
   el.innerHTML=wf.list.map(w=>`<button type="button" role="tab" data-wf-tab="${esc(w.slug)}" class="${w.slug===wf.slug?'active':''}" aria-selected="${w.slug===wf.slug}"><span>${WF_ICONS[w.slug]||'🧩'}</span><b>${esc(w.name)}</b><small>${esc(w.description||'')}</small></button>`).join('');}
 $('wfTabs').onclick=e=>{const b=e.target.closest('[data-wf-tab]');if(!b||b.dataset.wfTab===wf.slug)return;$('wfSelect').value=b.dataset.wfTab;$('wfSelect').onchange({target:$('wfSelect')});
   if(b.dataset.wfTab==='thoai-phim')setTimeout(()=>{$('nrPanel').open=true;$('nrPanel').scrollIntoView({behavior:'smooth',block:'start'});},300);};
@@ -944,7 +945,11 @@ let voiceData=null,voiceTimer=null;
 const VA_DEFAULT={speed:1,nfe:32,gap:.28,format:'mp3',split:'sentence',voice:''};
 const va={...VA_DEFAULT,...(()=>{try{return JSON.parse(localStorage.getItem('va.settings')||'{}');}catch{return {};}})(),pane:'tts',group:null,editing:null};
 function vaSave(){try{localStorage.setItem('va.settings',JSON.stringify({speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format,split:va.split,voice:va.voice}));}catch{}}
-async function checkVoiceOwner(){try{await api('/api/voice/status',{});$('navVoice').hidden=false;}catch{$('navVoice').hidden=true;}}
+async function checkVoiceOwner(){try{await api('/api/voice/status',{});$('navVoice').hidden=$('navNarration').hidden=false;}catch{$('navVoice').hidden=$('navNarration').hidden=true;}}
+function markNarrationNav(){const on=!$('agentsView').hidden&&wf.slug==='thoai-phim';$('navNarration').classList.toggle('active',on);if(on)$('navAgents').classList.remove('active');}
+$('navNarration').onclick=async()=>{wf.slug='thoai-phim';try{localStorage.setItem('hq.workflow',wf.slug);}catch{}
+  if($('agentsView').hidden)showView('agents');else await loadWorkflows();
+  setTimeout(()=>{markNarrationNav();$('nrPanel').open=true;$('nrPanel').scrollIntoView({behavior:'smooth',block:'start'});},600);};
 setTimeout(checkVoiceOwner,2500);
 async function loadVoice(){try{voiceData=await api('/api/voice/status',{});renderVoice();}catch(error){$('vaEngineText').textContent=error.message;}}
 function openVoice(){api('/api/voice/warm',{}).then(r=>{if(r.started)toast('Đang nạp sẵn mô hình giọng nói ở nền…');}).catch(()=>{});loadVoice();clearInterval(voiceTimer);voiceTimer=setInterval(()=>{if(!$('voiceView').hidden)loadVoice();},2500);renderVaControls();}
