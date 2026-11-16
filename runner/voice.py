@@ -2,7 +2,7 @@
 
 - AI Engine KHÔNG đóng gói trong app: tool tạo môi trường Python riêng (data/voice/engine/venv), cài PyTorch (+CUDA nếu
   có card NVIDIA) và gói f5-tts. Một tiến trình worker nạp mô hình một lần rồi nhận từng đoạn văn bản qua stdin/stdout.
-- Hồ sơ giọng: data/voice/profiles/<id>/ (ref.wav 24 kHz mono ≤ 15 giây + profile.json). Phải xác nhận có quyền dùng giọng.
+- Hồ sơ giọng: data/voice/profiles/<id>/ (ref.wav 24 kHz mono ≤ 12 giây + profile.json). Phải xác nhận có quyền dùng giọng.
 - Tác vụ: data/voice/jobs/<id>/ (job.json + chunk_0001.wav…). Chờ / Đang chạy / Xong / Lỗi; thử lại chạy tiếp từ đoạn
   hỏng; app tắt giữa chừng thì lần mở sau chạy tiếp.
 - Giấy phép: mã nguồn F5-TTS là MIT; checkpoint chính thức F5TTS_v1_Base là CC BY-NC 4.0 (chỉ thử nghiệm, không thương mại).
@@ -23,7 +23,7 @@ from pathlib import Path
 from . import video_tools as video
 
 AUDIO_TYPES = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac", ".webm")
-MAX_REF_SECONDS = 15
+MAX_REF_SECONDS = 12  # F5-TTS khuyên ≤ 12 s: mẫu càng dài, đọc càng chậm
 MAX_TEXT = 200_000           # ~ 60 phút đọc
 CHUNK_CHARS = 220
 SAMPLE_RATE = 24000
@@ -65,6 +65,14 @@ for line in sys.stdin:
     except ValueError:
         continue
     try:
+        if req.get("op") == "prepare":  # nhận dạng lời mẫu một lần để lưu vào hồ sơ giọng
+            from f5_tts.infer.utils_infer import preprocess_ref_audio_text
+            _, text = preprocess_ref_audio_text(req["ref_audio"], req.get("ref_text") or "", show_info=quiet)
+            send({"id": req["id"], "ok": True, "ref_text": str(text or "")})
+            continue
+        if req.get("op") == "ping":
+            send({"id": req["id"], "ok": True})
+            continue
         tts.infer(ref_file=req["ref_audio"], ref_text=req.get("ref_text") or "", gen_text=req["text"], file_wave=req["out"],
                   speed=float(req.get("speed") or 1.0), nfe_step=int(req.get("nfe") or 32), remove_silence=False,
                   seed=req.get("seed"), show_info=quiet)
@@ -256,6 +264,7 @@ class VoiceStudio:
         self.worker_info = {"ready": False, "device": "", "error": ""}
         self.responses = {}
         self.response_event = threading.Condition()
+        self.worker_lock = threading.Lock()
         self.wake = threading.Event()
         self.current = None
         for job in self.jobs():  # app tắt giữa chừng: chạy tiếp
@@ -396,6 +405,25 @@ class VoiceStudio:
         return bool(self.worker and self.worker.poll() is None)
 
     def start_worker(self):
+        with self.worker_lock:  # trang AI Voice nạp sẵn + hàng đợi có thể gọi cùng lúc
+            self._start_worker()
+
+    def warm(self):
+        """Nạp mô hình sẵn ở nền (khi mở trang AI Voice) để lúc bấm Tạo đọc được ngay."""
+        if not self.installed() or self.install_state.get("running") or (self.worker_alive() and self.worker_info.get("ready")):
+            return False
+        if self.worker_lock.locked():
+            return False
+
+        def run():
+            try:
+                self.start_worker()
+            except VoiceError:
+                pass
+        threading.Thread(target=run, daemon=True).start()
+        return True
+
+    def _start_worker(self):
         if self.worker_alive() and self.worker_info.get("ready"):
             return
         if not self.installed():
@@ -479,11 +507,10 @@ class VoiceStudio:
                 proc.kill()
         self.worker_info = {"ready": False, "device": "", "error": ""}
 
-    def synth(self, ref_audio, ref_text, text, out, speed=1.0, timeout=900, nfe=None):
+    def request(self, payload, timeout=900, slow="Đọc một đoạn quá lâu, đã dừng."):
         self.start_worker()
         request_id = uuid.uuid4().hex
-        payload = {"id": request_id, "ref_audio": str(ref_audio), "ref_text": ref_text, "text": text, "out": str(out),
-                   "speed": speed, "nfe": int(nfe or self.config()["nfe"])}
+        payload = dict(payload, id=request_id)
         self.worker.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self.worker.stdin.flush()
         deadline = time.time() + timeout
@@ -492,9 +519,35 @@ class VoiceStudio:
                 if not self.worker_alive():
                     raise VoiceError("AI Engine dừng đột ngột (xem nhật ký engine).")
                 if time.time() > deadline:
-                    raise VoiceError("Đọc một đoạn quá lâu, đã dừng.")
+                    raise VoiceError(slow)
                 self.response_event.wait(timeout=2)
-            msg = self.responses.pop(request_id)
+            return self.responses.pop(request_id)
+
+    def prepare_ref(self, ref_audio, ref_text=""):
+        """Lời mẫu (do Whisper nghe ra nếu trống) — gọi một lần rồi lưu vào hồ sơ giọng."""
+        msg = self.request({"op": "prepare", "ref_audio": str(ref_audio), "ref_text": ref_text or ""}, timeout=600,
+                           slow="Nhận dạng lời mẫu quá lâu.")
+        if not msg.get("ok"):
+            raise VoiceError(msg.get("error") or "Không nhận dạng được lời mẫu.")
+        return re.sub(r"\s+", " ", str(msg.get("ref_text") or "")).strip()[:1000]
+
+    def ensure_ref_text(self, profile):
+        """Hồ sơ chưa có lời mẫu: nhận dạng một lần và lưu, để mỗi đoạn sau không phải chạy Whisper lại."""
+        if (profile.get("ref_text") or "").strip():
+            return profile["ref_text"]
+        folder = self.profiles_dir / profile["id"]
+        try:
+            text = self.prepare_ref(folder / "ref.wav")
+        except (VoiceError, OSError):
+            return ""  # để F5-TTS tự nhận dạng như cũ
+        if text:
+            profile = dict(profile, ref_text=text, ref_text_auto=True)
+            (folder / "profile.json").write_text(json.dumps(profile, ensure_ascii=False, indent=1), encoding="utf-8")
+        return text
+
+    def synth(self, ref_audio, ref_text, text, out, speed=1.0, timeout=900, nfe=None):
+        msg = self.request({"ref_audio": str(ref_audio), "ref_text": ref_text, "text": text, "out": str(out),
+                            "speed": speed, "nfe": int(nfe or self.config()["nfe"])}, timeout)
         if not msg.get("ok") or not Path(out).is_file():
             raise VoiceError(msg.get("error") or "Không tạo được âm thanh cho đoạn này.")
 
@@ -754,6 +807,9 @@ class VoiceStudio:
         folder = self.jobs_dir / job_id
         self.current = job_id
         try:
+            if not (profile.get("ref_text") or "").strip():
+                self.update_job(job_id, note="Đang nhận dạng lời mẫu (chỉ lần đầu)…")
+                profile = dict(profile, ref_text=self.ensure_ref_text(profile))
             for index, chunk in enumerate(job["chunks"]):
                 if chunk.get("done") and (folder / f"chunk_{index:04d}.wav").is_file():
                     continue

@@ -110,10 +110,10 @@
           <div class="va-bottom"><span class="bulk-spacer"></span><small id="vaProjectCount"></small><button type="button" id="vaProjectGenerate" class="va-primary">✦ Tạo giọng nói</button></div>
         </div>
         <div class="va-pane va-clone" id="vaClone" hidden>
-          <h2>Nhân bản giọng nói</h2><p class="detail">Tải 5–15 giây giọng nói rõ ràng, không nhạc nền. Engine F5-TTS học giọng từ đoạn mẫu này (không cần huấn luyện lâu).</p>
+          <h2>Nhân bản giọng nói</h2><p class="detail">Tải 5–12 giây giọng nói rõ ràng, không nhạc nền (dài hơn sẽ tự cắt còn 12 giây). Nhập đúng lời mẫu giúp tạo nhanh hơn. Engine F5-TTS học giọng từ đoạn mẫu này (không cần huấn luyện lâu).</p>
           <div class="va-clone-form">
             <label>Tên giọng<input id="vaVoiceName" maxlength="60" placeholder="Ví dụ: Giọng nam trầm kể chuyện"></label>
-            <label class="va-dropbox" id="vaVoiceDrop"><input id="vaVoiceFile" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,.webm,audio/*" hidden><b>🎙 Kéo thả hoặc bấm để chọn giọng mẫu</b><small id="vaVoiceFileName">WAV, MP3, M4A, FLAC · 5–15 giây</small></label>
+            <label class="va-dropbox" id="vaVoiceDrop"><input id="vaVoiceFile" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,.webm,audio/*" hidden><b>🎙 Kéo thả hoặc bấm để chọn giọng mẫu</b><small id="vaVoiceFileName">WAV, MP3, M4A, FLAC · 5–12 giây</small></label>
             <label>Lời mẫu <small>(đúng từng chữ trong đoạn mẫu — để trống thì engine tự nhận dạng)</small><textarea id="vaVoiceText" rows="3" maxlength="1000"></textarea></label>
             <label class="voice-consent"><input id="vaVoiceConsent" type="checkbox"> Tôi xác nhận đây là giọng của tôi hoặc đã được chủ giọng đồng ý cho nhân bản.</label>
             <button type="button" id="vaVoiceSave" class="va-primary">Lưu hồ sơ giọng</button>

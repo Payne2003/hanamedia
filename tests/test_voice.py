@@ -23,6 +23,12 @@ class FakeStudio(VoiceStudio):
     def installed(self):
         return True
 
+    prepared = 0
+
+    def prepare_ref(self, ref_audio, ref_text=""):
+        FakeStudio.prepared += 1
+        return "lời mẫu"
+
     def synth(self, ref_audio, ref_text, text, out, speed=1.0, timeout=900, nfe=None):
         assert Path(ref_audio).is_file()
         if "LỖI" in text and not FakeStudio.failed_once:
@@ -134,6 +140,12 @@ class WorkerProtocolTests(unittest.TestCase):
                 "        if 'HỎNG' in gen_text: raise RuntimeError('lỗi giả')\n"
                 "        subprocess.run([FFMPEG, '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=duration=0.3', file_wave], check=True)\n"
                 "        return None, 24000, None\n", encoding="utf-8")
+            (pkg / "infer").mkdir()
+            (pkg / "infer" / "__init__.py").write_text("", encoding="utf-8")
+            (pkg / "infer" / "utils_infer.py").write_text(
+                "CALLS = []\n"
+                "def preprocess_ref_audio_text(ref_audio, ref_text, show_info=print):\n"
+                "    return ref_audio, (ref_text or 'xin chào các bạn') + '. '\n", encoding="utf-8")
             studio = VoiceStudio(temp / "data", autostart=False)
             studio.venv_python.parent.mkdir(parents=True)
             (studio.engine_dir / "installed.json").write_text("{}", encoding="utf-8")
@@ -154,6 +166,14 @@ class WorkerProtocolTests(unittest.TestCase):
             self.assertIn("lỗi giả", str(caught.exception))
             studio.synth(ref, "", "Câu tiếp theo", temp / "y.wav")  # worker vẫn sống sau lỗi
             self.assertTrue((temp / "y.wav").is_file())
+            self.assertEqual(studio.prepare_ref(ref), "xin chào các bạn.")
+            # hồ sơ chưa có lời mẫu: nhận dạng một lần rồi lưu vào profile.json
+            sample = temp / "s.wav"
+            tone(sample, 3)
+            profile = studio.add_profile(sample.read_bytes(), "s.wav", "P", "", consent=True)
+            self.assertEqual(studio.ensure_ref_text(profile), "xin chào các bạn.")
+            self.assertEqual(studio.profile(profile["id"])["ref_text"], "xin chào các bạn.")
+            self.assertFalse(studio.warm())  # mô hình đã nạp sẵn: không nạp lại
             studio.stop_worker()
             self.assertIn("đang nạp mô hình", (studio.engine_dir / "worker.log").read_text(encoding="utf-8"))
 
@@ -195,6 +215,10 @@ class PauseMergeTests(unittest.TestCase):
             profile = studio.add_profile(sample.read_bytes(), "s.wav", "P", "", consent=True)
             job = studio.create_job(profile["id"], "Một.\n[ngắt 2s]\nHai.\nBa.", "", "wav", 1.0, split="line", gap=0.5)
             studio.process(job["id"])
+            self.assertEqual(studio.profile(profile["id"])["ref_text"], "lời mẫu")  # lưu lại: lần sau không nhận dạng nữa
+            before = FakeStudio.prepared
+            studio.process(studio.create_job(profile["id"], "Bốn.", "", "wav", 1.0)["id"])
+            self.assertEqual(FakeStudio.prepared, before)
             info = studio.public(studio.load_job(job["id"]))
             # 3 đoạn × 0,4 s + nghỉ 2 s + nghỉ 0,5 s = 3,7 s
             self.assertAlmostEqual(info["seconds"], 3.7, delta=0.15)

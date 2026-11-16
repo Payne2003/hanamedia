@@ -909,7 +909,7 @@ function vaSave(){try{localStorage.setItem('va.settings',JSON.stringify({speed:v
 async function checkVoiceOwner(){try{await api('/api/voice/status',{});$('navVoice').hidden=false;}catch{$('navVoice').hidden=true;}}
 setTimeout(checkVoiceOwner,2500);
 async function loadVoice(){try{voiceData=await api('/api/voice/status',{});renderVoice();}catch(error){$('vaEngineText').textContent=error.message;}}
-function openVoice(){loadVoice();clearInterval(voiceTimer);voiceTimer=setInterval(()=>{if(!$('voiceView').hidden)loadVoice();},2500);renderVaControls();}
+function openVoice(){api('/api/voice/warm',{}).then(r=>{if(r.started)toast('Đang nạp sẵn mô hình giọng nói ở nền…');}).catch(()=>{});loadVoice();clearInterval(voiceTimer);voiceTimer=setInterval(()=>{if(!$('voiceView').hidden)loadVoice();},2500);renderVaControls();}
 function closeVoice(){clearInterval(voiceTimer);voiceTimer=null;}
 const VA_STATUS={draft:['Sẵn sàng',''],waiting:['Chờ',''],running:['Đang tạo','running'],done:['Xong','done'],error:['Lỗi','error']};
 function fmtSec(s){s=Math.round(s||0);return s>=3600?`${Math.floor(s/3600)}:${String(Math.floor(s%3600/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`:`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;}
@@ -1003,14 +1003,14 @@ $('vaHistory').onclick=async e=>{const open=e.target.closest('[data-va-open]');i
   const b=e.target.closest('button');if(!b)return;if(b.dataset.vaDownload)return vaDownload({id:b.dataset.vaDownload});const act=[['vaRetry','/api/voice/retry'],['vaStop','/api/voice/cancel'],['vaDelete','/api/voice/delete'],['vaFolder','/api/voice/open']].find(([k])=>b.dataset[k]);if(!act)return;
   if(act[0]==='vaDelete'&&!confirm('Xóa tác vụ và file âm thanh?'))return;try{await api(act[1],{id:b.dataset[act[0]]});loadVoice();}catch(error){toast(error.message,true);}};
 // nhân bản giọng
-$('vaVoiceFile').onchange=e=>{const f=e.target.files[0];$('vaVoiceFileName').textContent=f?`${f.name} · ${(f.size/1048576).toFixed(1)} MB`:'WAV, MP3, M4A, FLAC · 5–15 giây';};
+$('vaVoiceFile').onchange=e=>{const f=e.target.files[0];$('vaVoiceFileName').textContent=f?`${f.name} · ${(f.size/1048576).toFixed(1)} MB`:'WAV, MP3, M4A, FLAC · 5–12 giây';};
 $('vaVoiceDrop').ondragover=e=>{e.preventDefault();$('vaVoiceDrop').classList.add('drag');};$('vaVoiceDrop').ondragleave=()=>$('vaVoiceDrop').classList.remove('drag');
 $('vaVoiceDrop').ondrop=e=>{e.preventDefault();$('vaVoiceDrop').classList.remove('drag');if(e.dataTransfer.files[0]){const dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);$('vaVoiceFile').files=dt.files;$('vaVoiceFile').onchange({target:$('vaVoiceFile')});}};
 $('vaVoiceSave').onclick=async()=>{const file=$('vaVoiceFile').files[0];if(!file)return toast('Chọn file giọng mẫu.',true);if(!$('vaVoiceConsent').checked)return toast('Cần tick xác nhận quyền dùng giọng.',true);
   const b=$('vaVoiceSave');b.disabled=true;
   try{const r=await fetch('/api/voice/upload',{method:'POST',headers:{'X-Runner-Key':key,'Content-Type':'application/octet-stream','X-Voice-File':encodeURIComponent(file.name),'X-Voice-Name':encodeURIComponent($('vaVoiceName').value),'X-Voice-Text':encodeURIComponent($('vaVoiceText').value),'X-Voice-Consent':'1'},body:file});
     const d=await r.json();if(!r.ok)throw Error(d.error||'Không lưu được giọng.');va.voice=d.profile.id;vaSave();toast(`Đã lưu giọng “${d.profile.name}” (${d.profile.seconds}s) và chọn làm giọng đọc.`);
-    $('vaVoiceName').value='';$('vaVoiceText').value='';$('vaVoiceFile').value='';$('vaVoiceConsent').checked=false;$('vaVoiceFileName').textContent='WAV, MP3, M4A, FLAC · 5–15 giây';loadVoice();}
+    $('vaVoiceName').value='';$('vaVoiceText').value='';$('vaVoiceFile').value='';$('vaVoiceConsent').checked=false;$('vaVoiceFileName').textContent='WAV, MP3, M4A, FLAC · 5–12 giây';loadVoice();}
   catch(error){toast(error.message,true);}finally{b.disabled=false;}};
 $('vaVoices').onclick=async e=>{const use=e.target.closest('[data-va-use]');if(use){va.voice=use.dataset.vaUse;vaSave();renderVoice();toast('Đã chọn giọng đọc.');return;}
   const del=e.target.closest('[data-va-del]');if(!del||!confirm('Xóa hồ sơ giọng này?'))return;try{await api('/api/voice/delete-profile',{id:del.dataset.vaDel});loadVoice();}catch(error){toast(error.message,true);}};
