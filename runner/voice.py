@@ -79,6 +79,18 @@ class VoiceError(ValueError):
     pass
 
 
+def peak_db(path):
+    """Mức to nhất (dB) của file âm thanh; -91 nếu câm hoàn toàn / không đọc được."""
+    try:
+        text = video.run([video.ffmpeg(), "-hide_banner", "-i", str(path), "-af", "volumedetect", "-f", "null", "-"], 120).stderr or ""
+    except Exception:
+        return 0.0
+    match = re.search(r"max_volume:\s*(-?[\d.]+|-inf) dB", text)
+    if not match:
+        return 0.0
+    return -91.0 if match.group(1) == "-inf" else float(match.group(1))
+
+
 def audio_seconds(path):
     """Độ dài file âm thanh (giây) đọc từ thông tin ffmpeg; 0 nếu không đọc được."""
     try:
@@ -760,8 +772,12 @@ class VoiceStudio:
                     fresh["updated"] = time.time()
                     self.save_job(fresh)
             self.update_job(job_id, note="Đang ghép và xuất file…")
+            self.last_quiet = []
             output, seconds = self.merge(job_id)
-            self.update_job(job_id, status="done", output=output, seconds=seconds, note="")
+            quiet = self.last_quiet
+            self.update_job(job_id, status="done", output=output, seconds=seconds,
+                            note=(f"Cảnh báo: đoạn {', '.join(map(str, quiet[:10]))} gần như không có tiếng — thử giọng mẫu "
+                                  "rõ hơn / có lời mẫu, rồi bấm Tạo lại." if quiet else ""))
         finally:
             self.current = None
 
@@ -780,8 +796,19 @@ class VoiceStudio:
             return cache[key]
         lines = []
         gap = float(job.get("gap", SILENCE))
+        quiet = []
         for index, chunk in enumerate(job["chunks"]):
-            lines.append(f"file '{(folder / f'chunk_{index:04d}.wav').as_posix()}'")
+            # Đưa mọi đoạn về cùng định dạng (PCM 16-bit, 24 kHz, mono) trước khi ghép: F5-TTS / thư viện âm thanh có thể
+            # ghi WAV kiểu khác (float, header mở rộng) làm bộ ghép đọc sai sau đoạn đầu.
+            source = folder / f"chunk_{index:04d}.wav"
+            norm = folder / f"norm_{index:04d}.wav"
+            result = video.run([video.ffmpeg(), "-v", "error", "-y", "-i", str(source), "-af", f"aresample={SAMPLE_RATE}",
+                                "-ac", "1", "-c:a", "pcm_s16le", str(norm)], 300)
+            if result.returncode != 0 or not norm.is_file():
+                raise VoiceError(f"Đoạn {index + 1}: file âm thanh hỏng ({(result.stderr or '').strip()[-200:]}).")
+            if peak_db(norm) < -45:
+                quiet.append(index + 1)
+            lines.append(f"file '{norm.as_posix()}'")
             pause = chunk.get("pause")
             seconds = pause if pause is not None else (gap if index < len(job["chunks"]) - 1 else 0)
             if seconds > 0.01:
@@ -795,4 +822,7 @@ class VoiceStudio:
                             str(SAMPLE_RATE), "-ac", "1", *codec, str(folder / name)], 1800)
         if result.returncode != 0 or not (folder / name).is_file():
             raise VoiceError("Ghép âm thanh lỗi: " + (result.stderr or "")[-300:])
+        for file in folder.glob("norm_*.wav"):
+            file.unlink(missing_ok=True)
+        self.last_quiet = quiet
         return name, audio_seconds(folder / name)
