@@ -126,6 +126,10 @@ def main():
             message(f"Không mở được cửa sổ app (máy thiếu Microsoft Edge WebView2). Tool đang mở trong trình duyệt:\n"
                     f"{server.origin}\n\nBấm OK để TẮT tool.")
         else:
+            try:  # cho phép các nút "Tải" trong app lưu file (pywebview mặc định chặn tải xuống)
+                webview.settings["ALLOW_DOWNLOADS"] = True
+            except Exception:
+                pass
             webview.create_window(title, server.origin, width=1360, height=900, min_size=(960, 640),
                                   confirm_close=True, text_select=True)
             webview.start(localization={
