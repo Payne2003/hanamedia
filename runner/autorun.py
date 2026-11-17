@@ -6,6 +6,20 @@ import time
 from pathlib import Path
 
 
+LOGIN_WORDS = ("login", "log in", "logged", "api key", "authenticat", "unauthorized", "401", "credential", "sign in")
+
+
+def explain(engine, code, log):
+    """Lý do dừng đọc được từ cuối nhật ký (khách không xem được khung nhật ký của Super Admin)."""
+    lines = [line.strip() for line in log.splitlines() if line.strip() and not line.startswith("# ")]
+    tail = " · ".join(lines[-3:])[-260:]
+    name = "Claude Code" if engine == "claude" else "Codex"
+    if any(word in tail.lower() for word in LOGIN_WORDS):
+        return (f"{name} chưa đăng nhập trên máy này (đăng nhập app Claude / ChatGPT trên web hay app desktop không tính) — "
+                f"bấm Kiểm tra máy → Đăng nhập cạnh {name}. Chi tiết: {tail}")
+    return f"{name} dừng với mã {code}: {tail or 'không có thông báo'}"
+
+
 class AutoRunner:
     def __init__(self, workflows, prepare, engine_pref=lambda: "auto", pick=None, poll=2.0):
         self.workflows = workflows
@@ -80,8 +94,9 @@ class AutoRunner:
             self.workflows.run(item["slug"], engine, "run")
             while self.workflows.running(item["slug"]):
                 time.sleep(self.poll)
-            code = self.workflows.status(item["slug"]).get("code")
-            self.note(item, code == 0, "Xong." if code == 0 else f"Claude / Codex dừng với mã {code}. Xem nhật ký lần chạy.")
+            info = self.workflows.status(item["slug"])
+            code = info.get("code")
+            self.note(item, code == 0, "Xong." if code == 0 else explain(engine, code, info.get("log") or ""))
         except Exception as error:  # một video lỗi không chặn các video sau
             self.note(item, False, str(error) or type(error).__name__)
         finally:
