@@ -370,7 +370,15 @@ class Updater:
                 self.exit_app()
         except (OSError, ValueError) as error:
             self.log(f"Cập nhật lỗi: {type(error).__name__}: {str(error)[:300]}")
-            self.set(phase="error", error=str(error)[:300] or "Không cập nhật được.")
+            message = str(error)[:300] or "Không cập nhật được."
+            if getattr(error, "errno", None) == 28 or "No space left" in message:
+                try:
+                    free = shutil.disk_usage(self.dir).free / 1024 ** 3
+                except OSError:
+                    free = 0
+                message = (f"Ổ đĩa chứa dữ liệu app đã đầy (còn {free:.1f} GB). Cần trống ít nhất 1 GB để tải bộ cài — "
+                           "dọn bớt file rồi bấm Thử lại.")
+            self.set(phase="error", error=message)
 
     def launch_installer(self, installer):
         """Chạy bộ cài im lặng, tách khỏi app (app tắt ngay sau đó); bộ cài tự mở lại app khi xong.
