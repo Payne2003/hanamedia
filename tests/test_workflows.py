@@ -131,5 +131,18 @@ class WorkflowTests(unittest.TestCase):
             self.flows.run("a", "gemini")
 
 
+class StreamTests(unittest.TestCase):
+    def test_stream_json_is_readable(self):
+        from runner.workflows import stream_line
+        self.assertIn("model opus", stream_line('{"type":"system","subtype":"init","model":"opus"}'))
+        self.assertEqual(stream_line('{"type":"assistant","message":{"content":[{"type":"text","text":"Đang xem video"},'
+                                     '{"type":"tool_use","name":"Skill","input":{"skill":"phan-tich"}}]}}'),
+                         "Đang xem video\n  → Skill: phan-tich")
+        self.assertIn("✕", stream_line('{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"denied"}]}}'))
+        self.assertIsNone(stream_line('{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}'))
+        self.assertIn("✓ XONG: Đã ghi 4 file", stream_line('{"type":"result","subtype":"success","result":"Đã ghi 4 file"}'))
+        self.assertEqual(stream_line("Invalid API key · Please run /login"), "Invalid API key · Please run /login")
+
+
 if __name__ == "__main__":
     unittest.main()

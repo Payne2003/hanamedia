@@ -21,10 +21,11 @@ def explain(engine, code, log):
 
 
 class AutoRunner:
-    def __init__(self, workflows, prepare, engine_pref=lambda: "auto", pick=None, poll=2.0):
+    def __init__(self, workflows, prepare, engine_pref=lambda: "auto", pick=None, poll=2.0, show_window=lambda: False):
         self.workflows = workflows
         self.prepare = prepare          # prepare(video) -> kết quả bridge.send (chép video, điểm cắt, gói ảnh)
         self.engine_pref = engine_pref  # "auto" | "claude" | "codex"
+        self.show_window = show_window  # mở cửa sổ xem trực tiếp Claude / Codex đang làm gì
         if pick is None:
             from .agent_cli import pick as pick_engine
             pick = pick_engine
@@ -92,6 +93,12 @@ class AutoRunner:
             sent = self.prepare(item["video"])
             self.current.update(phase="running", engine=engine, project=(sent or {}).get("name", ""))
             self.workflows.run(item["slug"], engine, "run")
+            if self.show_window():
+                try:
+                    from .agent_cli import watch_log
+                    watch_log(self.workflows.runs[item["slug"]]["log"])
+                except Exception:
+                    pass  # không mở được cửa sổ xem thì vẫn chạy nền bình thường
             while self.workflows.running(item["slug"]):
                 time.sleep(self.poll)
             info = self.workflows.status(item["slug"])
