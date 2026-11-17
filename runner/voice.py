@@ -364,7 +364,7 @@ class VoiceStudio:
         steps = []
         if not self.venv_python.is_file():
             steps.append(("Tạo môi trường Python riêng", python + ["-m", "venv", str(venv)]))
-        pip = [str(self.venv_python), "-m", "pip", "install", "--disable-pip-version-check"]
+        pip = [str(self.venv_python), "-m", "pip", "install", "--disable-pip-version-check", "--no-cache-dir"]  # không giữ bản sao ~2,5 GB trong pip cache
         steps.append(("Cập nhật pip", pip + ["--upgrade", "pip", "setuptools", "wheel"]))
         if gpu:
             steps.append(("Cài PyTorch (CUDA, ~2,5 GB)", pip + ["torch", "torchaudio", "--index-url", "https://download.pytorch.org/whl/cu124"]))
