@@ -122,6 +122,22 @@ class AppServer(ThreadingHTTPServer):
             raise ValueError("Chưa có API key Gemini. Vào Cài đặt → Gemini, bấm “Lấy API key”, dán khóa rồi bấm Lưu.")
         return gemini_api.GeminiAPISession(key, info["model"], info["thinking"], rpm=info["rpm"])
 
+    def prepare_video(self, video):
+        """Chép video vào input/ của thư mục HanaMedia (dọn dự án cũ), kèm điểm cắt + gói ảnh tool đo."""
+        from runner import claude_bridge as bridge
+        store = self.store
+        folder = Path(store.setting("claude_folder") or bridge.default_folder())
+        cuts, duration = None, None
+        if store.setting("claude_cuts", True) is not False:
+            from runner import reverse_engineer
+            try:
+                shots, duration = reverse_engineer.quick_shots(Path(video))
+                cuts = [float(s["start"]) for s in shots or [] if float(s["start"]) > 0]
+            except Exception:
+                cuts = None  # không đo được: để Claude / Codex tự dò điểm cắt
+        # Gói đo sẵn (tờ ảnh, shots, motion): Codex trên máy khách không cần Python / opencv.
+        return bridge.send(folder, video, cuts, duration, pack=store.setting("claude_pack", True) is not False)
+
     def plugin_public(self):
         plugin = content.PLUGIN
         if not plugin:
@@ -190,6 +206,9 @@ class AppServer(ThreadingHTTPServer):
         from runner import claude_bridge as _bridge
         from runner.workflows import Workflows
         self.workflows = Workflows(lambda: store.setting("claude_folder") or _bridge.default_folder())
+        from runner.autorun import AutoRunner
+        # Gửi video là tự chạy workflow bằng Claude Code / Codex trên máy này (máy chủ lẫn máy khách)
+        self.autorun = AutoRunner(self.workflows, self.prepare_video, lambda: store.setting("claude_engine") or "auto")
         from runner.voice import VoiceStudio
         self.voice = VoiceStudio(self.data_dir)  # AI Voice (F5-TTS trên máy) — chỉ máy Super Admin dùng
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
@@ -972,7 +991,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({"error": str(error)[:400]}, 400)
         return self.reply({"error": "Không tìm thấy."}, 404)
 
-    def claude_bridge(self, path, body):
+    def claude_bridge(self, path, body):  # noqa: C901
         """Workflow Claude (hanamedia-wildlife-workflow): gửi video vào input/, đọc kết quả trong output/ của thư mục chung."""
         from runner import claude_bridge as bridge
         store = self.server.store
@@ -985,6 +1004,9 @@ class Handler(BaseHTTPRequestHandler):
                     "cuts": store.setting("claude_cuts", True) is not False,
                     "pack": store.setting("claude_pack", True) is not False,
                     "pending": bridge.pending(folder) if exists else [],
+                    "autorun": store.setting("claude_autorun", True) is not False,
+                    "engine": store.setting("claude_engine") or "auto", "engines": self.server.workflows.engines(),
+                    "queue": self.server.autorun.status(),
                     "results": bridge.results(folder, imported) if exists else []}
 
         if path == "/api/claude/status":
@@ -1009,6 +1031,10 @@ class Handler(BaseHTTPRequestHandler):
                 store.save_setting("claude_cuts", body.get("cuts") is not False)
             if "pack" in body:
                 store.save_setting("claude_pack", body.get("pack") is not False)
+            if "autorun" in body:
+                store.save_setting("claude_autorun", body.get("autorun") is not False)
+            if body.get("engine") in ("auto", "claude", "codex"):
+                store.save_setting("claude_engine", body["engine"])
             return self.reply(status())
         if path == "/api/claude/folder":
             action = body.get("action")
@@ -1040,17 +1066,30 @@ class Handler(BaseHTTPRequestHandler):
             video = str(body.get("path") or "").strip() or self.pick_video()
             if not video:
                 return self.reply(dict(status(), sent=None))
-            cuts, duration = None, None
-            if store.setting("claude_cuts", True) is not False:
-                from runner import reverse_engineer
-                try:
-                    shots, duration = reverse_engineer.quick_shots(Path(video))
-                    cuts = [float(s["start"]) for s in shots or [] if float(s["start"]) > 0]
-                except Exception:
-                    cuts = None  # không đo được: để Claude / Codex tự dò điểm cắt
-            # Gói đo sẵn (tờ ảnh, shots, motion): Codex trên máy khách không cần Python / opencv.
-            sent = bridge.send(folder, video, cuts, duration, pack=store.setting("claude_pack", True) is not False)
-            return self.reply(dict(status(), sent=sent))
+            slug = str(body.get("workflow") or "wildlife")
+            if slug != "wildlife" and not self.is_owner():
+                slug = "wildlife"  # workflow riêng chỉ máy Super Admin chạy
+            autorun = self.server.autorun
+            if store.setting("claude_autorun", True) is not False and autorun.engine():
+                self.server.workflows.folder(slug)
+                position = autorun.enqueue(video, slug)
+                return self.reply(dict(status(), sent=None, queued={"name": Path(video).name, "position": position,
+                                                                    "engine": autorun.engine(), "workflow": slug}))
+            return self.reply(dict(status(), sent=self.server.prepare_video(video)))
+        if path == "/api/claude/machine":
+            from runner import agent_cli
+            return self.reply(dict(agent_cli.status(), folder=str(folder)))
+        if path == "/api/claude/install":
+            from runner import agent_cli
+            agent_cli.install(str(body.get("what") or ""))
+            return self.reply({"ok": True})
+        if path == "/api/claude/login":
+            from runner import agent_cli
+            agent_cli.login(str(body.get("engine") or ""))
+            return self.reply({"ok": True})
+        if path == "/api/claude/unqueue":
+            self.server.autorun.remove(int(body.get("index") or 0))
+            return self.reply(status())
         if path == "/api/claude/read":
             file = str(body.get("path") or "")
             if not bridge.inside(folder, file):
