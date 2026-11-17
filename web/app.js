@@ -730,11 +730,11 @@ function renderClaude(){
   const waiting=claude.pending.map(p=>`<div class="claude-item wait"><span>⏳ <b>${esc(p.video)}</b> <small>đang chờ Claude / Codex chạy workflow${p.cuts?' · có điểm cắt của tool':''}</small></span></div>`);
   const done=claude.results.map(r=>`<div class="claude-item"><span>${r.error?'<b class="bad">✕</b>':(r.imported||r.folder_imported)?'<b class="ok">✓</b>':'🆕'} <b>${esc(r.name)}</b> <small>${r.error?esc(r.error):`${r.scenes} cảnh${r.duration?` · ${Number(r.duration).toLocaleString('vi-VN')} giây`:''}${r.cut_source==='hanamedia'?' · điểm cắt của tool':r.cut_source==='auto'?' · Claude tự dò điểm cắt':''} · ${esc(r.file)}${r.imported?' · đã vào Studio':''}`}</small></span>${r.error?'':`<button type="button" data-claude-import="${esc(r.path)}" data-claude-sig="${r.signature}" data-again="${r.imported?1:0}">${r.imported?'Đưa lại vào Studio':'→ Đưa vào Studio'}</button>`}</div>`);
   $('claudeList').innerHTML=waiting.concat(done).join('');
-  $('claudeAutorun').checked=claude.autorun!==false;$('claudeWindow').checked=claude.window!==false;if(document.activeElement!==$('claudeEngine'))$('claudeEngine').value=claude.engine||'auto';
+  $('claudeAutorun').checked=claude.autorun!==false;$('claudeWindow').checked=claude.window!==false;$('claudeChat').checked=claude.chat!==false;$('claudeWindowWrap').hidden=claude.chat!==false;if(document.activeElement!==$('claudeEngine'))$('claudeEngine').value=claude.engine||'auto';
   const q=claude.queue||{queue:[],history:[]},cur=q.current,eng={claude:'Claude Code',codex:'Codex'};
   const none=claude.engines&&!claude.engines.claude&&!claude.engines.codex;
   $('claudeQueue').innerHTML=(none&&claude.autorun!==false?'<p class="detail bad">Máy này chưa có Claude Code hay Codex nên chưa tự chạy được — bấm <b>Kiểm tra máy</b> để cài / đăng nhập. Video gửi đi vẫn được chép vào input/.</p>':'')+
-    (cur?`<div class="claude-item run"><span>⚙️ <b>${esc(cur.name)}</b> <small>${cur.phase==='prepare'?'đang chép video, đo điểm cắt, làm tờ ảnh…':`${eng[cur.engine]||''} đang chạy workflow${cur.slug!=='wildlife'?` «${esc(cur.slug)}»`:''}`}</small></span></div>`:'')+
+    (cur?`<div class="claude-item run"><span>⚙️ <b>${esc(cur.name)}</b> <small>${cur.phase==='prepare'?'đang chép video, đo điểm cắt, làm tờ ảnh…':`${eng[cur.engine]||''} ${cur.chat?'đang làm trong cửa sổ trò chuyện (bạn chat được ở đó)':'đang chạy workflow'}${cur.slug!=='wildlife'?` «${esc(cur.slug)}»`:''}`}</small></span></div>`:'')+
     q.queue.map((x,i)=>`<div class="claude-item wait"><span>🕒 <b>${esc(x.name)}</b> <small>chờ lượt ${i+1}${x.slug!=='wildlife'?` · ${esc(x.slug)}`:''}</small></span><button type="button" class="text-button" data-unqueue="${i}">Bỏ</button></div>`).join('')+
     q.history.slice(0,4).map(h=>`<div class="claude-item"><span>${h.ok?'<b class="ok">✓</b>':'<b class="bad">✕</b>'} <b>${esc(h.name)}</b> <small>${esc(h.message)}</small></span></div>`).join('');
   $('claudeSummaryInfo').textContent=`· ${claude.results.length} kết quả${claude.pending.length?` · ${claude.pending.length} video đang chờ Claude/Codex`:''}`;
@@ -2116,3 +2116,4 @@ $('claudeMachine').onclick=async e=>{const b=e.target.closest('button');if(!b)re
     else if(b.dataset.login){await api('/api/claude/login',{engine:b.dataset.login});toast('Đã mở cửa sổ đăng nhập. Đăng nhập trong trình duyệt (nếu được hỏi mã thì dán vào cửa sổ đó), xong bấm Kiểm tra máy.');}}
   catch(error){toast(error.message,true);}};
 $('claudeWindow').onchange=e=>claudeCall('/api/claude/settings',{window:e.target.checked}).catch(err=>toast(err.message,true));
+$('claudeChat').onchange=e=>claudeCall('/api/claude/settings',{chat:e.target.checked}).catch(err=>toast(err.message,true));

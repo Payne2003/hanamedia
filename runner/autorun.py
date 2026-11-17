@@ -21,11 +21,15 @@ def explain(engine, code, log):
 
 
 class AutoRunner:
-    def __init__(self, workflows, prepare, engine_pref=lambda: "auto", pick=None, poll=2.0, show_window=lambda: False):
+    def __init__(self, workflows, prepare, engine_pref=lambda: "auto", pick=None, poll=2.0, show_window=lambda: False,
+                 chat=lambda: False, done=None, chat_timeout=3 * 3600):
         self.workflows = workflows
         self.prepare = prepare          # prepare(video) -> kết quả bridge.send (chép video, điểm cắt, gói ảnh)
         self.engine_pref = engine_pref  # "auto" | "claude" | "codex"
         self.show_window = show_window  # mở cửa sổ xem trực tiếp Claude / Codex đang làm gì
+        self.chat = chat                # True: mở cửa sổ trò chuyện Claude / Codex (người dùng chat tiếp được)
+        self.done = done                # done(slug, project) -> bool: workflow đã ghi xong kết quả
+        self.chat_timeout = chat_timeout
         if pick is None:
             from .agent_cli import pick as pick_engine
             pick = pick_engine
@@ -91,7 +95,24 @@ class AutoRunner:
             if not engine:
                 raise ValueError("Máy chưa có Claude Code hay Codex. Mở Cài đặt workflow → Kiểm tra máy để cài.")
             sent = self.prepare(item["video"])
-            self.current.update(phase="running", engine=engine, project=(sent or {}).get("name", ""))
+            project = (sent or {}).get("name", "")
+            self.current.update(phase="running", engine=engine, project=project)
+            if self.chat() and self.done:
+                self.current.update(chat=True)
+                process = self.workflows.open_chat(item["slug"], engine)
+                start = time.time()
+                while True:
+                    if self.done(item["slug"], project):
+                        self.note(item, True, "Xong (trong cửa sổ trò chuyện — bạn vẫn trò chuyện tiếp được ở đó).")
+                        return
+                    if process is not None and process.poll() is not None:
+                        ok = self.done(item["slug"], project)
+                        self.note(item, ok, "Xong." if ok else "Cửa sổ trò chuyện đã đóng trước khi có kết quả.")
+                        return
+                    if time.time() - start > self.chat_timeout:
+                        self.note(item, False, "Quá 3 giờ chưa thấy kết quả — chuyển sang video kế tiếp.")
+                        return
+                    time.sleep(self.poll)
             self.workflows.run(item["slug"], engine, "run")
             if self.show_window():
                 try:

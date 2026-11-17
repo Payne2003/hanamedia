@@ -63,6 +63,43 @@ class AutoRunTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 runner.enqueue(Path(temp) / "khong-co.mp4")
 
+    def test_chat_mode_moves_on_when_result_is_written(self):
+        with tempfile.TemporaryDirectory() as temp:
+            video = Path(temp) / "a.mp4"
+            video.write_bytes(b"v")
+            flows = FakeFlows()
+            opened, ready = [], {"ok": False}
+            flows.open_chat = lambda slug, engine: opened.append((slug, engine))
+            runner = AutoRunner(flows, lambda v: {"name": "a"}, pick=lambda pref: "claude", poll=.02, chat=lambda: True,
+                                done=lambda slug, name: ready["ok"] and name == "a")
+            runner.enqueue(video)
+            time.sleep(.2)
+            self.assertEqual(opened, [("wildlife", "claude")])
+            self.assertTrue(runner.status()["current"]["chat"])
+            ready["ok"] = True
+            for _ in range(100):
+                if runner.history:
+                    break
+                time.sleep(.02)
+            self.assertTrue(runner.history[0]["ok"])
+            self.assertEqual(flows.calls, [])  # không chạy nền khi đã mở cửa sổ trò chuyện
+
+    def test_project_done_detects_result(self):
+        import json, os
+        from runner import claude_bridge as bridge
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / "output" / "Sư tử - clip"
+            out.mkdir(parents=True)
+            (out / ".hanamedia-source").write_text("clip", encoding="utf-8")
+            self.assertFalse(bridge.project_done(temp, "clip"))
+            (out / "hanamedia_clip.json").write_text(json.dumps({"scenes": []}), encoding="utf-8")
+            self.assertFalse(bridge.project_done(temp, "clip"))  # vừa ghi
+            old = time.time() - 60
+            for f in out.iterdir():
+                os.utime(f, (old, old))
+            self.assertTrue(bridge.project_done(temp, "clip"))
+            self.assertFalse(bridge.project_done(temp, "clip", "thoai-phim"))
+
     def test_no_engine_is_reported(self):
         with tempfile.TemporaryDirectory() as temp:
             video = Path(temp) / "a.mp4"

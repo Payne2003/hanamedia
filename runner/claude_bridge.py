@@ -653,3 +653,25 @@ def progress(folder, imported=None, jobs=None):
                       "updated": updated})
     board.sort(key=lambda item: -item["updated"])
     return board[:40]
+
+
+def project_done(folder, name, slug="wildlife", settle=20):
+    """Workflow đã ghi xong kết quả cho dự án <name> chưa (dùng khi chạy trong cửa sổ trò chuyện, tool không biết lúc
+    nào Claude / Codex xong): có file kết quả cuối và không ghi thêm trong settle giây."""
+    root = Path(folder).expanduser() / "output"
+    patterns = {"wildlife": ("hanamedia_*.json",), "thoai-phim": ("thoai_*.json",)}.get(slug, ("*",))
+    if not root.is_dir():
+        return False
+    for sub in root.iterdir():
+        if not sub.is_dir() or sub.name.startswith(("_", ".")) or source_name(sub) != name:
+            continue
+        files = [f for pattern in patterns for f in sub.glob(pattern) if f.is_file() and f.name != "thoai_voice.json"]
+        if not files:
+            continue
+        try:
+            newest = max(f.stat().st_mtime for f in sub.iterdir())
+        except (OSError, ValueError):
+            continue
+        if time.time() - newest >= settle:
+            return True
+    return False

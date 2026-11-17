@@ -228,7 +228,8 @@
         <div class="claude-autorun">
           <div class="wf-row"><label><input id="claudeAutorun" type="checkbox" checked> <b>Gửi video là tự chạy workflow</b> — tool tự gọi Claude Code / Codex trên máy này, không cần mở hay gõ lệnh</label>
             <label class="claude-engine">Chạy bằng <select id="claudeEngine"><option value="auto">Tự chọn (Claude trước, không có thì Codex)</option><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
-            <label><input id="claudeWindow" type="checkbox" checked> Mở cửa sổ xem Claude / Codex đang làm</label>
+            <label><input id="claudeChat" type="checkbox" checked> <b>Mở cửa sổ trò chuyện với Claude / Codex</b> (thấy từng bước, chat tiếp được)</label>
+            <label id="claudeWindowWrap"><input id="claudeWindow" type="checkbox" checked> Chạy nền: mở cửa sổ xem nhật ký</label>
             <button type="button" id="claudeMachineCheck">🔎 Kiểm tra máy</button></div>
           <div id="claudeMachine" class="claude-machine" hidden></div>
           <div id="claudeQueue" class="claude-queue"></div>
