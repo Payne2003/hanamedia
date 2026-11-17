@@ -225,6 +225,13 @@
           <div class="claude-actions"><button id="claudeSend" type="button" class="primary"><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg> Chọn video gửi đi</button><button id="claudeOpen" type="button">Mở thư mục</button><button id="claudeFolder" type="button">Đổi thư mục</button></div></div>
         <ol class="claude-steps"><li>Bấm <b>Chọn video gửi đi</b>: tool chép video vào <code>input/</code>, kèm điểm cắt cảnh, tờ ảnh 3 khung mỗi cảnh và độ chuyển động tool đo bằng FFmpeg (máy không cần Python).</li><li>Mở <b>Claude desktop</b> (kết nối thư mục này) <b>hoặc Codex</b> (mở thư mục này làm thư mục làm việc), gõ: <code id="claudeCommand">Chạy hanamedia-wildlife-workflow</code> <button id="claudeCopyCommand" type="button" class="link-button">Chép câu lệnh</button></li><li>Claude / Codex ghi kết quả vào <code>output/</code> → tool tự đưa từng prompt vào hàng đợi Studio, đúng thứ tự và đúng số giây từng cảnh.</li></ol>
         <div class="claude-options"><label><input id="claudeAuto" type="checkbox" checked> Có kết quả là tự đưa vào Studio</label><label><input id="claudeCuts" type="checkbox" checked> Gửi kèm điểm cắt cảnh của tool</label><label><input id="claudePack" type="checkbox" checked> Làm sẵn tờ ảnh + đo chuyển động (Codex cần)</label></div>
+        <div class="claude-autorun">
+          <div class="wf-row"><label><input id="claudeAutorun" type="checkbox" checked> <b>Gửi video là tự chạy workflow</b> — tool tự gọi Claude Code / Codex trên máy này, không cần mở hay gõ lệnh</label>
+            <label class="claude-engine">Chạy bằng <select id="claudeEngine"><option value="auto">Tự chọn (Claude trước, không có thì Codex)</option><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
+            <button type="button" id="claudeMachineCheck">🔎 Kiểm tra máy</button></div>
+          <div id="claudeMachine" class="claude-machine" hidden></div>
+          <div id="claudeQueue" class="claude-queue"></div>
+        </div>
         <div id="claudeList" class="claude-list"></div>
       </details>
       <section class="workflow-board card"><div class="board-head"><h2 id="boardTitle">Bảng workflow</h2><small id="boardFolder"></small></div>

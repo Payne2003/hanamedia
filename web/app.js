@@ -730,6 +730,13 @@ function renderClaude(){
   const waiting=claude.pending.map(p=>`<div class="claude-item wait"><span>⏳ <b>${esc(p.video)}</b> <small>đang chờ Claude / Codex chạy workflow${p.cuts?' · có điểm cắt của tool':''}</small></span></div>`);
   const done=claude.results.map(r=>`<div class="claude-item"><span>${r.error?'<b class="bad">✕</b>':(r.imported||r.folder_imported)?'<b class="ok">✓</b>':'🆕'} <b>${esc(r.name)}</b> <small>${r.error?esc(r.error):`${r.scenes} cảnh${r.duration?` · ${Number(r.duration).toLocaleString('vi-VN')} giây`:''}${r.cut_source==='hanamedia'?' · điểm cắt của tool':r.cut_source==='auto'?' · Claude tự dò điểm cắt':''} · ${esc(r.file)}${r.imported?' · đã vào Studio':''}`}</small></span>${r.error?'':`<button type="button" data-claude-import="${esc(r.path)}" data-claude-sig="${r.signature}" data-again="${r.imported?1:0}">${r.imported?'Đưa lại vào Studio':'→ Đưa vào Studio'}</button>`}</div>`);
   $('claudeList').innerHTML=waiting.concat(done).join('');
+  $('claudeAutorun').checked=claude.autorun!==false;if(document.activeElement!==$('claudeEngine'))$('claudeEngine').value=claude.engine||'auto';
+  const q=claude.queue||{queue:[],history:[]},cur=q.current,eng={claude:'Claude Code',codex:'Codex'};
+  const none=claude.engines&&!claude.engines.claude&&!claude.engines.codex;
+  $('claudeQueue').innerHTML=(none&&claude.autorun!==false?'<p class="detail bad">Máy này chưa có Claude Code hay Codex nên chưa tự chạy được — bấm <b>Kiểm tra máy</b> để cài / đăng nhập. Video gửi đi vẫn được chép vào input/.</p>':'')+
+    (cur?`<div class="claude-item run"><span>⚙️ <b>${esc(cur.name)}</b> <small>${cur.phase==='prepare'?'đang chép video, đo điểm cắt, làm tờ ảnh…':`${eng[cur.engine]||''} đang chạy workflow${cur.slug!=='wildlife'?` «${esc(cur.slug)}»`:''}`}</small></span></div>`:'')+
+    q.queue.map((x,i)=>`<div class="claude-item wait"><span>🕒 <b>${esc(x.name)}</b> <small>chờ lượt ${i+1}${x.slug!=='wildlife'?` · ${esc(x.slug)}`:''}</small></span><button type="button" class="text-button" data-unqueue="${i}">Bỏ</button></div>`).join('')+
+    q.history.slice(0,4).map(h=>`<div class="claude-item"><span>${h.ok?'<b class="ok">✓</b>':'<b class="bad">✕</b>'} <b>${esc(h.name)}</b> <small>${esc(h.message)}</small></span></div>`).join('');
   $('claudeSummaryInfo').textContent=`· ${claude.results.length} kết quả${claude.pending.length?` · ${claude.pending.length} video đang chờ Claude/Codex`:''}`;
 }
 async function claudeCall(path,body={}){claude=await api(path,body);renderClaude();return claude;}
@@ -756,7 +763,7 @@ async function pollClaude(){
 }
 setInterval(pollClaude,6000);setTimeout(pollClaude,1500);
 $('claudeSend').onclick=async()=>{const b=$('claudeSend');b.disabled=true;claudeBusy=true;const label=b.innerHTML;b.textContent='Đang chép video, đo điểm cắt, làm tờ ảnh… (video dài mất vài phút)';
-  try{const r=await claudeCall('/api/claude/send');if(r.sent)toast(`Đã gửi "${r.sent.name}" vào thư mục input${r.sent.cuts!=null?` (kèm ${r.sent.cuts} điểm cắt)`:''}. ${r.sent.pack?` · ${r.sent.pack.sheets} tờ ảnh`:''}. Mở Claude desktop hoặc Codex và gõ: Chạy hanamedia-wildlife-workflow`);}
+  try{const r=await claudeCall('/api/claude/send',{workflow:wf.owner?wf.slug:'wildlife'});if(r.queued)toast(`Đã nhận "${r.queued.name}". ${r.queued.position>1?`Đang xếp hàng thứ ${r.queued.position}. `:''}Tool tự chạy workflow bằng ${r.queued.engine==='codex'?'Codex':'Claude Code'} — theo dõi trong không gian và bảng bên dưới, xong tự vào Studio.`);else if(r.sent)toast(`Đã gửi "${r.sent.name}" vào thư mục input${r.sent.cuts!=null?` (kèm ${r.sent.cuts} điểm cắt)`:''}. ${r.sent.pack?` · ${r.sent.pack.sheets} tờ ảnh`:''}. Mở Claude desktop hoặc Codex và gõ: Chạy hanamedia-wildlife-workflow`);}
   catch(error){toast(error.message,true);}finally{b.disabled=false;b.innerHTML=label;claudeBusy=false;}};
 $('claudeOpen').onclick=()=>claudeCall('/api/claude/folder',{action:'open'}).catch(e=>toast(e.message,true));
 $('claudeFolder').onclick=async()=>{try{await claudeCall('/api/claude/folder',{action:'pick'});toast('Đã đổi thư mục chung. Nhớ mở đúng thư mục này trong Claude desktop / Codex.');}
@@ -2090,3 +2097,21 @@ $('supportClose').onclick=()=>{$('supportPanel').hidden=true;$('supportFab').cla
 $('supportForm').onsubmit=e=>{e.preventDefault();supportSend($('supportInput').value);};
 $('supportSuggest').onclick=e=>{const b=e.target.closest('button');if(b)supportSend(b.textContent);};
 document.addEventListener('click',e=>{if(e.target.closest('#supportZalo,[data-support-zalo]'))api('/api/support/zalo',{}).then(()=>toast('Đã mở Zalo hỗ trợ trong trình duyệt.')).catch(error=>toast(error.message,true));});
+
+// ---- tự chạy workflow + kiểm tra máy (Claude Code / Codex / Python) ----
+$('claudeAutorun').onchange=e=>claudeCall('/api/claude/settings',{autorun:e.target.checked}).catch(err=>toast(err.message,true));
+$('claudeEngine').onchange=e=>claudeCall('/api/claude/settings',{engine:e.target.value}).catch(err=>toast(err.message,true));
+$('claudeQueue').onclick=e=>{const b=e.target.closest('[data-unqueue]');if(b)claudeCall('/api/claude/unqueue',{index:Number(b.dataset.unqueue)}).catch(err=>toast(err.message,true));};
+async function checkMachine(){const box=$('claudeMachine');box.hidden=false;box.innerHTML='<p class="detail">Đang kiểm tra máy…</p>';
+  try{const m=await api('/api/claude/machine',{});const row=(ok,label,detail,btns)=>`<div class="cm-row"><span class="${ok?'ok':'bad'}">${ok?'✓':'✕'}</span><b>${label}</b><small>${detail}</small><span class="cm-btns">${btns}</span></div>`;
+    const e=m.engines,login=x=>x.login===true?'đã đăng nhập':x.login===false?'<b class="bad">chưa đăng nhập</b>':'không kiểm tra được đăng nhập';
+    box.innerHTML=row(m.python,'Python',m.python?'có':'chưa cài — workflow dùng Python để tạo file JSON',m.python?'':'<button type="button" data-install="python">Cài Python</button>')+
+      row(e.claude.found&&e.claude.login!==false,'Claude Code',e.claude.found?`${esc(e.claude.path)} · ${login(e.claude)}`:'chưa cài',(e.claude.found?'':'<button type="button" data-install="claude">Cài Claude Code</button>')+(e.claude.found?'<button type="button" data-login="claude">Đăng nhập</button>':''))+
+      row(e.codex.found&&e.codex.login!==false,'Codex',e.codex.found?`${esc(e.codex.path)} · ${login(e.codex)}`:'chưa cài (cài app Codex hoặc bấm Cài)',(e.codex.found?'':'<button type="button" data-install="codex">Cài Codex</button>')+(e.codex.found?'<button type="button" data-login="codex">Đăng nhập</button>':''))+
+      `<p class="detail">Chỉ cần một trong hai: Claude Code hoặc Codex. Cài / đăng nhập mở một cửa sổ dòng lệnh — chủ máy tự đăng nhập tài khoản của mình. Cài xong bấm Kiểm tra máy lại (Claude / Codex mới cài có thể cần mở lại tool).</p>`;
+  }catch(error){box.innerHTML=`<p class="detail bad">${esc(error.message)}</p>`;}}
+$('claudeMachineCheck').onclick=checkMachine;
+$('claudeMachine').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
+  try{if(b.dataset.install){await api('/api/claude/install',{what:b.dataset.install});toast('Đã mở cửa sổ cài đặt. Làm theo hướng dẫn trong cửa sổ, xong bấm Kiểm tra máy.');}
+    else if(b.dataset.login){await api('/api/claude/login',{engine:b.dataset.login});toast('Đã mở cửa sổ đăng nhập. Đăng nhập trong trình duyệt (nếu được hỏi mã thì dán vào cửa sổ đó), xong bấm Kiểm tra máy.');}}
+  catch(error){toast(error.message,true);}};

@@ -41,6 +41,24 @@ DEFAULT = {
 BUILTIN = ("wildlife", "thoai-phim")
 
 
+CLAUDE_TOOLS = ",".join(["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "Skill", "TodoWrite"] + [
+    f"Bash({cmd}:*)" for cmd in ("python", "python3", "py", "ffmpeg", "ffprobe", "ls", "dir", "mkdir", "cp", "copy", "mv",
+                                 "move", "cat", "type", "head", "tail", "wc", "find", "pwd", "echo", "cd")])
+
+
+def run_env():
+    """Biến môi trường cho Claude / Codex: thêm ffmpeg của tool vào PATH (máy khách thường không cài ffmpeg riêng)."""
+    env = dict(os.environ)
+    try:
+        from . import video_tools
+        folder = str(Path(video_tools.ffmpeg()).parent)
+        env["PATH"] = folder + os.pathsep + env.get("PATH", "")
+    except Exception:
+        pass
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
 class WorkflowError(ValueError):
     pass
 
@@ -285,7 +303,8 @@ class Workflows:
     # ---- chạy bằng Claude Code / Codex ----
     @staticmethod
     def engines():
-        return {"claude": bool(shutil.which("claude")), "codex": bool(shutil.which("codex"))}
+        from .agent_cli import find
+        return {"claude": bool(find("claude")), "codex": bool(find("codex"))}
 
     def prompt(self, slug, mode):
         data = self.load(slug)
@@ -346,7 +365,8 @@ class Workflows:
             raise WorkflowError("Chọn Claude Code hoặc Codex.")
         if mode not in ("run", "apply"):
             raise WorkflowError("Thao tác không hợp lệ.")
-        exe = shutil.which(engine)
+        from .agent_cli import find
+        exe = find(engine)
         if not exe:
             raise WorkflowError(("Máy chưa cài Claude Code (lệnh claude)." if engine == "claude" else
                                  "Máy chưa cài Codex CLI (lệnh codex).") + " Dùng nút Chép lệnh để chạy tay.")
@@ -358,11 +378,18 @@ class Workflows:
             (self.home / "input").mkdir(parents=True, exist_ok=True)
             (self.home / "output" / "_status").mkdir(parents=True, exist_ok=True)
             prompt = self.prompt(slug, mode)
+            model = os.environ.get("HANAMEDIA_MODEL", "").strip()
             if engine == "claude":
-                args = [exe, "-p", "--permission-mode", "acceptEdits",
-                        "--allowedTools", "Bash,Read,Write,Edit,MultiEdit,Glob,Grep,Skill"]
+                # chỉ đọc / ghi file, gọi kỹ năng, chạy python / ffmpeg và vài lệnh xem thư mục — không toàn quyền shell
+                args = [exe, "-p", "--permission-mode", "acceptEdits", "--allowedTools", CLAUDE_TOOLS]
+                if model:
+                    args += ["--model", model]
             else:
-                args = [exe, "exec", "--full-auto", "--skip-git-repo-check", "-C", str(self.home), "-"]
+                # bản Codex mới bỏ --full-auto: chạy không hỏi, chỉ ghi được trong thư mục HanaMedia
+                args = [exe, "exec", "-s", "workspace-write", "--skip-git-repo-check", "-C", str(self.home)]
+                if model:
+                    args += ["-m", model]
+                args.append("-")
             runs = path / "runs"
             runs.mkdir(exist_ok=True)
             log_path = runs / f"{time.strftime('%Y%m%d-%H%M%S')}-{engine}-{mode}.log"
@@ -371,7 +398,7 @@ class Workflows:
             log.flush()
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             process = subprocess.Popen(args, cwd=str(self.home), stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
-                                       creationflags=flags, text=True, encoding="utf-8", errors="replace")
+                                       creationflags=flags, text=True, encoding="utf-8", errors="replace", env=run_env())
             try:
                 process.stdin.write(prompt)
                 process.stdin.close()
