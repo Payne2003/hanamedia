@@ -140,3 +140,14 @@ def login(name):
         raise ValueError(f"Máy chưa có {'Claude Code' if name == 'claude' else 'Codex'}. Bấm Cài trước.")
     quoted = f'"{path}"' if " " in path else path
     open_terminal(f"{quoted} auth login" if name == "claude" else f"{quoted} login", "HanaMedia - dang nhap")
+
+
+def watch_log(path, title="HanaMedia - Claude / Codex dang chay"):
+    """Cửa sổ dòng lệnh hiện trực tiếp nhật ký lần chạy (Claude / Codex vẫn chạy nền, cửa sổ chỉ để xem)."""
+    path = str(path)
+    if WINDOWS:
+        safe = path.replace("'", "''")
+        open_terminal(f"powershell -NoProfile -Command \"[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+                      f"Get-Content -LiteralPath '{safe}' -Wait -Encoding UTF8\"", title)
+    else:
+        open_terminal("tail -n +1 -f '" + path.replace("'", "'\\''") + "'", title)

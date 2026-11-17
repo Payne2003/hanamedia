@@ -208,7 +208,8 @@ class AppServer(ThreadingHTTPServer):
         self.workflows = Workflows(lambda: store.setting("claude_folder") or _bridge.default_folder())
         from runner.autorun import AutoRunner
         # Gửi video là tự chạy workflow bằng Claude Code / Codex trên máy này (máy chủ lẫn máy khách)
-        self.autorun = AutoRunner(self.workflows, self.prepare_video, lambda: store.setting("claude_engine") or "auto")
+        self.autorun = AutoRunner(self.workflows, self.prepare_video, lambda: store.setting("claude_engine") or "auto",
+                                  show_window=lambda: store.setting("claude_window", True) is not False)
         from runner.voice import VoiceStudio
         self.voice = VoiceStudio(self.data_dir)  # AI Voice (F5-TTS trên máy) — chỉ máy Super Admin dùng
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
@@ -1005,7 +1006,7 @@ class Handler(BaseHTTPRequestHandler):
                     "pack": store.setting("claude_pack", True) is not False,
                     "pending": bridge.pending(folder) if exists else [],
                     "autorun": store.setting("claude_autorun", True) is not False,
-                    "engine": store.setting("claude_engine") or "auto", "engines": self.server.workflows.engines(),
+                    "engine": store.setting("claude_engine") or "auto", "window": store.setting("claude_window", True) is not False, "engines": self.server.workflows.engines(),
                     "queue": self.server.autorun.status(),
                     "results": bridge.results(folder, imported) if exists else []}
 
@@ -1033,6 +1034,8 @@ class Handler(BaseHTTPRequestHandler):
                 store.save_setting("claude_pack", body.get("pack") is not False)
             if "autorun" in body:
                 store.save_setting("claude_autorun", body.get("autorun") is not False)
+            if "window" in body:
+                store.save_setting("claude_window", body.get("window") is not False)
             if body.get("engine") in ("auto", "claude", "codex"):
                 store.save_setting("claude_engine", body["engine"])
             return self.reply(status())
