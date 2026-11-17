@@ -59,6 +59,62 @@ def run_env():
     return env
 
 
+def _short(value, limit=160):
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def stream_line(line):
+    """Một dòng stream-json của Claude Code → dòng nhật ký dễ đọc (None = bỏ qua)."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return line  # thông báo thường (vd lỗi đăng nhập) giữ nguyên
+    if not isinstance(event, dict):
+        return None
+    kind = event.get("type")
+    if kind == "system" and event.get("subtype") == "init":
+        return f"▶ Claude Code bắt đầu · model {event.get('model', '?')}"
+    if kind == "assistant":
+        out = []
+        for part in (event.get("message") or {}).get("content") or []:
+            if part.get("type") == "text" and part.get("text", "").strip():
+                out.append(_short(part["text"], 600))
+            elif part.get("type") == "tool_use":
+                data = part.get("input") or {}
+                detail = data.get("command") or data.get("file_path") or data.get("skill") or data.get("pattern") \
+                    or data.get("path") or data.get("description") or ""
+                out.append(f"  → {part.get('name')}: {_short(detail)}")
+        return "\n".join(out) or None
+    if kind == "user":
+        for part in (event.get("message") or {}).get("content") or []:
+            if isinstance(part, dict) and part.get("type") == "tool_result" and part.get("is_error"):
+                content = part.get("content")
+                if isinstance(content, list):
+                    content = " ".join(str(c.get("text", "")) for c in content if isinstance(c, dict))
+                return f"  ✕ {_short(content, 300)}"
+        return None
+    if kind == "result":
+        head = "✕ LỖI" if event.get("is_error") else "✓ XONG"
+        return f"\n{head}: {_short(event.get('result') or event.get('subtype'), 1500)}"
+    return None
+
+
+def pump_stream(stdout, log):
+    for line in stdout:
+        text = stream_line(line)
+        if text is None:
+            continue
+        try:
+            log.write(text + "\n")
+            log.flush()
+        except (OSError, ValueError):
+            return
+
+
 class WorkflowError(ValueError):
     pass
 
@@ -381,7 +437,9 @@ class Workflows:
             model = os.environ.get("HANAMEDIA_MODEL", "").strip()
             if engine == "claude":
                 # chỉ đọc / ghi file, gọi kỹ năng, chạy python / ffmpeg và vài lệnh xem thư mục — không toàn quyền shell
-                args = [exe, "-p", "--permission-mode", "acceptEdits", "--allowedTools", CLAUDE_TOOLS]
+                # stream-json: thấy từng bước Claude làm trong nhật ký / cửa sổ xem (text thường chỉ in khi xong hẳn)
+                args = [exe, "-p", "--permission-mode", "acceptEdits", "--allowedTools", CLAUDE_TOOLS,
+                        "--output-format", "stream-json", "--verbose"]
                 if model:
                     args += ["--model", model]
             else:
@@ -397,7 +455,9 @@ class Workflows:
             log.write(f"# {engine} · {'chỉ sửa kỹ năng' if mode == 'apply' else 'chạy workflow'} · {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             log.flush()
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            process = subprocess.Popen(args, cwd=str(self.home), stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
+            stream = engine == "claude"
+            process = subprocess.Popen(args, cwd=str(self.home), stdin=subprocess.PIPE,
+                                       stdout=subprocess.PIPE if stream else log, stderr=subprocess.STDOUT,
                                        creationflags=flags, text=True, encoding="utf-8", errors="replace", env=run_env())
             try:
                 process.stdin.write(prompt)
@@ -406,11 +466,15 @@ class Workflows:
                 pass
             self.runs[slug] = {"process": process, "log": log_path, "engine": engine, "mode": mode,
                                "started": time.time(), "handle": log}
+            if stream:
+                threading.Thread(target=pump_stream, args=(process.stdout, log), daemon=True).start()
             threading.Thread(target=self._finish, args=(slug, process, log, mode), daemon=True).start()
         return self.status(slug)
 
     def _finish(self, slug, process, log, mode):
         process.wait()
+        if process.stdout is not None:
+            time.sleep(.3)  # để luồng đọc stream-json ghi nốt dòng cuối
         try:
             log.write(f"\n\n# Kết thúc (mã {process.returncode}) · {time.strftime('%H:%M:%S')}\n")
             log.close()
