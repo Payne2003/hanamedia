@@ -1366,3 +1366,4 @@ details.claude-flow{display:block}details.claude-flow:not([open]){padding:12px 1
 .short-page .badge{justify-self:start;background:var(--c-surface-3);color:var(--c-text-2);box-shadow:none;border:0}
 .short-page .badge.done{background:var(--c-success-soft);color:var(--c-success)}.short-page .badge.running{background:var(--c-accent-soft);color:var(--c-accent-text)}
 .short-page .badge.error{background:var(--c-danger-soft);color:var(--c-danger)}
+.short-login{display:grid;gap:6px;padding:12px;border:1px solid var(--c-accent-soft);border-radius:12px;background:var(--c-surface-2)}.short-login ol{margin:0;padding-left:18px;display:grid;gap:2px}

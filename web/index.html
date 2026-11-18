@@ -113,7 +113,12 @@
           <label>Link dự án Flow <small>(không bắt buộc — trống thì tạo dự án mới)</small><input id="shortProject" placeholder="https://flow.google.com/project/…"></label>
           <label class="inline"><input id="shortWhoosh" type="checkbox"> Tự thêm tiếng whoosh khi chuyển cảnh</label>
           <div class="wf-row"><button type="button" id="shortSave">Lưu cài đặt</button></div>
-          <p class="detail">Flow dùng cửa sổ Chrome riêng của tool (hồ sơ Google Flow — đăng nhập một lần trong Cài đặt). Gặp đăng nhập, CAPTCHA hay hết tín dụng: tool dừng và báo, không tự vượt.</p>
+          <div class="short-login"><b>Chrome cho Google Flow</b>
+            <p class="detail">Short dùng cửa sổ Chrome riêng của tool (cùng hồ sơ với chức năng tạo ảnh Flow; nếu bật “Tài khoản Google chung” thì dùng hồ sơ chung). Đăng nhập một lần:</p>
+            <ol class="detail"><li>Bấm <b>Đăng nhập Google Flow</b> — Chrome mở trang Flow.</li><li>Đăng nhập tài khoản Google có Flow / Veo, thấy trang danh sách dự án.</li><li><b>Đóng hẳn cửa sổ Chrome đó</b>, rồi bấm ▶ Chạy (hoặc Gỡ chặn Flow).</li></ol>
+            <div class="wf-row"><button type="button" id="shortFlowLogin" class="primary">🔑 Đăng nhập Google Flow</button></div>
+            <small id="shortFlowStatus" class="detail"></small></div>
+          <p class="detail">Gặp đăng nhập, CAPTCHA hay hết tín dụng: tool dừng và báo, không tự vượt.</p>
         </section>
       </div>
       <section class="card short-jobs"><div class="board-head"><h2>Video</h2><small id="shortSummary"></small></div>

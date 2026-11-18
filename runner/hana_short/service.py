@@ -18,12 +18,13 @@ SETTINGS_KEY = "short_settings"
 
 
 class ShortStudio:
-    def __init__(self, store, data_dir, home, sounds=None, open_session=None):
+    def __init__(self, store, data_dir, home, sounds=None, open_session=None, flow_status=lambda: ""):
         self.store = store
         self.data_dir = Path(data_dir)
         self.home = home                    # () -> thư mục HanaMedia hiện tại
         self.sounds = sounds                # SoundLibrary của tool (SFX theo tên + tag)
         self.open_session = open_session    # (downloads_dir) -> FlowImageSession
+        self.flow_status = flow_status      # trạng thái nút đăng nhập Flow của tool
         self.lock = threading.Lock()
         self.thread = None
         self.stopping = False
@@ -155,7 +156,7 @@ class ShortStudio:
 
     def status(self):
         cfg = self.cfg()
-        return {"state": dict(self.state), "block": flow.global_block(cfg), "settings": self.settings(), "models": MODELS,
+        return {"state": dict(self.state), "block": flow.global_block(cfg), "flow_status": self.flow_status(), "settings": self.settings(), "models": MODELS,
                 "jobs": self.jobs(), "recovered": self.recovered, "export_dir": str(resolve_path(cfg["export_dir"]))}
 
     # ---- thao tác của người dùng ----
