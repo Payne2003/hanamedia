@@ -1,0 +1,18 @@
+{
+  "jobs_dir": "jobs",
+  "downloads_dir": "C:/Users/Admin/Downloads/HanaFlow",
+  "sfx_dir": "",
+  "export_dir": "C:/Users/Admin/Videos/HanaMediaShort",
+  "ffmpeg": "",
+  "ffprobe": "",
+  "video": {"aspect_ratio": "9:16", "scene_seconds": 8, "max_words_per_scene": 20},
+  "review": {"max_retries_per_scene": 2},
+  "flow": {
+    "project_url": "",
+    "model": "Veo 3.1 - Fast",
+    "duration_label": "8 giây",
+    "outputs": "x1",
+    "mode": "Thành phần"
+  },
+  "capcut": {"draft_root": "", "export_watch_dir": ""}
+}

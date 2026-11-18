@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<style>
+  body { font: 13px/1.4 system-ui, sans-serif; width: 320px; margin: 12px; color: #222; }
+  h1 { font-size: 14px; margin: 0 0 8px; }
+  #status { background: #f3f4f6; padding: 8px; border-radius: 6px; min-height: 36px; white-space: pre-wrap; }
+  .row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  button { flex: 1; padding: 6px; border: 1px solid #bbb; border-radius: 6px; background: #fff; cursor: pointer; }
+  button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  small { color: #666; display: block; margin-top: 8px; }
+  pre { max-height: 160px; overflow: auto; font-size: 11px; background: #fafafa; padding: 6px; }
+</style>
+</head>
+<body>
+<h1>HanaMedia Short → Flow</h1>
+<div id="status">…</div>
+<div class="row">
+  <button id="one" class="primary">Gửi 1 cảnh</button>
+  <button id="all">Chạy liên tục</button>
+  <button id="stop">Dừng</button>
+</div>
+<div class="row">
+  <button id="hello">Kiểm tra host</button>
+  <button id="inspect">Kiểm tra giao diện Flow</button>
+</div>
+<small>Khi bị chặn (đăng nhập, hết lượt, CAPTCHA, không rõ đã gửi) extension dừng lại. Xử lý xong, chạy
+<code>hana flow-unblock</code> hoặc <code>hana resolve</code> trong terminal.</small>
+<pre id="out" hidden></pre>
+<script src="popup.js"></script>
+</body>
+</html>

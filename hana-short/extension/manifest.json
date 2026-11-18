@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "HanaMedia Short - Flow bridge",
+  "version": "0.1.0",
+  "description": "Gửi cảnh từ HanaMedia Short sang Google Flow trên tab đã đăng nhập, theo dõi và tải clip về.",
+  "permissions": ["nativeMessaging", "downloads", "scripting", "tabs", "storage", "alarms"],
+  "host_permissions": ["https://flow.google.com/*", "https://labs.google/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "HanaMedia Short" },
+  "minimum_chrome_version": "116"
+}
