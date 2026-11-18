@@ -591,8 +591,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         voice_file = re.fullmatch(r"/api/voice/(file|ref|export)/([a-f0-9]{12})", path)
         if voice_file:
-            if not self.is_owner():
-                return self.reply({"error": "Chỉ máy Super Admin."}, 403)
+            if not self.can("ai_voice"):
+                return self.reply({"error": "Tài khoản này chưa được cấp quyền AI Voice."}, 403)
             from runner.voice import VoiceError
             try:
                 if voice_file.group(1) == "export":
@@ -824,15 +824,37 @@ class Handler(BaseHTTPRequestHandler):
         context = self.server.license.issuer_context()
         return bool(context) and context["mode"] == "root"
 
+    def can(self, feature):
+        """Chức năng riêng (AI Voice, Thoại phim): máy Super Admin, hoặc tài khoản được tick quyền đó trong bản quyền."""
+        return self.is_owner() or self.server.license.allows(feature)
+
+    def can_workflow(self, slug):
+        return slug == "wildlife" or self.is_owner() or (slug == "thoai-phim" and self.can("narration"))
+
+    def features(self):
+        owner = self.is_owner()
+        return {"owner": owner, "ai_voice": owner or self.server.license.allows("ai_voice"),
+                "narration": owner or self.server.license.allows("narration")}
+
     def workflow_action(self, path, body):
         from runner.workflows import WorkflowError
-        if not self.is_owner():
-            return self.reply({"error": "Chỉ máy Super Admin dùng được phần này."}, 403)
         flows = self.server.workflows
         slug = str(body.get("slug") or "")
+        limited = not self.is_owner()
+        if limited:
+            # tài khoản có quyền Thoại phim: chỉ chạy / theo dõi / gửi yêu cầu cho workflow Thoại phim, không sửa workflow
+            allowed = {"/api/workflows/list", "/api/workflows/status", "/api/workflows/run", "/api/workflows/stop",
+                       "/api/workflows/prompt", "/api/workflows/request", "/api/workflows/clear-requests",
+                       "/api/workflows/sync", "/api/workflows/open"}
+            if not self.can("narration") or path not in allowed or \
+                    (path != "/api/workflows/list" and slug != "thoai-phim" and not (path == "/api/workflows/status" and slug == "wildlife")):
+                return self.reply({"error": "Tài khoản này không có quyền dùng phần này."}, 403)
         try:
             if path == "/api/workflows/list":
-                return self.reply({"workflows": flows.list(), "engines": flows.engines()})
+                items = flows.list()
+                if limited:
+                    items = [w for w in items if w["slug"] in ("wildlife", "thoai-phim")]
+                return self.reply({"workflows": items, "engines": flows.engines(), "limited": limited})
             if path == "/api/workflows/save":
                 return self.reply({"workflow": flows.save(body)})
             if path == "/api/workflows/delete":
@@ -873,14 +895,14 @@ class Handler(BaseHTTPRequestHandler):
         return self.reply({"error": "Không tìm thấy."}, 404)
 
     def narration_action(self, path, body):
-        """Thoại phim (chỉ máy Super Admin): gói thể loại, bài thoại của workflow → AI Voice → ghép vào video."""
+        """Thoại phim (máy Super Admin hoặc tài khoản được tick quyền): gói thể loại, bài thoại → AI Voice → ghép video."""
         from runner import narration
         from runner.narration_skills import SLUG
         from runner.voice import VoiceError
         from runner.workflows import WorkflowError
         from runner.video_tools import VideoError
-        if not self.is_owner():
-            return self.reply({"error": "Chỉ máy Super Admin dùng được phần này."}, 403)
+        if not self.can("narration"):
+            return self.reply({"error": "Tài khoản này chưa được cấp quyền Thoại phim."}, 403)
         flows, voice = self.server.workflows, self.server.voice
         home = flows.home
 
@@ -930,8 +952,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def voice_action(self, path, body):
         from runner.voice import VoiceError
-        if not self.is_owner():
-            return self.reply({"error": "Chỉ máy Super Admin dùng AI Voice."}, 403)
+        if not self.can("ai_voice"):
+            return self.reply({"error": "Tài khoản này chưa được cấp quyền AI Voice."}, 403)
         voice = self.server.voice
         try:
             if path == "/api/voice/status":
@@ -1018,7 +1040,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(status())
         if path == "/api/claude/board":
             slug = str(body.get("workflow") or "wildlife")
-            if slug != "wildlife" and self.is_owner():
+            if slug != "wildlife" and self.can_workflow(slug):
                 try:
                     return self.reply({"folder": str(folder), "agents": bridge.AGENTS, "board": self.server.workflows.board(slug)})
                 except ValueError:
@@ -1076,8 +1098,8 @@ class Handler(BaseHTTPRequestHandler):
             if not video:
                 return self.reply(dict(status(), sent=None))
             slug = str(body.get("workflow") or "wildlife")
-            if slug != "wildlife" and not self.is_owner():
-                slug = "wildlife"  # workflow riêng chỉ máy Super Admin chạy
+            if not self.can_workflow(slug):
+                slug = "wildlife"  # workflow riêng: máy Super Admin, hoặc tài khoản có quyền Thoại phim
             autorun = self.server.autorun
             if store.setting("claude_autorun", True) is not False and autorun.engine():
                 self.server.workflows.folder(slug)
@@ -1151,8 +1173,8 @@ class Handler(BaseHTTPRequestHandler):
                                                                 unquote(self.headers.get("X-Sound-Tags", "")))
                 return self.reply({"ok": True, "duplicate": duplicate, "sound": item})
             if path == "/api/voice/upload":
-                if not self.is_owner():
-                    return self.reply({"error": "Chỉ máy Super Admin dùng AI Voice."}, 403)
+                if not self.can("ai_voice"):
+                    return self.reply({"error": "Tài khoản này chưa được cấp quyền AI Voice."}, 403)
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= 60 * 1024 * 1024:
                     raise ValueError("File giọng mẫu trống hoặc lớn hơn 60 MB.")
@@ -1518,6 +1540,8 @@ class Handler(BaseHTTPRequestHandler):
                 saved.write_text(json.dumps(plugin, ensure_ascii=False), encoding="utf-8")
                 content.set_plugin(plugin)
                 return self.reply({"ok": True, "plugin": self.server.plugin_public()})
+            elif path == "/api/features":
+                return self.reply(self.features())
             elif path.startswith("/api/claude/"):
                 return self.claude_bridge(path, body)
             elif path.startswith("/api/workflows/"):

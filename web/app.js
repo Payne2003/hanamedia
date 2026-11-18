@@ -884,7 +884,7 @@ const HQ_DEFAULTS=JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(HQ
 const WF_GENERIC_TASKS=['Nhận việc từ Master','Đọc kỹ năng & dữ liệu','Thực hiện phần việc','Bàn giao kết quả'];
 function currentWf(){return wf.list.find(w=>w.slug===wf.slug)||wf.list[0];}
 async function loadWorkflows(){
-  try{const r=await api('/api/workflows/list',{});wf.owner=true;wf.list=r.workflows;wf.engines=r.engines;}
+  try{const r=await api('/api/workflows/list',{});wf.owner=true;wf.limited=!!r.limited;wf.list=r.workflows;wf.engines=r.engines;}
   catch{wf.owner=false;wf.list=[];}
   $('wfPick').hidden=$('wfNew').hidden=$('wfPanel').hidden=!wf.owner;
   if(!wf.owner){wf.slug='wildlife';return;}
@@ -915,7 +915,12 @@ function renderWorkflow(){
   $('wfChangelog').textContent=w.changelog||'(chưa có)';
   $('wfEngines').textContent=`· Claude Code: ${wf.engines.claude?'có ✓':'chưa cài'} · Codex: ${wf.engines.codex?'có ✓':'chưa cài'}`;
   $('wfRunClaude').disabled=!wf.engines.claude;$('wfRunCodex').disabled=!wf.engines.codex;$('wfApply').disabled=!(wf.engines.claude||wf.engines.codex);
-  $('wfDelete').hidden=w.slug==='wildlife'||w.slug==='thoai-phim';
+  $('wfDelete').hidden=w.slug==='wildlife'||w.slug==='thoai-phim'||wf.limited;
+  // tài khoản được cấp quyền Thoại phim: chạy / gửi yêu cầu được, không sửa cấu hình workflow
+  $('wfNew').hidden=wf.limited;$('wfSave').hidden=wf.limited;$('wfImport').hidden=wf.limited;
+  $('wfAgents').querySelectorAll('input,select').forEach(el=>el.disabled=wf.limited);['wfName','wfCommand','wfDesc'].forEach(id=>$(id).disabled=wf.limited);
+  $('wfSkills').querySelectorAll('[data-rm-skill]').forEach(el=>el.hidden=wf.limited);
+  $('wfPanel').hidden=wf.limited&&w.slug==='wildlife';
   renderWfStatus();
 }
 function renderWfStatus(){
@@ -987,7 +992,10 @@ let voiceData=null,voiceTimer=null;
 const VA_DEFAULT={speed:1,nfe:32,gap:.28,format:'mp3',split:'sentence',voice:''};
 const va={...VA_DEFAULT,...(()=>{try{return JSON.parse(localStorage.getItem('va.settings')||'{}');}catch{return {};}})(),pane:'tts',group:null,editing:null};
 function vaSave(){try{localStorage.setItem('va.settings',JSON.stringify({speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format,split:va.split,voice:va.voice}));}catch{}}
-async function checkVoiceOwner(){try{await api('/api/voice/status',{});$('navVoice').hidden=$('navNarration').hidden=false;}catch{$('navVoice').hidden=$('navNarration').hidden=true;}}
+let features={owner:false,ai_voice:false,narration:false};
+async function checkVoiceOwner(){try{features=await api('/api/features',{});}catch{features={owner:false,ai_voice:false,narration:false};}
+  $('navVoice').hidden=!features.ai_voice;$('navNarration').hidden=!features.narration;}
+setInterval(checkVoiceOwner,60000);  // Super Admin vừa cấp / gỡ quyền: bản quyền tự cập nhật, menu đổi theo
 function markNarrationNav(){const on=!$('agentsView').hidden&&wf.slug==='thoai-phim';$('navNarration').classList.toggle('active',on);if(on)$('navAgents').classList.remove('active');}
 $('navNarration').onclick=async()=>{wf.slug='thoai-phim';try{localStorage.setItem('hq.workflow',wf.slug);}catch{}
   if($('agentsView').hidden)showView('agents');else await loadWorkflows();

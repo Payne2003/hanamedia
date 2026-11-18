@@ -108,6 +108,19 @@ class LicenseTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "không có quyền"):
             self.client.check("upload_media")
 
+    def test_feature_permissions_ai_voice_and_narration(self):
+        account, token = self.create()
+        self.client.activate(token)
+        self.assertFalse(self.client.allows("ai_voice"))  # mặc định không có
+        self.assertFalse(self.client.allows("narration"))
+        _, token = self.create(name="Khách VIP", permissions=["create_jobs", "upload_media", "ai_voice"])
+        self.client.activate(token)
+        self.assertTrue(self.client.allows("ai_voice"))
+        self.assertFalse(self.client.allows("narration"))
+        from runner.license import LicenseError, clean_record
+        with self.assertRaises(LicenseError):
+            clean_record({"name": "x", "role": "user", "permissions": ["bay-bong"]})
+
     def test_wrong_device_forged_and_foreign_keys_are_rejected(self):
         _, token = self.create(devices=["AAAA-BBBB-CCCC-DDDD"])
         with self.assertRaisesRegex(LicenseError, "không cấp cho máy này"):
