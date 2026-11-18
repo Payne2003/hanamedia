@@ -2160,7 +2160,8 @@ async function loadShort(){try{shortData=await api('/api/short/status',{});rende
 function renderShort(){const d=shortData;if(!d)return;const st=d.state||{};
   $('shortStart').hidden=!!st.running;$('shortStop').hidden=!st.running;
   $('shortState').textContent=[st.message,st.flow].filter(Boolean).join(' · ');
-  const b=d.block;$('shortBlock').hidden=!b;if(b)$('shortBlock').innerHTML=`<b>⛔ Flow đang bị chặn: ${esc({login:'cần đăng nhập',quota:'hết tín dụng / lượt',captcha:'có reCAPTCHA',ui_changed:'giao diện Flow thay đổi'}[b.reason]||b.reason)}</b><span>${esc(b.detail||'')}</span><button type="button" id="shortUnblock" class="primary">Đã xử lý xong — Gỡ chặn Flow</button>`;
+  const b=d.block;$('shortBlock').hidden=!b;if(b)$('shortBlock').innerHTML=`<b>⛔ Flow đang bị chặn: ${esc({login:'Chrome của Flow chưa đăng nhập',quota:'hết tín dụng / lượt',captcha:'có reCAPTCHA',ui_changed:'không thấy giao diện Flow như dự kiến'}[b.reason]||b.reason)}</b><span>${esc(b.detail||'')}</span>${['login','ui_changed'].includes(b.reason)?'<span>Thường do Chrome của Flow chưa đăng nhập Google: bấm <b>Đăng nhập Google Flow</b>, đăng nhập, đóng Chrome đó rồi gỡ chặn.</span>':''}<div class="wf-row">${['login','ui_changed'].includes(b.reason)?'<button type="button" data-short-login>🔑 Đăng nhập Google Flow</button>':''}<button type="button" id="shortUnblock" class="primary">Đã xử lý xong — Gỡ chặn Flow</button></div>`;
+  if(d.flow_status!==undefined)$('shortFlowStatus').textContent=d.flow_status||'';
   const s=d.settings;if(!$('shortSave').dataset.dirty&&!$('shortModel').closest('.short-box').contains(document.activeElement)){
     $('shortModel').innerHTML=[...new Set([s.model,...d.models])].map(m=>`<option>${esc(m)}</option>`).join('');$('shortModel').value=s.model;$('shortRetries').value=s.max_retries;$('shortEngine').value=s.engine;
     $('shortExport').value=s.export_dir;$('shortSfx').value=s.sfx_dir;$('shortProject').value=s.project_url;$('shortWhoosh').checked=s.auto_transition;}
@@ -2179,7 +2180,10 @@ function renderShort(){const d=shortData;if(!d)return;const st=d.state||{};
   if($('shortJobs').dataset.html!==html){$('shortJobs').dataset.html=html;$('shortJobs').innerHTML=html;}}
 $('shortStart').onclick=async()=>{try{shortData=await api('/api/short/start',{});renderShort();toast('Đang chạy: Claude / Codex viết kịch bản, rồi Veo trên Flow tạo từng cảnh. Cửa sổ Chrome của Flow sẽ mở ra.');}catch(e){toast(e.message,true);}};
 $('shortStop').onclick=async()=>{try{shortData=await api('/api/short/stop',{});renderShort();}catch(e){toast(e.message,true);}};
-$('shortBlock').onclick=async e=>{if(!e.target.closest('#shortUnblock'))return;try{shortData=await api('/api/short/unblock',{});renderShort();toast('Đã gỡ chặn. Bấm ▶ Chạy để tiếp tục.');}catch(err){toast(err.message,true);}};
+async function shortFlowLogin(){if(shortData?.state?.running)return toast('Đang chạy Short — bấm Dừng trước rồi mới đăng nhập.',true);
+  try{await api('/api/flow/login',{});toast('Đã mở Chrome trang Flow. Đăng nhập Google, thấy danh sách dự án thì ĐÓNG cửa sổ Chrome đó rồi bấm Chạy / Gỡ chặn Flow.');}catch(e){toast(e.message,true);}}
+$('shortFlowLogin').onclick=shortFlowLogin;
+$('shortBlock').onclick=async e=>{if(e.target.closest('[data-short-login]'))return shortFlowLogin();if(!e.target.closest('#shortUnblock'))return;try{shortData=await api('/api/short/unblock',{});renderShort();toast('Đã gỡ chặn. Bấm ▶ Chạy để tiếp tục.');}catch(err){toast(err.message,true);}};
 ['shortModel','shortRetries','shortEngine','shortExport','shortSfx','shortProject','shortWhoosh'].forEach(id=>$(id).addEventListener('input',()=>$('shortSave').dataset.dirty='1'));
 $('shortSave').onclick=async()=>{try{shortData=await api('/api/short/settings',{model:$('shortModel').value,max_retries:Number($('shortRetries').value),engine:$('shortEngine').value,export_dir:$('shortExport').value,sfx_dir:$('shortSfx').value,project_url:$('shortProject').value,auto_transition:$('shortWhoosh').checked});delete $('shortSave').dataset.dirty;renderShort();toast('Đã lưu cài đặt Short.');}catch(e){toast(e.message,true);}};
 let shortImportTarget=null;

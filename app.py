@@ -127,14 +127,31 @@ class AppServer(ThreadingHTTPServer):
         """Short Veo hàng loạt (runner/hana_short): kịch bản + duyệt bằng Claude/Codex, tạo cảnh bằng Veo trên Flow."""
         if self._shorts is None:
             from runner import claude_bridge as bridge
-            from runner.flow import FlowImageSession, default_chrome_profile
             from runner.hana_short.service import ShortStudio
             store = self.store
             self._shorts = ShortStudio(store, self.data_dir, lambda: store.setting("claude_folder") or bridge.default_folder(),
                                        sounds=getattr(self.agents, "sounds", None),
-                                       open_session=lambda downloads: FlowImageSession(default_chrome_profile(self.data_dir),
-                                                                                       downloads))
+                                       open_session=lambda downloads: self.open_short_flow(downloads),
+                                       flow_status=lambda: getattr(self.engine, "flow_status", ""))
         return self._shorts
+
+    def open_short_flow(self, downloads):
+        """Chrome Flow cho Short: nhường hồ sơ (đóng Chrome Flow tạo ảnh của tool nếu đang rảnh) rồi mở bằng Selenium."""
+        from runner.flow import FlowImageSession
+        if getattr(self.engine, "flow_busy", False):
+            raise RuntimeError("Chức năng tạo ảnh Flow của tool đang chạy - đợi xong rồi bấm Chạy lại.")
+        release = getattr(self.engine, "release_flow", None)
+        if release:
+            release()
+        return FlowImageSession(self.flow_profile(), downloads)
+
+    def flow_profile(self):
+        """Hồ sơ Chrome đang dùng cho Google Flow: tài khoản Google chung (nếu bật) hoặc hồ sơ google-flow riêng."""
+        from runner.flow import default_chrome_profile
+        profile = getattr(self.engine, "flow_profile", None)
+        if profile:
+            return Path(profile)
+        return self.shared.dir / "Default" if self.shared.enabled else default_chrome_profile(self.data_dir)
 
     def prepare_video(self, video):
         """Chép video vào input/ của thư mục HanaMedia (dọn dự án cũ), kèm điểm cắt + gói ảnh tool đo."""

@@ -80,6 +80,12 @@ class FlowVeo:
 
     # ---- một lượt: nhận cảnh READY (hoặc cảnh GENERATING cần theo dõi tiếp) và làm tới khi tải xong ----
     def run_once(self, job_filter=None):
+        if flow.global_block(self.cfg) is None and self.session is None:
+            try:  # mở Chrome TRƯỚC khi nhận cảnh: lỗi mở Chrome không đụng tới trạng thái cảnh nào
+                self.driver
+            except Exception as error:
+                self.session = None
+                raise Stop(f"Không mở được Chrome cho Flow: {error}"[:400])
         claim = flow.claim_task(self.cfg, job_filter)
         if claim.get("blocked"):
             b = claim["blocked"]
@@ -107,6 +113,34 @@ class FlowVeo:
         except JobError:
             pass
 
+    def new_project_fallback(self):
+        """Bộ dò nút 'Dự án mới' rộng hơn của tool (runner/flow.py) khi bộ chọn của HMS không thấy."""
+        from ..flow import JS_NEW_PROJECT
+        try:
+            if not self.driver.execute_script(JS_NEW_PROJECT):
+                return False
+        except Exception:
+            return False
+        for _ in range(60):
+            if "/project/" in (self.driver.current_url or "") and self.call("state").get("hasPrompt"):
+                return True
+            time.sleep(.5)
+        return False
+
+    def looks_signed_out(self):
+        """Trang giới thiệu / đăng nhập của Flow (chưa đăng nhập): có nút Đăng nhập / Tạo bằng Flow, không có ô prompt."""
+        js = r"""
+const t = e => (e.innerText || '').replace(/\s+/g, ' ').trim();
+const v = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+if (/accounts\.google\./.test(location.hostname)) return true;
+return [...document.querySelectorAll('a,button')].some(e => v(e) &&
+  /^(đăng nhập|sign in|tạo bằng flow|create with flow|bắt đầu|get started|thử flow|try flow)$/i.test(t(e)));
+"""
+        try:
+            return bool(self.driver.execute_script(js))
+        except Exception:
+            return False
+
     def stop_with(self, reason, detail, token):
         flow.blocked(self.cfg, reason, detail, token)
         raise Stop(f"{reason}: {detail}")
@@ -127,7 +161,10 @@ class FlowVeo:
         if not st.get("onProject"):
             self.status("Tạo dự án Flow mới…")
             np = self.call("openNewProject")
-            if not np.get("ok"):
+            if not np.get("ok") and not self.new_project_fallback():
+                if self.looks_signed_out():
+                    self.stop_with("login", "Chrome của Flow chưa đăng nhập Google - bấm 'Đăng nhập Google Flow' trong màn "
+                                   "hình Short, đăng nhập, ĐÓNG cửa sổ Chrome đó rồi bấm Gỡ chặn Flow", tok)
                 self.stop_with(np.get("reason") or "ui_changed", np.get("detail"), tok)
         self.status(f"{task['job_id']}/{task['scene_id']}: chỉnh cài đặt")
         s = self.call("applySettings", task)
