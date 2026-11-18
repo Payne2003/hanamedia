@@ -279,6 +279,7 @@ $('downloadContentXlsx').onclick=async()=>{try{const r=await fetch('/api/content
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
   if(view==='community')view='studio';  // mục Cộng đồng đã bỏ
+  if(view==='content')view='studio';  // mục Content Studio đã bỏ
   if(view==='production')view='agents';  // mục Wildlife · Sản xuất phim đã bỏ: thay bằng Không gian Agent 3D
   const isAgents=view==='agents';$('agentsView').hidden=!isAgents;if(isAgents)openAgents();else closeAgents();
   const isVoice=view==='voice';$('voiceView').hidden=!isVoice;if(isVoice)openVoice();else closeVoice();
@@ -1379,8 +1380,8 @@ function renderOverview(){
 }
 function markSidebar(){
   const production=!$('productionView').hidden,content=!$('contentView').hidden,settings=!$('settingsView').hidden,media=!$('mediaView').hidden,community=!$('communityView').hidden,licensePage=!$('licenseView').hidden;
-  const agents=!$('agentsView').hidden,voiceOn=!$('voiceView').hidden;$('navAgents').classList.toggle('active',agents);$('navVoice').classList.toggle('active',voiceOn);
-  $('navProduction').classList.toggle('active',production);$('navStudio').classList.toggle('active',!voiceOn&&!agents&&!production&&!content&&!settings&&!media&&!community&&!licensePage);$('navCommunity').classList.toggle('active',community);$('navLicense').classList.toggle('active',licensePage);$('openLibrary').classList.toggle('active',media);$('navSettings').classList.toggle('active',settings);$('openContent').classList.toggle('active',content);
+  const agents=!$('agentsView').hidden,voiceOn=!$('voiceView').hidden,shortOn=!$('shortView').hidden;$('navShort').classList.toggle('active',shortOn);$('navAgents').classList.toggle('active',agents);$('navVoice').classList.toggle('active',voiceOn);
+  $('navProduction').classList.toggle('active',production);$('navStudio').classList.toggle('active',!shortOn&&!voiceOn&&!agents&&!production&&!content&&!settings&&!media&&!community&&!licensePage);$('navCommunity').classList.toggle('active',community);$('navLicense').classList.toggle('active',licensePage);$('openLibrary').classList.toggle('active',media);$('navSettings').classList.toggle('active',settings);$('openContent').classList.toggle('active',content);
 }
 document.querySelectorAll('.stepper [data-step]').forEach(b=>b.onclick=()=>setStep(Number(b.dataset.step)));
 document.addEventListener('click',e=>{const go=e.target.closest('[data-goto-step]');if(go)setStep(Number(go.dataset.gotoStep));});
