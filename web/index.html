@@ -16,6 +16,7 @@
       <button type="button" class="active" data-nav="studio" id="navStudio"><i><svg class="ic" aria-hidden="true"><use href="#i-home"/></svg></i>Studio · Video Queue<b id="sideRuns" class="nav-badge" hidden>0</b></button>
       <button type="button" data-nav="agents" id="navAgents"><i><svg class="ic" aria-hidden="true"><use href="#i-sparkles"/></svg></i>Không gian Agent 3D</button>
       <button type="button" data-nav="production" id="navProduction" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-film"/></svg></i>Wildlife · Sản xuất phim</button>
+      <button type="button" data-nav="short" id="navShort" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg></i>Short Veo hàng loạt</button>
       <button type="button" id="navNarration" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-film"/></svg></i>Thoại phim</button>
       <button type="button" data-nav="voice" id="navVoice" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-message"/></svg></i>AI Voice</button>
       <button type="button" data-nav="content" id="openContent"><i><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg></i>Content Studio</button>
@@ -84,6 +85,40 @@
       </aside>
     </div>
     </div>
+    <section id="shortView" class="short-page" hidden aria-labelledby="shortTitle">
+      <div class="card short-head"><div><h1 id="shortTitle">Short Veo hàng loạt</h1><p class="detail">Ảnh <b>Nhân vật</b> × <b>Sản phẩm</b> trong Thư viện → Claude / Codex viết kịch bản 3 cảnh × 8 giây (Hook → Demo → CTA) → Veo trên Google Flow tạo từng cảnh → duyệt bằng storyboard (chỉ tạo lại cảnh lỗi) → dựng MP4 1080×1920 + draft CapCut.</p></div>
+        <div class="short-run"><span id="shortState" class="detail"></span><button type="button" id="shortStart" class="primary">▶ Chạy</button><button type="button" id="shortStop" class="danger-outline" hidden>■ Dừng</button></div></div>
+      <div id="shortBlock" class="card short-block" hidden></div>
+      <div class="short-grid">
+        <section class="card short-box"><h3>Tạo lô mới</h3>
+          <p class="detail" id="shortLibInfo">Đổi nhóm ảnh trong <b>Thư viện Video &amp; Ảnh</b> thành Nhân vật / Sản phẩm để chọn ở đây.</p>
+          <div class="short-pair">
+            <label>Nhân vật<select id="shortChar"></select></label>
+            <label>Sản phẩm<select id="shortProd"></select></label>
+            <label>Số video<input id="shortCount" type="number" min="1" max="20" value="3"></label>
+          </div>
+          <div class="short-thumbs"><img id="shortCharImg" alt="" hidden><img id="shortProdImg" alt="" hidden></div>
+          <label>Ghi chú bối cảnh <small>(không bắt buộc)</small><input id="shortNote" maxlength="300" placeholder="Ví dụ: văn phòng buổi sáng, ánh nắng"></label>
+          <label>Brief sản phẩm <small>(không bắt buộc — không có brief thì video không nêu công dụng, giá, con số)</small><textarea id="shortBrief" rows="3" maxlength="20000" placeholder="Chỉ những tuyên bố được phép dùng, mỗi dòng một ý. Ví dụ: Giữ nóng 12 giờ"></textarea></label>
+          <div class="wf-row"><button type="button" id="shortAddPair">＋ Thêm cặp</button><label class="short-file">Nhập CSV<input type="file" id="shortCsv" accept=".csv,text/csv" hidden></label><button type="button" id="shortCsvOut">Xuất CSV</button></div>
+          <div id="shortPairs" class="short-pairs"></div>
+          <div class="wf-row"><input id="shortBatchName" maxlength="40" placeholder="Tên lô (vd sale-1118)"><button type="button" id="shortCreate" class="primary">Tạo lô</button></div>
+        </section>
+        <section class="card short-box"><h3>Cài đặt</h3>
+          <label>Mô hình Veo trên Flow<select id="shortModel"></select></label>
+          <label>Số lần tạo lại tối đa mỗi cảnh<input id="shortRetries" type="number" min="0" max="5"></label>
+          <label>Viết kịch bản &amp; duyệt bằng<select id="shortEngine"><option value="auto">Tự chọn (Claude trước)</option><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
+          <label>Thư mục thành phẩm<input id="shortExport"></label>
+          <label>Thư mục SFX riêng <small>(không bắt buộc; thư viện âm thanh của tool đã được dùng)</small><input id="shortSfx"></label>
+          <label>Link dự án Flow <small>(không bắt buộc — trống thì tạo dự án mới)</small><input id="shortProject" placeholder="https://flow.google.com/project/…"></label>
+          <label class="inline"><input id="shortWhoosh" type="checkbox"> Tự thêm tiếng whoosh khi chuyển cảnh</label>
+          <div class="wf-row"><button type="button" id="shortSave">Lưu cài đặt</button></div>
+          <p class="detail">Flow dùng cửa sổ Chrome riêng của tool (hồ sơ Google Flow — đăng nhập một lần trong Cài đặt). Gặp đăng nhập, CAPTCHA hay hết tín dụng: tool dừng và báo, không tự vượt.</p>
+        </section>
+      </div>
+      <section class="card short-jobs"><div class="board-head"><h2>Video</h2><small id="shortSummary"></small></div>
+        <div id="shortJobs"></div><input type="file" id="shortClipFile" accept="video/mp4,video/*" hidden></section>
+    </section>
     <section id="voiceView" class="voice-app" hidden aria-label="HanaMedia AI Voice">
       <aside class="va-nav">
         <div class="va-brand"><b>HanaMedia AI Voice</b><small>F5-TTS chạy trên máy · tài khoản được cấp quyền</small></div>

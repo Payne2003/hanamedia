@@ -122,6 +122,20 @@ class AppServer(ThreadingHTTPServer):
             raise ValueError("Chưa có API key Gemini. Vào Cài đặt → Gemini, bấm “Lấy API key”, dán khóa rồi bấm Lưu.")
         return gemini_api.GeminiAPISession(key, info["model"], info["thinking"], rpm=info["rpm"])
 
+    @property
+    def shorts(self):
+        """Short Veo hàng loạt (runner/hana_short): kịch bản + duyệt bằng Claude/Codex, tạo cảnh bằng Veo trên Flow."""
+        if self._shorts is None:
+            from runner import claude_bridge as bridge
+            from runner.flow import FlowImageSession, default_chrome_profile
+            from runner.hana_short.service import ShortStudio
+            store = self.store
+            self._shorts = ShortStudio(store, self.data_dir, lambda: store.setting("claude_folder") or bridge.default_folder(),
+                                       sounds=getattr(self.agents, "sounds", None),
+                                       open_session=lambda downloads: FlowImageSession(default_chrome_profile(self.data_dir),
+                                                                                       downloads))
+        return self._shorts
+
     def prepare_video(self, video):
         """Chép video vào input/ của thư mục HanaMedia (dọn dự án cũ), kèm điểm cắt + gói ảnh tool đo."""
         from runner import claude_bridge as bridge
@@ -216,6 +230,7 @@ class AppServer(ThreadingHTTPServer):
                                       store.setting("claude_folder") or _bridge.default_folder(), name, slug))
         from runner.voice import VoiceStudio
         self.voice = VoiceStudio(self.data_dir)  # AI Voice (F5-TTS trên máy) — chỉ máy Super Admin dùng
+        self._shorts = None  # Short Veo hàng loạt: tạo khi dùng lần đầu (xem property shorts)
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
         self.chatgpt_web.api_session = lambda: self.api_session("chatgpt")
         self.claude_web = claude_runner(self.data_dir / "profiles" / "claude-web")
@@ -834,7 +849,56 @@ class Handler(BaseHTTPRequestHandler):
     def features(self):
         owner = self.is_owner()
         return {"owner": owner, "ai_voice": owner or self.server.license.allows("ai_voice"),
-                "narration": owner or self.server.license.allows("narration")}
+                "narration": owner or self.server.license.allows("narration"),
+                "veo_short": owner or self.server.license.allows("veo_short")}
+
+    def short_action(self, path, body):
+        """Short Veo hàng loạt: thư viện Nhân vật × Sản phẩm → lô → chạy nền (Claude/Codex + Veo trên Flow) → thành phẩm."""
+        from runner.hana_short.jobs import JobError
+        from runner.hana_short.media import MediaError
+        if not self.can("veo_short"):
+            return self.reply({"error": "Tài khoản này chưa được cấp quyền Short Veo hàng loạt."}, 403)
+        shorts = self.server.shorts
+        try:
+            if path == "/api/short/status":
+                return self.reply(shorts.status())
+            if path == "/api/short/library":
+                return self.reply(shorts.library())
+            if path == "/api/short/create":
+                made = shorts.create(body.get("name"), body.get("rows"))
+                return self.reply(dict(shorts.status(), created=made))
+            if path == "/api/short/csv":
+                made = shorts.import_csv(body.get("name"), body.get("text"))
+                return self.reply(dict(shorts.status(), created=made))
+            if path == "/api/short/settings":
+                shorts.save_settings(body)
+                return self.reply(shorts.status())
+            if path == "/api/short/start":
+                return self.reply(shorts.start())
+            if path == "/api/short/stop":
+                return self.reply(shorts.stop())
+            if path == "/api/short/unblock":
+                shorts.unblock()
+                return self.reply(shorts.status())
+            if path == "/api/short/resolve":
+                shorts.resolve(str(body.get("job") or ""), str(body.get("scene") or ""), str(body.get("action") or ""),
+                               str(body.get("note") or "")[:300])
+                return self.reply(shorts.status())
+            if path == "/api/short/delete":
+                shorts.delete(str(body.get("job") or ""))
+                return self.reply(shorts.status())
+            if path == "/api/short/open":
+                target = shorts.file(str(body.get("job") or ""), str(body.get("kind") or "folder"))
+                if not target:
+                    raise JobError("Chưa có thành phẩm.")
+                if body.get("kind") == "final":
+                    reveal_file(target)
+                elif not open_folder(Path(target)):
+                    raise JobError("Không mở được thư mục: " + str(target))
+                return self.reply({"ok": True})
+        except (JobError, MediaError, ValueError, OSError) as error:
+            return self.reply({"error": str(error)[:500]}, 400)
+        return self.reply({"error": "Không tìm thấy."}, 404)
 
     def workflow_action(self, path, body):
         from runner.workflows import WorkflowError
@@ -1172,6 +1236,20 @@ class Handler(BaseHTTPRequestHandler):
                 item, duplicate = self.server.agents.sounds.add(self.rfile.read(size), unquote(self.headers.get("X-Sound-Name", "")),
                                                                 unquote(self.headers.get("X-Sound-Tags", "")))
                 return self.reply({"ok": True, "duplicate": duplicate, "sound": item})
+            if path == "/api/short/import-clip":
+                if not self.can("veo_short"):
+                    return self.reply({"error": "Tài khoản này chưa được cấp quyền Short Veo hàng loạt."}, 403)
+                from runner.hana_short.jobs import JobError
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 500 * 1024 * 1024:
+                    raise ValueError("File clip trống hoặc lớn hơn 500 MB.")
+                try:
+                    clip = self.server.shorts.import_clip(unquote(self.headers.get("X-Short-Job", "")),
+                                                          unquote(self.headers.get("X-Short-Scene", "")),
+                                                          self.rfile.read(size), unquote(self.headers.get("X-Short-File", "")))
+                except JobError as error:
+                    return self.reply({"error": str(error)}, 400)
+                return self.reply({"ok": True, "clip": clip})
             if path == "/api/voice/upload":
                 if not self.can("ai_voice"):
                     return self.reply({"error": "Tài khoản này chưa được cấp quyền AI Voice."}, 403)
@@ -1540,6 +1618,8 @@ class Handler(BaseHTTPRequestHandler):
                 saved.write_text(json.dumps(plugin, ensure_ascii=False), encoding="utf-8")
                 content.set_plugin(plugin)
                 return self.reply({"ok": True, "plugin": self.server.plugin_public()})
+            elif path.startswith("/api/short/"):
+                return self.short_action(path, body)
             elif path == "/api/features":
                 return self.reply(self.features())
             elif path.startswith("/api/claude/"):
