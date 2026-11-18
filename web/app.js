@@ -1407,7 +1407,8 @@ function renderSettings(force){
   $('sharedBadge').textContent=shared.enabled?(shared.login_open?'Cửa sổ đăng nhập đang mở':shared.profile_used?'✓ Đang bật':'Đang bật · chưa đăng nhập'):'Đang tắt';
   $('sharedBadge').className='status-chip '+(shared.enabled?(shared.profile_used?'approved':'review'):'');
   $('sharedLogin').hidden=$('sharedHint').hidden=!shared.enabled;
-  $('sharedAccount').closest('.shared-card').hidden=!shared.enabled;  // Gemini chỉ dùng API: thẻ tài khoản chung chỉ hiện khi đang bật$('sharedLogin').disabled=Boolean(shared.login_open);
+  $('sharedAccount').closest('.shared-card').hidden=true;  // đã bỏ thẻ Tài khoản chung khỏi Cài đặt (chế độ đang bật vẫn giữ nguyên)
+  // Gemini chỉ dùng API: thẻ tài khoản chung chỉ hiện khi đang bật$('sharedLogin').disabled=Boolean(shared.login_open);
   for(const id of ['loginAuto','loginChatgpt']){$(id).textContent=shared.enabled?'Đăng nhập bằng tài khoản chung (ở trên)':{loginAuto:'Đăng nhập Google · Gemini (mở Chrome thường)',loginChatgpt:'Đăng nhập ChatGPT'}[id];}
   const seen=web.account?.logged_in?(web.account.email||'đã đăng nhập'):'';
   {const g=state.content.api||{};  // Gemini chỉ chạy bằng API key
