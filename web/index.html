@@ -19,7 +19,7 @@
       <button type="button" data-nav="short" id="navShort" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg></i>Short Veo hàng loạt</button>
       <button type="button" id="navNarration" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-film"/></svg></i>Thoại phim</button>
       <button type="button" data-nav="voice" id="navVoice" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-message"/></svg></i>AI Voice</button>
-      <button type="button" data-nav="content" id="openContent"><i><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg></i>Content Studio</button>
+      <button type="button" data-nav="content" id="openContent" hidden><i><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg></i>Content Studio</button>
       <button type="button" data-nav="media" id="openLibrary"><i><svg class="ic" aria-hidden="true"><use href="#i-images"/></svg></i>Thư viện Video &amp; Ảnh</button>
       <button type="button" id="accountsButton"><i><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg></i>Tài khoản Muse <b id="accountCount" class="nav-badge">0</b></button>
       <button type="button" data-nav="license" id="navLicense"><i><svg class="ic" aria-hidden="true"><use href="#i-key"/></svg></i>Bản quyền</button>
@@ -430,7 +430,7 @@
           <button id="sharedLogin" type="button" class="full primary" hidden>Đăng nhập tài khoản chung (mở Chrome thường)</button>
           <p class="detail" id="sharedHint" hidden><b>Cách đăng nhập:</b> cửa sổ mở 3 tab. Tab 1 đăng nhập Google; tab 2 ChatGPT bấm <b>Continue with Google</b> và chọn đúng tài khoản. Xong thì <b>đóng hẳn cửa sổ đó</b>. Đổi sang tài khoản chung lần đầu cần đăng nhập lại một lần; hồ sơ riêng cũ vẫn giữ để tắt chế độ này là dùng lại được.</p>
         </div>
-        <div class="card settings-card ai-card"><div class="settings-head"><span class="settings-icon">G</span><div><h3>Gemini</h3><small>Phân tích video, chia cảnh, tìm nhân vật · chạy bằng API key</small></div><span id="geminiBadge" class="status-chip">Chưa có API key</span></div>
+        <div class="card settings-card ai-card" hidden><div class="settings-head"><span class="settings-icon">G</span><div><h3>Gemini</h3><small>Phân tích video, chia cảnh, tìm nhân vật · chạy bằng API key</small></div><span id="geminiBadge" class="status-chip">Chưa có API key</span></div>
           <div class="content-grid" hidden><label>Tài khoản Google<input id="autoEmail" type="email" maxlength="254"></label><label>Model<input id="autoModel" list="autoModels" maxlength="40"><datalist id="autoModels"><option value="Pro"><option value="Flash"></datalist></label></div>
           <div id="geminiApiBox" class="ai-body">
             <section class="ai-section">
@@ -452,7 +452,7 @@
           </div>
           <div id="geminiApiWebBox" hidden><button id="loginAuto" type="button" hidden>Đăng nhập Gemini</button></div>
         </div>
-        <div class="card settings-card ai-card"><div class="settings-head"><span class="settings-icon">AI</span><div><h3>Viết prompt tiếng Anh</h3><small>Chọn AI viết và kiểm duyệt prompt cho Muse</small></div><span id="chatgptBadge" class="status-chip">Chưa kiểm tra</span></div>
+        <div class="card settings-card ai-card" hidden><div class="settings-head"><span class="settings-icon">AI</span><div><h3>Viết prompt tiếng Anh</h3><small>Chọn AI viết và kiểm duyệt prompt cho Muse</small></div><span id="chatgptBadge" class="status-chip">Chưa kiểm tra</span></div>
           <div class="ai-body">
             <div class="ai-choices" role="radiogroup" aria-label="Viết prompt bằng">
               <label><input type="radio" name="promptProvider" value="gemini"><span class="ai-choice-icon">G</span><span><b>Gemini API</b><small>Miễn phí · dùng chung khóa ở thẻ Gemini</small></span></label>
