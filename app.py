@@ -461,9 +461,13 @@ class Handler(BaseHTTPRequestHandler):
                     raise MediaError("File trống.")
                 if size > limits["max_file_mb"] * 1024 * 1024:
                     raise MediaError(f"Ảnh vượt quá {limits['max_file_mb']} MB.")
-                category = self.headers.get("X-Media-Category") or "reference"
+                chosen = self.headers.get("X-Media-Category") or ""
+                category = chosen or "reference"
                 item, duplicate = media.add_image(self.rfile.read(size), unquote(self.headers.get("X-Image-Name", "Ảnh")),
                                                   category=category)
+                if duplicate and chosen and item.get("category") != chosen:
+                    # ảnh đã có sẵn (trùng nội dung) nhưng người dùng đang tải vào nhóm khác → chuyển sang nhóm đó
+                    item = media.update(item["id"], {"category": chosen})
                 return self.reply({"ok": True, "duplicate": duplicate, "item": item,
                                    "token": item["id"], "type": item["mime_type"], "name": item["display_name"]})
             if self.headers.get_content_type() != "application/json":

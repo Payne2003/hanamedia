@@ -297,6 +297,20 @@ class MediaHTTPTests(MediaBase):
         self.assertEqual((status, [i["id"] for i in listing["items"]], listing["totals"]["image"]), (200, [media_id], 1))
         self.assertEqual(json.loads(self.request("GET", "/api/library")[2])["images"][0]["token"], media_id)
 
+    def test_upload_into_the_open_category_and_move_duplicates(self):
+        status, _, body = self.request("POST", "/api/media/upload", png(seed=b"nv"),
+                                       {"X-Image-Name": quote("Linh.png"), "Content-Type": "image/png",
+                                        "X-Media-Category": "character"})
+        item = json.loads(body)["item"]
+        self.assertEqual((status, item["category"]), (200, "character"))
+        status, data = self.upload(png(seed=b"sp"), "Coc.png")  # không chọn nhóm → Tham chiếu như cũ
+        self.assertEqual(data["item"]["category"], "reference")
+        status, _, body = self.request("POST", "/api/media/upload", png(seed=b"sp"),
+                                       {"X-Image-Name": quote("Coc.png"), "Content-Type": "image/png",
+                                        "X-Media-Category": "product"})
+        again = json.loads(body)
+        self.assertEqual((again["duplicate"], again["item"]["category"]), (True, "product"))  # ảnh trùng → đổi nhóm
+
     def test_upload_twenty_images_in_parallel(self):
         with ThreadPoolExecutor(5) as pool:
             results = list(pool.map(lambda i: self.upload(png(seed=f"anh-{i}".encode()), f"Ảnh {i}.png"), range(20)))
