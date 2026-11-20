@@ -1072,6 +1072,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def voice_action(self, path, body):
         from runner.voice import VoiceError
+
+        def sounds_list():
+            sounds = getattr(self.server.agents, "sounds", None)
+            return [{"id": x["id"], "name": x["name"], "tags": x["tags"]} for x in sounds.list()] if sounds else []
+
+        def audio_extra(data):
+            """Nhạc nền (từ thư viện âm thanh của tool) + chuẩn hoá −16 LUFS cho tác vụ AI Voice."""
+            extra = {"normalize": data.get("normalize") is not False}
+            music_id = str(data.get("music_id") or "")
+            if music_id:
+                try:
+                    extra["music"] = str(self.server.agents.sounds.path(music_id))
+                except (ValueError, OSError, AttributeError):
+                    raise VoiceError("Không tìm thấy nhạc nền trong thư viện âm thanh.") from None
+                extra["music_volume"] = max(0.0, min(1.0, float(data.get("music_volume") if data.get("music_volume") is not None else .12)))
+            else:
+                extra["music"] = ""
+            return extra
+
         if not self.can("ai_voice"):
             return self.reply({"error": "Tài khoản này chưa được cấp quyền AI Voice."}, 403)
         voice = self.server.voice
@@ -1094,13 +1113,22 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/voice/create":
                 return self.reply({"job": voice.create_job(str(body.get("profile")), body.get("text"), body.get("title"),
                                                           body.get("format"), body.get("speed") or 1.0, body.get("split"),
-                                                          body.get("gap"), body.get("nfe"))})
+                                                          body.get("gap"), body.get("nfe"), extra=audio_extra(body))})
             if path == "/api/voice/batch":
                 return self.reply(voice.create_batch(str(body.get("profile")), body.get("text"), body.get("title"), body.get("format"),
                                                      body.get("speed") or 1.0, body.get("gap"), body.get("nfe"),
-                                                     str(body.get("group") or "") or None, body.get("start") is True))
+                                                     str(body.get("group") or "") or None, body.get("start") is True,
+                                                     extra=audio_extra(body)))
             if path == "/api/voice/start-group":
-                return self.reply({"started": voice.start_group(str(body.get("group")), body.get("settings") or {})})
+                settings = body.get("settings") or {}
+                settings = dict(settings, **audio_extra(settings)) if isinstance(settings, dict) else {}
+                return self.reply({"started": voice.start_group(str(body.get("group")), settings)})
+            if path == "/api/voice/presets":
+                return self.reply({"presets": voice.presets(), "sounds": sounds_list()})
+            if path == "/api/voice/save-preset":
+                return self.reply({"presets": voice.save_preset(body)})
+            if path == "/api/voice/delete-preset":
+                return self.reply({"presets": voice.delete_preset(str(body.get("id") or ""))})
             if path == "/api/voice/edit":
                 return self.reply({"job": voice.edit(str(body.get("id")), body.get("text"), body.get("name"))})
             if path == "/api/voice/normalize":
@@ -1317,7 +1345,8 @@ class Handler(BaseHTTPRequestHandler):
                     profile = self.server.voice.add_profile(self.rfile.read(size), unquote(self.headers.get("X-Voice-File", "")),
                                                             unquote(self.headers.get("X-Voice-Name", "")),
                                                             unquote(self.headers.get("X-Voice-Text", "")),
-                                                            self.headers.get("X-Voice-Consent") == "1")
+                                                            self.headers.get("X-Voice-Consent") == "1",
+                                                            clean=self.headers.get("X-Voice-Clean") != "0")
                 except VoiceError as error:
                     return self.reply({"error": str(error)}, 400)
                 return self.reply({"ok": True, "profile": profile})

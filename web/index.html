@@ -159,6 +159,7 @@
                 <label class="va-dropbox" id="vaVoiceDrop"><input id="vaVoiceFile" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,.webm,audio/*" hidden><span class="vc-drop-icon">⬆</span><b>Kéo thả hoặc bấm để chọn file</b><small id="vaVoiceFileName">WAV, MP3, M4A, FLAC · 5–12 giây</small></label>
                 <audio id="vaVoiceLocal" controls preload="metadata" hidden></audio></div></div>
               <div class="vc-step"><span class="vc-num">3</span><div class="vc-step-body"><b>Lời mẫu <em>khuyên dùng</em></b><small class="vc-hint">Gõ đúng từng chữ trong đoạn mẫu — tạo nhanh và giống giọng hơn. Để trống thì engine tự nhận dạng (một lần).</small><textarea id="vaVoiceText" rows="3" maxlength="1000" placeholder="Xin chào, hôm nay chúng ta cùng khám phá…"></textarea></div></div>
+              <label class="voice-consent vc-consent"><input id="vaVoiceClean" type="checkbox" checked> <b>Lọc ồn &amp; tự chọn đoạn 8–12 giây rõ nhất</b> — tải file dài cũng được, tool tự cắt đúng chỗ ngắt.</label>
               <label class="voice-consent vc-consent"><input id="vaVoiceConsent" type="checkbox"> Tôi xác nhận đây là giọng của tôi hoặc đã được chủ giọng đồng ý cho nhân bản.</label>
               <button type="button" id="vaVoiceSave" class="vc-save">✦ Lưu hồ sơ giọng</button>
             </div>
@@ -173,6 +174,7 @@
       <aside class="va-side">
         <div class="va-tabs"><button type="button" data-vtab="settings" class="active">⚙ Cài đặt</button><button type="button" data-vtab="history">🕘 Lịch sử</button></div>
         <div class="va-tab" id="vaSettings">
+          <div class="va-field va-presets">Mẫu cài đặt<div class="va-voice-pick"><select id="vaPreset"><option value="">— Chọn mẫu —</option></select><button type="button" id="vaPresetSave" title="Lưu cài đặt hiện tại thành mẫu">💾</button><button type="button" id="vaPresetDel" title="Xóa mẫu đang chọn">🗑</button></div></div>
           <label class="va-field">Mô hình<div class="va-model">⚡ F5-TTS <small id="vaModelName">trên máy</small></div></label>
           <label class="va-field">Chọn giọng nói<div class="va-voice-pick"><select id="vaVoice"></select><button type="button" id="vaVoicePlay" title="Nghe giọng mẫu">▶</button></div></label>
           <audio id="vaPreview" preload="none" hidden></audio>
@@ -180,6 +182,9 @@
           <div class="va-slider"><span>Chất lượng (bước suy luận): <b id="vaNfeVal">32</b></span><input type="range" id="vaNfe" min="16" max="64" step="8" value="32"><small><i>Nhanh hơn</i><i>Kỹ hơn</i></small></div>
           <div class="va-slider"><span>Khoảng nghỉ giữa câu: <b id="vaGapVal">0.28s</b></span><input type="range" id="vaGap" min="0" max="1.5" step="0.02" value="0.28"><small><i>Liền mạch</i><i>Chậm rãi</i></small></div>
           <div class="va-field">Định dạng<div class="va-seg" id="vaFormat"><button type="button" data-fmt="mp3" class="active">MP3</button><button type="button" data-fmt="wav">WAV</button></div></div>
+          <label class="va-field">Nhạc nền<select id="vaMusic"><option value="">Không có nhạc nền</option></select></label>
+          <div class="va-slider" id="vaMusicVolBox"><span>Âm lượng nhạc nền: <b id="vaMusicVolVal">12%</b></span><input type="range" id="vaMusicVol" min="0" max="0.5" step="0.01" value="0.12"><small><i>Nhỏ</i><i>To</i></small></div>
+          <label class="va-check"><input id="vaNormalize" type="checkbox" checked> <span><b>Chuẩn hoá âm lượng −16 LUFS</b><small>Mức YouTube / TikTok dùng: các câu đều nhau, không chỗ to chỗ nhỏ.</small></span></label>
           <button type="button" id="vaReset" class="text-button va-reset">↺ Đặt lại giá trị</button>
           <details class="va-engine-box" id="voiceEngine"><summary>AI Engine &amp; checkpoint <span id="voiceEngineChip" class="status-chip">—</span></summary>
             <dl class="voice-facts" id="voiceFacts"></dl>

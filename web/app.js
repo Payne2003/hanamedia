@@ -995,9 +995,9 @@ setInterval(()=>{if(!$('agentsView').hidden)loadNarration();},5000);
 $('agentsCommand').onclick=()=>navigator.clipboard.writeText((wf.owner&&currentWf()?.command)||'Chạy hanamedia-wildlife-workflow').then(()=>toast('Đã chép lệnh. Dán vào Claude desktop hoặc Codex (mở thư mục HanaMedia).')).catch(()=>toast('Chép không được.',true));
 // ---- HanaMedia AI Voice (F5-TTS trên máy, chỉ máy Super Admin): văn bản → giọng nói, nhân bản giọng ----
 let voiceData=null,voiceTimer=null;
-const VA_DEFAULT={speed:1,nfe:32,gap:.28,format:'mp3',split:'sentence',voice:''};
+const VA_DEFAULT={speed:1,nfe:32,gap:.28,format:'mp3',split:'sentence',voice:'',music_id:'',music_volume:.12,normalize:true};
 const va={...VA_DEFAULT,...(()=>{try{return JSON.parse(localStorage.getItem('va.settings')||'{}');}catch{return {};}})(),pane:'tts',group:null,editing:null};
-function vaSave(){try{localStorage.setItem('va.settings',JSON.stringify({speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format,split:va.split,voice:va.voice}));}catch{}}
+function vaSave(){try{localStorage.setItem('va.settings',JSON.stringify({speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format,split:va.split,voice:va.voice,music_id:va.music_id,music_volume:va.music_volume,normalize:va.normalize}));}catch{}}
 let features={owner:false,ai_voice:false,narration:false};
 async function checkVoiceOwner(){try{features=await api('/api/features',{});}catch{features={owner:false,ai_voice:false,narration:false};}
   $('navVoice').hidden=!features.ai_voice;$('navNarration').hidden=!features.narration;$('navShort').hidden=true;}
@@ -1008,7 +1008,7 @@ $('navNarration').onclick=async()=>{wf.slug='thoai-phim';try{localStorage.setIte
   setTimeout(()=>{markNarrationNav();$('nrPanel').open=true;$('nrPanel').scrollIntoView({behavior:'smooth',block:'start'});},600);};
 setTimeout(checkVoiceOwner,2500);
 async function loadVoice(){try{voiceData=await api('/api/voice/status',{});renderVoice();}catch(error){$('vaEngineText').textContent=error.message;}}
-function openVoice(){api('/api/voice/warm',{}).then(r=>{if(r.started)toast('Đang nạp sẵn mô hình giọng nói ở nền…');}).catch(()=>{});loadVoice();clearInterval(voiceTimer);voiceTimer=setInterval(()=>{if(!$('voiceView').hidden)loadVoice();},2500);renderVaControls();}
+function openVoice(){vaLoadPresets();api('/api/voice/warm',{}).then(r=>{if(r.started)toast('Đang nạp sẵn mô hình giọng nói ở nền…');}).catch(()=>{});loadVoice();clearInterval(voiceTimer);voiceTimer=setInterval(()=>{if(!$('voiceView').hidden)loadVoice();},2500);renderVaControls();}
 function closeVoice(){clearInterval(voiceTimer);voiceTimer=null;}
 const VA_STATUS={draft:['Sẵn sàng',''],waiting:['Chờ',''],running:['Đang tạo','running'],done:['Xong','done'],error:['Lỗi','error']};
 function fmtSec(s){s=Math.round(s||0);return s>=3600?`${Math.floor(s/3600)}:${String(Math.floor(s%3600/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`:`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;}
@@ -1019,13 +1019,15 @@ function vaShow(pane){va.pane=pane;$('vaEditor').hidden=pane!=='tts';$('vaProjec
 function renderVaControls(){
   $('vaSpeed').value=va.speed;$('vaSpeedVal').textContent=Number(va.speed).toFixed(2);$('vaNfe').value=va.nfe;$('vaNfeVal').textContent=va.nfe;
   $('vaGap').value=va.gap;$('vaGapVal').textContent=`${Number(va.gap).toFixed(2)}s`;
+  if([...$('vaMusic').options].some(o=>o.value===va.music_id))$('vaMusic').value=va.music_id;$('vaMusicVol').value=va.music_volume;$('vaMusicVolVal').textContent=`${Math.round(va.music_volume*100)}%`;
+  $('vaMusicVolBox').hidden=!va.music_id;$('vaNormalize').checked=va.normalize!==false;
   document.querySelectorAll('#vaFormat [data-fmt]').forEach(b=>b.classList.toggle('active',b.dataset.fmt===va.format));
   document.querySelectorAll('.va-split [data-split]').forEach(b=>b.classList.toggle('active',b.dataset.split===va.split));
   $('vaGenerate').textContent=va.split==='line'?'☰ Tạo dự án (mỗi dòng 1 file)':'✦ Tạo giọng nói';
   vaCount();
 }
 function vaCount(){const t=$('vaText').value,lines=t.split('\n').filter(x=>x.trim()).length;$('vaCount').textContent=`${t.length.toLocaleString('vi-VN')} ký tự${va.split==='line'?` · ${lines} dòng`:` · ~${Math.max(1,Math.round(t.length/900))} phút đọc`}`;}
-function vaSettings(){return {profile:va.voice,speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format};}
+function vaSettings(){return {profile:va.voice,speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format,music_id:va.music_id,music_volume:va.music_volume,normalize:va.normalize};}
 function renderVoice(){
   const d=voiceData;if(!d)return;const st=d.status,cfg=st.config,ins=st.install;
   // engine
@@ -1074,7 +1076,7 @@ document.querySelectorAll('.va-tabs [data-vtab]').forEach(b=>b.onclick=()=>{docu
 document.querySelectorAll('.va-split [data-split]').forEach(b=>b.onclick=()=>{va.split=b.dataset.split;vaSave();renderVaControls();});
 document.querySelectorAll('#vaFormat [data-fmt]').forEach(b=>b.onclick=()=>{va.format=b.dataset.fmt;vaSave();renderVaControls();});
 for(const [id,key,parse] of [['vaSpeed','speed',Number],['vaNfe','nfe',Number],['vaGap','gap',Number]])$(id).oninput=e=>{va[key]=parse(e.target.value);vaSave();renderVaControls();};
-$('vaReset').onclick=()=>{Object.assign(va,{speed:1,nfe:32,gap:.28,format:'mp3'});vaSave();renderVaControls();};
+$('vaReset').onclick=()=>{Object.assign(va,{speed:1,nfe:32,gap:.28,format:'mp3',music_id:'',music_volume:.12,normalize:true});$('vaPreset').value='';vaSave();renderVaControls();};
 $('vaVoice').onchange=e=>{va.voice=e.target.value;vaSave();renderVoice();};
 $('vaVoicePlay').onclick=()=>{if(!va.voice)return toast('Chưa có giọng.',true);const a=$('vaPreview');a.src=`/api/voice/ref/${va.voice}`;a.play().catch(()=>{});};
 $('vaText').oninput=vaCount;
@@ -1114,7 +1116,7 @@ $('vaVoiceDrop').ondragover=e=>{e.preventDefault();$('vaVoiceDrop').classList.ad
 $('vaVoiceDrop').ondrop=e=>{e.preventDefault();$('vaVoiceDrop').classList.remove('drag');if(e.dataTransfer.files[0]){const dt=new DataTransfer();dt.items.add(e.dataTransfer.files[0]);$('vaVoiceFile').files=dt.files;$('vaVoiceFile').onchange({target:$('vaVoiceFile')});}};
 $('vaVoiceSave').onclick=async()=>{const file=$('vaVoiceFile').files[0];if(!file)return toast('Chọn file giọng mẫu.',true);if(!$('vaVoiceConsent').checked)return toast('Cần tick xác nhận quyền dùng giọng.',true);
   const b=$('vaVoiceSave');b.disabled=true;
-  try{const r=await fetch('/api/voice/upload',{method:'POST',headers:{'X-Runner-Key':key,'Content-Type':'application/octet-stream','X-Voice-File':encodeURIComponent(file.name),'X-Voice-Name':encodeURIComponent($('vaVoiceName').value),'X-Voice-Text':encodeURIComponent($('vaVoiceText').value),'X-Voice-Consent':'1'},body:file});
+  try{const r=await fetch('/api/voice/upload',{method:'POST',headers:{'X-Runner-Key':key,'Content-Type':'application/octet-stream','X-Voice-File':encodeURIComponent(file.name),'X-Voice-Name':encodeURIComponent($('vaVoiceName').value),'X-Voice-Text':encodeURIComponent($('vaVoiceText').value),'X-Voice-Consent':'1','X-Voice-Clean':$('vaVoiceClean').checked?'1':'0'},body:file});
     const d=await r.json();if(!r.ok)throw Error(d.error||'Không lưu được giọng.');va.voice=d.profile.id;vaSave();toast(`Đã lưu giọng “${d.profile.name}” (${d.profile.seconds}s) và chọn làm giọng đọc.`);
     $('vaVoiceName').value='';$('vaVoiceText').value='';$('vaVoiceFile').value='';$('vaVoiceConsent').checked=false;vaLocalPreview(null);loadVoice();}
   catch(error){toast(error.message,true);}finally{b.disabled=false;}};
@@ -2206,3 +2208,22 @@ window.addEventListener('focus',()=>{if(!$('shortView').hidden)loadShortLib();})
 $('nrAuto').onchange=e=>{const on=e.target.checked;if(on&&!$('nrProfile').value){e.target.checked=false;return toast('Chọn giọng đọc trước (nhân bản giọng trong AI Voice).',true);}
   nrCall('/api/narration/auto',{enabled:on,profile:$('nrProfile').value,settings:{speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format}},()=>toast(on?'Đã bật tự động: bài thoại mới sẽ tự đọc và tự ghép vào video.':'Đã tắt tự động.'));};
 $('nrProfile').addEventListener('change',()=>{if($('nrAuto').checked)nrCall('/api/narration/auto',{enabled:true,profile:$('nrProfile').value,settings:{speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format}});});
+
+// ---- AI Voice: mẫu cài đặt (preset) + nhạc nền + chuẩn hoá âm lượng ----
+let vaPresets=[];
+async function vaLoadPresets(){try{const r=await api('/api/voice/presets',{});vaPresets=r.presets;
+  const keep=$('vaPreset').value;$('vaPreset').innerHTML='<option value="">— Chọn mẫu —</option>'+vaPresets.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');if(vaPresets.some(p=>p.id===keep))$('vaPreset').value=keep;
+  $('vaMusic').innerHTML='<option value="">Không có nhạc nền</option>'+r.sounds.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}${x.tags?` · ${esc(x.tags)}`:''}</option>`).join('');
+  if(va.music_id&&!r.sounds.some(x=>x.id===va.music_id))va.music_id='';renderVaControls();}catch{}}
+$('vaPreset').onchange=()=>{const p=vaPresets.find(x=>x.id===$('vaPreset').value);if(!p)return;
+  Object.assign(va,{speed:p.speed,nfe:p.nfe,gap:p.gap,format:p.format,split:p.split||va.split,music_id:p.music_id||'',music_volume:p.music_volume??.12,normalize:p.normalize!==false});
+  if(p.voice&&voiceData?.profiles?.some(v=>v.id===p.voice))va.voice=p.voice;vaSave();renderVaControls();try{renderVoice();}catch{}toast(`Đã áp dụng mẫu “${p.name}”.`);};
+$('vaPresetSave').onclick=async()=>{const cur=vaPresets.find(x=>x.id===$('vaPreset').value);const name=prompt('Tên mẫu cài đặt (vd Kể chuyện động vật):',cur?.name||'');if(!name||!name.trim())return;
+  const id=cur&&cur.name===name.trim()?cur.id:'';
+  try{const r=await api('/api/voice/save-preset',{id,name:name.trim(),voice:va.voice,speed:va.speed,gap:va.gap,nfe:va.nfe,format:va.format,split:va.split,music_id:va.music_id,music_volume:va.music_volume,normalize:va.normalize});
+    vaPresets=r.presets;const saved=vaPresets.find(p=>p.name===name.trim());await vaLoadPresets();if(saved)$('vaPreset').value=saved.id;toast('Đã lưu mẫu cài đặt.');}catch(e){toast(e.message,true);}};
+$('vaPresetDel').onclick=async()=>{const id=$('vaPreset').value;if(!id)return toast('Chọn mẫu cần xóa.',true);if(!confirm('Xóa mẫu cài đặt này?'))return;
+  try{await api('/api/voice/delete-preset',{id});await vaLoadPresets();$('vaPreset').value='';}catch(e){toast(e.message,true);}};
+$('vaMusic').onchange=()=>{va.music_id=$('vaMusic').value;vaSave();renderVaControls();};
+$('vaMusicVol').oninput=()=>{va.music_volume=Number($('vaMusicVol').value);vaSave();renderVaControls();};
+$('vaNormalize').onchange=()=>{va.normalize=$('vaNormalize').checked;vaSave();};
