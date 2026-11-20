@@ -145,6 +145,27 @@ class AppServer(ThreadingHTTPServer):
             release()
         return FlowImageSession(self.flow_profile(), downloads)
 
+    def narration_auto_settings(self):
+        saved = self.store.setting("narration_auto") or {}
+        return saved if isinstance(saved, dict) else {}
+
+    def narration_auto_loop(self):
+        """Thoại phim tự động: bài thoại mới → AI Voice đọc ngay → đọc xong → ghép vào video (chạy nền, 15 giây một lần)."""
+        from runner import narration
+        while True:
+            time.sleep(15)
+            try:
+                auto = self.narration_auto_settings()
+                if not auto.get("enabled") or not auto.get("profile"):
+                    continue
+                context = self.license.issuer_context()
+                if not ((context and context["mode"] == "root") or self.license.allows("narration")):
+                    continue
+                settings = dict(auto.get("settings") or {}, profile=auto["profile"])
+                narration.auto_step(self.workflows.home, self.voice, settings, float(auto.get("since") or 0))
+            except Exception:
+                continue  # không để luồng nền chết
+
     def flow_profile(self):
         """Hồ sơ Chrome đang dùng cho Google Flow: tài khoản Google chung (nếu bật) hoặc hồ sơ google-flow riêng."""
         from runner.flow import default_chrome_profile
@@ -240,14 +261,14 @@ class AppServer(ThreadingHTTPServer):
         from runner.autorun import AutoRunner
         # Gửi video là tự chạy workflow bằng Claude Code / Codex trên máy này (máy chủ lẫn máy khách)
         self.autorun = AutoRunner(self.workflows, self.prepare_video, lambda: store.setting("claude_engine") or "auto",
-                                  show_window=lambda: store.setting("claude_window", True) is not False
-                                  and store.setting("claude_chat", True) is False,
-                                  chat=lambda: store.setting("claude_chat", True) is not False,
+                                  show_window=lambda: False,
+                                  chat=lambda: True,  # đã bỏ chế độ chạy ngầm: luôn mở cửa sổ trò chuyện Claude / Codex
                                   done=lambda slug, name: _bridge.project_done(
                                       store.setting("claude_folder") or _bridge.default_folder(), name, slug))
         from runner.voice import VoiceStudio
         self.voice = VoiceStudio(self.data_dir)  # AI Voice (F5-TTS trên máy) — chỉ máy Super Admin dùng
         self._shorts = None  # Short Veo hàng loạt: tạo khi dùng lần đầu (xem property shorts)
+        threading.Thread(target=self.narration_auto_loop, daemon=True).start()
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
         self.chatgpt_web.api_session = lambda: self.api_session("chatgpt")
         self.claude_web = claude_runner(self.data_dir / "profiles" / "claude-web")
@@ -993,10 +1014,25 @@ class Handler(BaseHTTPRequestHandler):
         def status():
             flows.ensure_default()
             return {"genres": narration.genres(home), "brief": flows.brief(SLUG), "languages": narration.LANGUAGES,
-                    "results": narration.results(home, voice.jobs()),
+                    "results": narration.results(home, voice.jobs()), "auto": self.server.narration_auto_settings(),
+                    "voice_installed": voice.installed(),
                     "profiles": [{"id": p["id"], "name": p["name"]} for p in voice.profiles()]}
         try:
             if path == "/api/narration/status":
+                return self.reply(status())
+            if path == "/api/narration/auto":
+                enabled = body.get("enabled") is not False
+                profile = str(body.get("profile") or "")
+                if enabled:
+                    if not profile:
+                        raise narration.NarrationError("Chọn giọng đọc trước khi bật tự động.")
+                    voice.profile(profile)
+                cur = self.server.narration_auto_settings()
+                settings = body.get("settings") if isinstance(body.get("settings"), dict) else {}
+                record = {"enabled": enabled, "profile": profile or cur.get("profile", ""),
+                          "settings": {k: settings.get(k) for k in ("speed", "nfe", "gap", "format") if settings.get(k) is not None},
+                          "since": cur.get("since") if cur.get("enabled") and enabled else (time.time() if enabled else 0)}
+                self.server.store.save_setting("narration_auto", record)
                 return self.reply(status())
             if path == "/api/narration/brief":
                 genre = str(body.get("genre") or "")

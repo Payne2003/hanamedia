@@ -115,5 +115,41 @@ class NarrationTests(unittest.TestCase):
         self.assertEqual(narration.results(self.home, studio.jobs())[0]["muxed"], str(output))
 
 
+    def test_auto_reads_and_muxes_new_narration(self):
+        import os
+        import time
+        try:
+            video.ffmpeg()
+        except Exception:
+            self.skipTest("không có ffmpeg")
+        (self.home / "input").mkdir(parents=True)
+        done = video.run([video.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=25:duration=6",
+                          "-f", "lavfi", "-i", "sine=frequency=220:duration=6", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                          "-c:a", "aac", "-shortest", str(self.home / "input" / "tu.mp4")], 120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        path = self.write("tu", [{"start": 0.5, "end": 2, "text": "Một."}, {"start": 3, "end": 5, "text": "Hai."}])
+        old = time.time() - 60
+        os.utime(path, (old, old))
+        studio = FakeStudio(self.base / "data")
+        sample = self.base / "s.wav"
+        tone(sample, 5)
+        profile = studio.add_profile(sample.read_bytes(), "s.wav", "P", "lời", consent=True)
+        settings = {"profile": profile["id"], "format": "wav"}
+        self.assertEqual(narration.auto_step(self.home, studio, settings, since=time.time()), [])  # bài cũ hơn lúc bật
+        made = narration.auto_step(self.home, studio, settings, since=old - 1)
+        self.assertIn("Đã tạo giọng", made[0])
+        group = narration.link(path)["group"]
+        rows = [j for j in studio.jobs() if j.get("group") == group]
+        self.assertEqual({j["status"] for j in rows}, {"waiting"})  # đọc luôn, không để nháp
+        for job in sorted(rows, key=lambda j: j["index"]):
+            studio.process(job["id"])
+        made = narration.auto_step(self.home, studio, settings, since=old - 1)
+        self.assertIn("Đã ghép", made[0])
+        self.assertTrue((path.parent / "tu_thoai.mp4").is_file())
+        self.assertEqual(narration.auto_step(self.home, studio, settings, since=old - 1), [])  # không ghép lại
+        item = narration.results(self.home, studio.jobs())[0]
+        self.assertTrue(item["auto"] and item["muxed"])
+
+
 if __name__ == "__main__":
     unittest.main()
