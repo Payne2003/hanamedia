@@ -871,14 +871,13 @@ class Handler(BaseHTTPRequestHandler):
         owner = self.is_owner()
         return {"owner": owner, "ai_voice": owner or self.server.license.allows("ai_voice"),
                 "narration": owner or self.server.license.allows("narration"),
-                "veo_short": owner or self.server.license.allows("veo_short")}
+                "veo_short": False}  # Short Veo hàng loạt đã bỏ
 
     def short_action(self, path, body):
         """Short Veo hàng loạt: thư viện Nhân vật × Sản phẩm → lô → chạy nền (Claude/Codex + Veo trên Flow) → thành phẩm."""
         from runner.hana_short.jobs import JobError
         from runner.hana_short.media import MediaError
-        if not self.can("veo_short"):
-            return self.reply({"error": "Tài khoản này chưa được cấp quyền Short Veo hàng loạt."}, 403)
+        return self.reply({"error": "Tính năng Short Veo hàng loạt đã bỏ."}, 404)
         shorts = self.server.shorts
         try:
             if path == "/api/short/status":
@@ -1258,8 +1257,8 @@ class Handler(BaseHTTPRequestHandler):
                                                                 unquote(self.headers.get("X-Sound-Tags", "")))
                 return self.reply({"ok": True, "duplicate": duplicate, "sound": item})
             if path == "/api/short/import-clip":
-                if not self.can("veo_short"):
-                    return self.reply({"error": "Tài khoản này chưa được cấp quyền Short Veo hàng loạt."}, 403)
+                if True:  # Short Veo hàng loạt đã bỏ
+                    return self.reply({"error": "Tính năng Short Veo hàng loạt đã bỏ."}, 404)
                 from runner.hana_short.jobs import JobError
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= 500 * 1024 * 1024:

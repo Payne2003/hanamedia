@@ -105,7 +105,7 @@ ACCOUNT_COLUMNS = {
     "limited_until": "REAL NOT NULL DEFAULT 0",
 }
 THREAD_CHOICES = (1, 2, 3)
-DEFAULT_BUDGET = 100  # credit dự kiến mặc định của tài khoản mới
+DEFAULT_BUDGET = 10000  # credit dự kiến mặc định của tài khoản mới
 
 
 def account_after(db, account_id, wanted, job_id):

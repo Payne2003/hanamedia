@@ -279,7 +279,7 @@ $('downloadContentXlsx').onclick=async()=>{try{const r=await fetch('/api/content
 function renderRunnerVersion(){if(state)$('runnerOutdated').hidden=state.content?.version===CONTENT_VERSION;}
 function showView(view){
   if(view==='community')view='studio';  // mục Cộng đồng đã bỏ
-  if(view==='content')view='studio';  // mục Content Studio đã bỏ
+  if(view==='content'||view==='short')view='studio';  // mục Content Studio, Short Veo hàng loạt đã bỏ
   if(view==='production')view='agents';  // mục Wildlife · Sản xuất phim đã bỏ: thay bằng Không gian Agent 3D
   const isAgents=view==='agents';$('agentsView').hidden=!isAgents;if(isAgents)openAgents();else closeAgents();
   const isVoice=view==='voice';$('voiceView').hidden=!isVoice;if(isVoice)openVoice();else closeVoice();
@@ -996,7 +996,7 @@ const va={...VA_DEFAULT,...(()=>{try{return JSON.parse(localStorage.getItem('va.
 function vaSave(){try{localStorage.setItem('va.settings',JSON.stringify({speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format,split:va.split,voice:va.voice}));}catch{}}
 let features={owner:false,ai_voice:false,narration:false};
 async function checkVoiceOwner(){try{features=await api('/api/features',{});}catch{features={owner:false,ai_voice:false,narration:false};}
-  $('navVoice').hidden=!features.ai_voice;$('navNarration').hidden=!features.narration;$('navShort').hidden=!features.veo_short;}
+  $('navVoice').hidden=!features.ai_voice;$('navNarration').hidden=!features.narration;$('navShort').hidden=true;}
 setInterval(checkVoiceOwner,60000);  // Super Admin vừa cấp / gỡ quyền: bản quyền tự cập nhật, menu đổi theo
 function markNarrationNav(){const on=!$('agentsView').hidden&&wf.slug==='thoai-phim';$('navNarration').classList.toggle('active',on);if(on)$('navAgents').classList.remove('active');}
 $('navNarration').onclick=async()=>{wf.slug='thoai-phim';try{localStorage.setItem('hq.workflow',wf.slug);}catch{}
