@@ -255,6 +255,8 @@
           </section>
           <section class="wf-box"><h3>Bài thoại <small id="nrCount"></small></h3>
             <label>Giọng đọc<select id="nrProfile"></select></label>
+            <label class="nr-auto"><input id="nrAuto" type="checkbox"> <span><b>Tự động hoàn toàn</b><small>Có bài thoại là AI Voice đọc ngay bằng giọng trên, đọc xong tự ghép vào video theo đúng mốc giây (giữ nhạc nền, hạ nhỏ).</small></span></label>
+            <p id="nrAutoInfo" class="detail"></p>
             <div id="nrResults" class="nr-results"></div>
           </section>
         </div>
@@ -266,10 +268,10 @@
         <ol class="claude-steps"><li>Bấm <b>Chọn video gửi đi</b>: tool chép video vào <code>input/</code>, kèm điểm cắt cảnh, tờ ảnh 3 khung mỗi cảnh và độ chuyển động tool đo bằng FFmpeg (máy không cần Python).</li><li>Mở <b>Claude desktop</b> (kết nối thư mục này) <b>hoặc Codex</b> (mở thư mục này làm thư mục làm việc), gõ: <code id="claudeCommand">Chạy hanamedia-wildlife-workflow</code> <button id="claudeCopyCommand" type="button" class="link-button">Chép câu lệnh</button></li><li>Claude / Codex ghi kết quả vào <code>output/</code> → tool tự đưa từng prompt vào hàng đợi Studio, đúng thứ tự và đúng số giây từng cảnh.</li></ol>
         <div class="claude-options"><label><input id="claudeAuto" type="checkbox" checked> Có kết quả là tự đưa vào Studio</label><label><input id="claudeCuts" type="checkbox" checked> Gửi kèm điểm cắt cảnh của tool</label><label><input id="claudePack" type="checkbox" checked> Làm sẵn tờ ảnh + đo chuyển động (Codex cần)</label></div>
         <div class="claude-autorun">
-          <div class="wf-row"><label><input id="claudeAutorun" type="checkbox" checked> <b>Gửi video là tự chạy workflow</b> — tool tự gọi Claude Code / Codex trên máy này, không cần mở hay gõ lệnh</label>
+          <div class="wf-row"><label><input id="claudeAutorun" type="checkbox" checked> <b>Gửi video là tự chạy workflow</b> — tool tự mở cửa sổ Claude / Codex và gửi lệnh, bạn xem từng bước và chat tiếp được</label>
             <label class="claude-engine">Chạy bằng <select id="claudeEngine"><option value="auto">Tự chọn (Claude trước, không có thì Codex)</option><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
-            <label><input id="claudeChat" type="checkbox" checked> <b>Mở cửa sổ trò chuyện với Claude / Codex</b> (thấy từng bước, chat tiếp được)</label>
-            <label id="claudeWindowWrap"><input id="claudeWindow" type="checkbox" checked> Chạy nền: mở cửa sổ xem nhật ký</label>
+            <label hidden><input id="claudeChat" type="checkbox" checked> Mở cửa sổ trò chuyện</label>
+            <label id="claudeWindowWrap" hidden><input id="claudeWindow" type="checkbox" checked> Chạy nền</label>
             <button type="button" id="claudeMachineCheck">🔎 Kiểm tra máy</button></div>
           <div id="claudeMachine" class="claude-machine" hidden></div>
           <div id="claudeQueue" class="claude-queue"></div>

@@ -158,7 +158,8 @@ def results(home, jobs=()):
         except NarrationError as problem:
             data, error = {"name": path.parent.name, "lines": [], "duration": None, "genre": "", "language": "",
                            "file": str(path)}, str(problem)
-        group = link(path).get("group") or ""
+        info = link(path)
+        group = info.get("group") or ""
         rows = [j for j in jobs if group and j.get("group") == group]
         spoken = sum(max(0.0, l["end"] - l["start"]) for l in data["lines"])
         muxed = path.parent / f"{path.parent.name}_thoai.mp4"
@@ -169,23 +170,26 @@ def results(home, jobs=()):
                       "group": group if rows else "", "voice_total": len(rows),
                       "voice_done": sum(1 for j in rows if j.get("status") == "done"),
                       "has_video": bool(not error and find_video(home, data)),
-                      "muxed": str(muxed) if muxed.is_file() else ""})
+                      "muxed": str(muxed) if muxed.is_file() else "", "auto": bool(info.get("auto")),
+                      "mux_error": info.get("mux_error") or "", "auto_error": info.get("auto_error") or ""})
     items.sort(key=lambda item: -item["updated"])
     return items[:60]
 
 
-def to_voice(voice, path, profile_id, settings=None):
-    """Tạo dự án NHÁP trong AI Voice: mỗi đoạn thoại một dòng (đúng thứ tự) để sửa rồi bấm Tạo giọng nói."""
+def to_voice(voice, path, profile_id, settings=None, start=False, auto=False):
+    """Tạo dự án trong AI Voice: mỗi đoạn thoại một dòng (đúng thứ tự). start=False: để nháp cho người dùng sửa rồi bấm
+    Tạo giọng nói; start=True: đọc luôn (chế độ tự động)."""
     from .voice import SILENCE
     settings = settings or {}
     data = parse(path)
     text = "\n".join(line["text"] for line in data["lines"])
     made = voice.create_batch(profile_id, text, f"Thoại · {data['name']}"[:80], settings.get("format") or "mp3",
                               settings.get("speed") or 1.0, SILENCE if settings.get("gap") is None else settings["gap"],
-                              settings.get("nfe"), start=False)
+                              settings.get("nfe"), start=start)
     if len(made["jobs"]) != len(data["lines"]):
         raise NarrationError("Số dòng trong AI Voice không khớp số đoạn thoại.")
-    link_file(path).write_text(json.dumps({"group": made["group"], "created": int(time.time())}), encoding="utf-8")
+    link_file(path).write_text(json.dumps({"group": made["group"], "created": int(time.time()), "auto": bool(auto)}),
+                               encoding="utf-8")
     return {"group": made["group"], "lines": len(made["jobs"]), "title": made["title"]}
 
 
@@ -261,3 +265,58 @@ def mux(home, voice, path, keep_original=True, original_volume=0.35):
         return {"output": str(target), "late": late, "over": over if over > 0.3 else 0}
     finally:
         shutil.rmtree(temp, ignore_errors=True)
+
+
+def _update_link(path, **fields):
+    data = link(path)
+    data.update(fields)
+    link_file(path).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def auto_step(home, voice, settings, since=0.0, log=lambda text: None):
+    """Chế độ tự động (gọi định kỳ): bài thoại mới → tạo giọng ngay trong AI Voice; đọc xong đủ mọi dòng → ghép vào video
+    đúng mốc giây. Chỉ xử lý bài thoại ghi sau thời điểm bật (since). Ghép lỗi tối đa 2 lần rồi để người dùng xem."""
+    profile = str(settings.get("profile") or "")
+    root = Path(home) / "output"
+    if not root.is_dir() or not profile:
+        return []
+    done = []
+    jobs = None
+    for path in sorted(root.glob("*/thoai_*.json")):
+        if path.name == "thoai_voice.json":
+            continue
+        try:
+            if path.stat().st_mtime < since:
+                continue
+            if time.time() - path.stat().st_mtime < 20:
+                continue  # AI có thể còn đang ghi file
+        except OSError:
+            continue
+        info = link(path)
+        if not info.get("group"):
+            if info.get("auto_error"):
+                continue
+            try:
+                if not voice.installed():
+                    return done  # chưa cài AI Engine: chờ
+                made = to_voice(voice, path, profile, settings, start=True, auto=True)
+                done.append(f"Đã tạo giọng cho {path.parent.name} ({made['lines']} dòng)")
+                log(done[-1])
+            except Exception as error:  # bài thoại hỏng / giọng đã xóa: ghi lại, không thử mãi
+                link_file(path).write_text(json.dumps({"auto_error": str(error)[:300]}, ensure_ascii=False), encoding="utf-8")
+            continue
+        if not info.get("auto") or info.get("muxed_at") or int(info.get("mux_tries") or 0) >= 2:
+            continue
+        if jobs is None:
+            jobs = voice.jobs()
+        rows = [j for j in jobs if j.get("group") == info["group"]]
+        if not rows or any(j.get("status") != "done" for j in rows):
+            continue
+        try:
+            result = mux(home, voice, path)
+            _update_link(path, muxed_at=int(time.time()), mux_error="", late=result["late"], over=result["over"])
+            done.append(f"Đã ghép giọng vào video: {Path(result['output']).name}")
+            log(done[-1])
+        except Exception as error:
+            _update_link(path, mux_tries=int(info.get("mux_tries") or 0) + 1, mux_error=str(error)[:300])
+    return done
