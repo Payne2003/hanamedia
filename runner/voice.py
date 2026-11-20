@@ -109,6 +109,87 @@ def audio_seconds(path):
     return round(int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3)), 1) if match else 0
 
 
+LOUDNESS = -16.0  # LUFS: mức YouTube / TikTok chuẩn hoá
+REF_MIN, REF_MAX = 8.0, 12.0  # đoạn giọng mẫu tốt nhất cho F5-TTS
+CLEAN_FILTER = "highpass=f=70,afftdn=nf=-25,lowpass=f=11500"  # bỏ ù tần thấp, lọc ồn nền, bỏ xì tần cao
+BUILTIN_PRESETS = [
+    {"id": "dong-vat", "name": "Kể chuyện động vật", "speed": 0.95, "gap": 0.45, "nfe": 32, "format": "mp3",
+     "split": "line", "music_volume": 0.12, "normalize": True},
+    {"id": "review", "name": "Review sản phẩm", "speed": 1.1, "gap": 0.2, "nfe": 24, "format": "mp3",
+     "split": "sentence", "music_volume": 0.1, "normalize": True},
+    {"id": "tin-tuc", "name": "Tin tức / thông báo", "speed": 1.05, "gap": 0.3, "nfe": 32, "format": "mp3",
+     "split": "sentence", "music_volume": 0.08, "normalize": True},
+]
+
+
+def speech_spans(path, noise_db=-35, min_silence=0.35):
+    """Các khoảng có tiếng nói [(đầu, cuối)] và tổng thời lượng, dò bằng silencedetect của ffmpeg."""
+    text = video.run([video.ffmpeg(), "-hide_banner", "-i", str(path), "-af",
+                      f"silencedetect=n={noise_db}dB:d={min_silence}", "-f", "null", "-"], 300).stderr or ""
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", text)
+    total = int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3)) if match else 0.0
+    starts = [float(x) for x in re.findall(r"silence_start:\s*(-?[\d.]+)", text)]
+    ends = [float(x) for x in re.findall(r"silence_end:\s*([\d.]+)", text)]
+    spans, cursor = [], 0.0
+    for i, start in enumerate(starts):
+        start = max(0.0, start)
+        if start - cursor > 0.05:
+            spans.append((round(cursor, 2), round(start, 2)))
+        cursor = ends[i] if i < len(ends) else total
+    if total - cursor > 0.05:
+        spans.append((round(cursor, 2), round(total, 2)))
+    return spans, total
+
+
+def pick_reference(spans, total, shortest=REF_MIN, longest=REF_MAX):
+    """Đoạn 8–12 giây rõ nhất: bắt đầu và kết thúc ở chỗ lặng (không cắt giữa chữ), nhiều tiếng nói nhất, ít khoảng lặng.
+    File ngắn hơn thì lấy cả đoạn có tiếng (bỏ lặng đầu / cuối)."""
+    if not spans:
+        return 0.0, min(total, longest)
+    if spans[-1][1] - spans[0][0] <= longest:
+        return spans[0][0], spans[-1][1]
+    best, best_score = None, -1.0
+    for i, (start, _) in enumerate(spans):
+        for j in range(i, len(spans)):
+            end = spans[j][1]
+            length = end - start
+            if length > longest:
+                break
+            if length < shortest:
+                continue
+            speech = sum(b - a for a, b in spans[i:j + 1])
+            score = speech / length + length / 100  # ưu tiên ít lặng, rồi tới dài hơn
+            if score > best_score:
+                best, best_score = (start, end), score
+    if best:
+        return best
+    # không có ranh giới lặng hợp lệ (nói liền một mạch): cắt cửa sổ 12 giây nhiều tiếng nhất
+    start = max(spans, key=lambda s: s[1] - s[0])[0]
+    return start, min(total, start + longest)
+
+
+def loudness_filter(path, target=LOUDNESS):
+    """Bộ lọc loudnorm 2 lượt: đo trước rồi chỉnh tuyến tính về target LUFS (chuẩn hơn chỉnh 1 lượt)."""
+    text = video.run([video.ffmpeg(), "-hide_banner", "-i", str(path), "-af",
+                      f"loudnorm=I={target}:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"], 900).stderr or ""
+    try:
+        data = json.loads(text[text.rindex("{"):text.rindex("}") + 1])
+        values = {k: float(data[k]) for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}
+    except (ValueError, KeyError):
+        return f"loudnorm=I={target}:TP=-1.5:LRA=11"
+    if values["input_i"] < -70:  # gần như câm: không kéo ồn lên
+        return "anull"
+    return (f"loudnorm=I={target}:TP=-1.5:LRA=11:measured_I={values['input_i']}:measured_TP={values['input_tp']}:"
+            f"measured_LRA={values['input_lra']}:measured_thresh={values['input_thresh']}:"
+            f"offset={values['target_offset']}:linear=true")
+
+
+def measured_lufs(path):
+    text = video.run([video.ffmpeg(), "-hide_banner", "-i", str(path), "-af", "ebur128", "-f", "null", "-"], 300).stderr or ""
+    found = re.findall(r"I:\s*(-?[\d.]+) LUFS", text)
+    return float(found[-1]) if found else None
+
+
 def split_text(text, limit=CHUNK_CHARS):
     """Cắt văn bản thành đoạn ≤ limit ký tự, ưu tiên ranh giới câu → dấu phẩy → khoảng trắng."""
     text = re.sub(r"[ \t]+", " ", str(text or "").replace("\r", "")).strip()
@@ -287,6 +368,48 @@ class VoiceStudio:
                 "vocab": str(data.get("vocab") or "")[:500], "device": str(data.get("device") or "")[:20],
                 "mode": "commercial" if data.get("mode") == "commercial" else "development",
                 "nfe": int(data.get("nfe") or 32)}
+
+    # ---------- mẫu cài đặt (preset) ----------
+    @property
+    def presets_file(self):
+        return self.root / "presets.json"
+
+    def presets(self):
+        try:
+            saved = json.loads(self.presets_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            saved = None
+        if not isinstance(saved, list):
+            saved = [dict(p) for p in BUILTIN_PRESETS]
+        return saved
+
+    def save_preset(self, data):
+        name = re.sub(r"\s+", " ", str(data.get("name") or "")).strip()[:50]
+        if not name:
+            raise VoiceError("Đặt tên cho mẫu cài đặt.")
+        item = {"id": str(data.get("id") or "") or uuid.uuid4().hex[:8], "name": name,
+                "voice": str(data.get("voice") or "")[:12],
+                "speed": max(.6, min(1.6, float(data.get("speed") or 1))),
+                "gap": max(0.0, min(3.0, float(data.get("gap") if data.get("gap") is not None else SILENCE))),
+                "nfe": max(8, min(64, int(data.get("nfe") or 32))),
+                "format": "wav" if data.get("format") == "wav" else "mp3",
+                "split": "line" if data.get("split") == "line" else "sentence",
+                "music_id": str(data.get("music_id") or "")[:40],
+                "music_volume": max(0.0, min(1.0, float(data.get("music_volume") if data.get("music_volume") is not None else .12))),
+                "normalize": data.get("normalize") is not False}
+        if not re.fullmatch(r"[a-z0-9-]{1,40}", item["id"]):
+            raise VoiceError("Mẫu không hợp lệ.")
+        items = [p for p in self.presets() if p.get("id") != item["id"]]
+        items.append(item)
+        self.presets_file.parent.mkdir(parents=True, exist_ok=True)
+        self.presets_file.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+        return items
+
+    def delete_preset(self, preset_id):
+        items = [p for p in self.presets() if p.get("id") != preset_id]
+        self.presets_file.parent.mkdir(parents=True, exist_ok=True)
+        self.presets_file.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+        return items
 
     def save_config(self, data):
         config = self.config()
@@ -570,7 +693,7 @@ class VoiceStudio:
             raise VoiceError("Không tìm thấy giọng.")
         return json.loads(file.read_text(encoding="utf-8"))
 
-    def add_profile(self, raw, filename, name, ref_text, consent):
+    def add_profile(self, raw, filename, name, ref_text, consent, clean=True):
         if not consent:
             raise VoiceError("Cần xác nhận bạn có quyền dùng giọng mẫu này (giọng của chính bạn hoặc đã được đồng ý).")
         name = re.sub(r"\s+", " ", str(name or "")).strip()[:60]
@@ -587,15 +710,36 @@ class VoiceStudio:
         source = folder / f"source{suffix}"
         source.write_bytes(raw)
         ref = folder / "ref.wav"
-        result = video.run([video.ffmpeg(), "-v", "error", "-y", "-i", str(source), "-t", str(MAX_REF_SECONDS), "-ac", "1",
-                            "-ar", str(SAMPLE_RATE), "-af", "loudnorm=I=-18:TP=-2,silenceremove=start_periods=1:start_threshold=-45dB",
-                            str(ref)], 120)
-        if result.returncode != 0 or not ref.is_file():
+        full = folder / "full.wav"
+        # 1. đưa về 24 kHz mono (tối đa 10 phút), lọc ồn nếu bật
+        chain = [CLEAN_FILTER] if clean else []
+        result = video.run([video.ffmpeg(), "-v", "error", "-y", "-i", str(source), "-t", "600", "-ac", "1", "-ar",
+                            str(SAMPLE_RATE), *(["-af", ",".join(chain)] if chain else []), "-c:a", "pcm_s16le", str(full)], 600)
+        if result.returncode != 0 or not full.is_file():
             shutil.rmtree(folder, ignore_errors=True)
             raise VoiceError("Không đọc được file âm thanh này. Thử file WAV/MP3 khác.")
+        # 2. chọn đoạn 8–12 giây rõ nhất (bắt đầu / kết thúc ở chỗ lặng)
+        spans, total = speech_spans(full)
+        start, end = pick_reference(spans, total) if clean else (0.0, min(total, MAX_REF_SECONDS))
+        ref_text = re.sub(r"\s+", " ", str(ref_text or "")).strip()[:1000]
+        cut_inside = clean and (start > 0.5 or end < total - 0.5) and total > REF_MAX
+        if cut_inside:
+            ref_text = ""  # lời mẫu người dùng gõ là của cả file, không khớp đoạn đã chọn → để tool tự nhận dạng
+        # 3. cắt + chuẩn âm lượng giọng mẫu
+        result = video.run([video.ffmpeg(), "-v", "error", "-y", "-ss", f"{start:.2f}", "-to", f"{end:.2f}", "-i", str(full),
+                            "-af", "afade=t=in:d=0.03,loudnorm=I=-18:TP=-2", "-ar", str(SAMPLE_RATE), "-ac", "1",
+                            "-c:a", "pcm_s16le", str(ref)], 300)
+        full.unlink(missing_ok=True)
+        if result.returncode != 0 or not ref.is_file():
+            shutil.rmtree(folder, ignore_errors=True)
+            raise VoiceError("Không cắt được đoạn giọng mẫu. Thử file WAV/MP3 khác.")
         seconds = audio_seconds(ref)
-        data = {"id": profile_id, "name": name, "ref_text": re.sub(r"\s+", " ", str(ref_text or "")).strip()[:1000],
-                "seconds": seconds, "consent": True, "created": time.time()}
+        if seconds < 2:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise VoiceError("Không tìm thấy đoạn giọng nói đủ rõ (cần ít nhất vài giây có tiếng nói).")
+        data = {"id": profile_id, "name": name, "ref_text": ref_text, "seconds": seconds, "consent": True,
+                "created": time.time(), "cleaned": bool(clean), "source_seconds": round(total, 1),
+                "segment": [round(start, 2), round(end, 2)]}
         (folder / "profile.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         return data
 
@@ -666,7 +810,8 @@ class VoiceStudio:
         self.wake.set()
         return self.public(job)
 
-    def create_batch(self, profile_id, text, title="", fmt="mp3", speed=1.0, gap=SILENCE, nfe=None, group=None, start=False):
+    def create_batch(self, profile_id, text, title="", fmt="mp3", speed=1.0, gap=SILENCE, nfe=None, group=None, start=False,
+                     extra=None):
         """Mỗi dòng một file âm thanh riêng, gom thành một dự án (group). group có sẵn = thêm dòng vào dự án đó."""
         lines = [line.strip() for line in str(text or "").replace("\r", "").split("\n") if line.strip()]
         if not lines:
@@ -684,7 +829,7 @@ class VoiceStudio:
             name = re.sub(r"\s+", " ", PAUSE.sub(" ", line)).strip()[:40] or f"Dòng {first + offset}"
             created.append(self.create_job(profile_id, line, name, fmt, speed, "sentence", gap, nfe,
                                            extra={"group": group, "group_title": project, "index": first + offset,
-                                                  "created": time.time() + offset * 1e-3,
+                                                  "created": time.time() + offset * 1e-3, **(extra or {}),
                                                   **({} if start else {"status": "draft"})}))
         self.wake.set()
         return {"group": group, "title": project, "jobs": created}
@@ -707,6 +852,9 @@ class VoiceStudio:
                     fields["gap"] = max(0.0, min(3.0, float(settings["gap"])))
                 if settings.get("nfe"):
                     fields["nfe"] = max(8, min(64, int(settings["nfe"])))
+                for key in ("music", "music_volume", "normalize"):
+                    if key in settings:
+                        fields[key] = settings[key]
                 self.update_job(job["id"], **fields)
                 count += 1
         if not count:
@@ -874,10 +1022,31 @@ class VoiceStudio:
         safe = re.sub(r"[^\w\- ]+", "", job["title"], flags=re.UNICODE).strip()[:50] or "voice"
         name = f"{safe}.{job['format']}"
         codec = ["-c:a", "libmp3lame", "-b:a", "192k"] if job["format"] == "mp3" else ["-c:a", "pcm_s16le"]
+        voice_only = folder / "_voice.wav"
         result = video.run([video.ffmpeg(), "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(listing), "-ar",
-                            str(SAMPLE_RATE), "-ac", "1", *codec, str(folder / name)], 1800)
-        if result.returncode != 0 or not (folder / name).is_file():
+                            str(SAMPLE_RATE), "-ac", "1", "-c:a", "pcm_s16le", str(voice_only)], 1800)
+        if result.returncode != 0 or not voice_only.is_file():
             raise VoiceError("Ghép âm thanh lỗi: " + (result.stderr or "")[-300:])
+        premix = voice_only
+        music = job.get("music")
+        if music and Path(music).is_file():  # nhạc nền: lặp cho đủ dài, nhỏ dưới giọng, tắt dần ở cuối
+            length = audio_seconds(voice_only) or 1
+            volume = max(0.0, min(1.0, float(job.get("music_volume", 0.12))))
+            premix = folder / "_mix.wav"
+            fade = max(0.0, length - 2.0)
+            result = video.run([video.ffmpeg(), "-v", "error", "-y", "-i", str(voice_only), "-stream_loop", "-1", "-i", music,
+                                "-filter_complex", f"[1:a]aresample={SAMPLE_RATE},aformat=channel_layouts=mono,volume={volume},"
+                                f"afade=t=out:st={fade:.2f}:d=2[m];[0:a][m]amix=inputs=2:duration=first:normalize=0[a]",
+                                "-map", "[a]", "-ac", "1", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le", str(premix)], 1800)
+            if result.returncode != 0 or not premix.is_file():
+                raise VoiceError("Trộn nhạc nền lỗi: " + (result.stderr or "")[-300:])
+        chain = loudness_filter(premix) if job.get("normalize", True) else "anull"
+        result = video.run([video.ffmpeg(), "-v", "error", "-y", "-i", str(premix), "-af", chain, "-ar", str(SAMPLE_RATE),
+                            "-ac", "1", *codec, str(folder / name)], 1800)
+        for temp in (voice_only, folder / "_mix.wav"):
+            temp.unlink(missing_ok=True)
+        if result.returncode != 0 or not (folder / name).is_file():
+            raise VoiceError("Chuẩn hoá âm lượng lỗi: " + (result.stderr or "")[-300:])
         for file in folder.glob("norm_*.wav"):
             file.unlink(missing_ok=True)
         self.last_quiet = quiet
