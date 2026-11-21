@@ -193,6 +193,20 @@ def to_voice(voice, path, profile_id, settings=None, start=False, auto=False):
     return {"group": made["group"], "lines": len(made["jobs"]), "title": made["title"]}
 
 
+MAX_TEMPO = 1.3  # nén tối đa 1,3 lần: nhanh hơn nữa nghe gấp, mất tự nhiên
+
+
+def clip_seconds(path):
+    """Độ dài chính xác (tới mili giây) của file WAV PCM do tool tạo; file khác thì đọc bằng ffmpeg."""
+    import wave
+    try:
+        with wave.open(str(path), "rb") as handle:
+            return handle.getnframes() / float(handle.getframerate())
+    except (OSError, EOFError, wave.Error):
+        from .voice import audio_seconds
+        return audio_seconds(path)
+
+
 def mux(home, voice, path, keep_original=True, original_volume=0.35):
     """Ghép giọng đã tạo vào video: mỗi đoạn bắt đầu đúng mốc start (đoạn trước đọc lố thì đoạn sau lùi lại, không
     chồng tiếng). Tiếng gốc của video (nhạc, tiếng động) được giữ và hạ nhỏ. Xuất output/<ten>/<ten>_thoai.mp4."""
@@ -225,13 +239,32 @@ def mux(home, voice, path, keep_original=True, original_volume=0.35):
             video.run([video.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", f"anullsrc=r={rate}:cl=mono",
                        "-t", f"{seconds:.3f}", "-c:a", "pcm_s16le", str(target)], 60)
             return target
-        for index, (line, job) in enumerate(zip(data["lines"], rows)):
+        fitted = []
+        lines = data["lines"]
+        for index, (line, job) in enumerate(zip(lines, rows)):
             clip_source = voice.output_file(job["id"])
             clip = temp / f"line_{index:04d}.wav"
-            done = video.run([video.ffmpeg(), "-v", "error", "-y", "-i", str(clip_source), "-ac", "1", "-ar", str(rate),
-                              "-c:a", "pcm_s16le", str(clip)], 120)
+            # bỏ khoảng lặng thừa ở đầu / cuối câu (F5-TTS hay để dư) để câu gọn trong cảnh
+            trim = ("silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.05,areverse,"
+                    "silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.08,areverse")
+            done = video.run([video.ffmpeg(), "-v", "error", "-y", "-i", str(clip_source), "-af", trim, "-ac", "1",
+                              "-ar", str(rate), "-c:a", "pcm_s16le", str(clip)], 120)
             if done.returncode != 0 or not clip.is_file():
                 raise NarrationError(f"Không đọc được file giọng của dòng {index + 1}.")
+            # tự khớp thời lượng: chỗ trống của câu = tới khi câu sau bắt đầu (hoặc hết video); dài hơn thì nén nhẹ
+            # (atempo giữ nguyên cao độ giọng, tối đa MAX_TEMPO lần), vẫn dài thì câu sau lùi lại như cũ
+            next_start = lines[index + 1]["start"] if index + 1 < len(lines) else info["duration"]
+            slot = max(0.3, next_start - max(line["start"], cursor) - 0.08)
+            length = clip_seconds(clip)
+            if length > slot + 0.05:
+                tempo = min(MAX_TEMPO, length / slot)
+                if tempo > 1.01:
+                    squeezed = temp / f"fit_{index:04d}.wav"
+                    done = video.run([video.ffmpeg(), "-v", "error", "-y", "-i", str(clip), "-af", f"atempo={tempo:.4f}",
+                                      "-ac", "1", "-ar", str(rate), "-c:a", "pcm_s16le", str(squeezed)], 120)
+                    if done.returncode == 0 and squeezed.is_file():
+                        clip = squeezed
+                        fitted.append({"line": index + 1, "speed": round(tempo, 2)})
             gap = line["start"] - cursor
             if gap > 0.02:
                 entries.append(silence(gap, index))
@@ -239,7 +272,7 @@ def mux(home, voice, path, keep_original=True, original_volume=0.35):
             elif gap < -0.25:
                 late.append(index + 1)
             entries.append(clip)
-            cursor += audio_seconds(clip)
+            cursor += clip_seconds(clip)
         listing = temp / "list.txt"
         listing.write_text("".join(f"file '{p.name}'\n" for p in entries), encoding="utf-8")
         track = temp / "narration.wav"
@@ -262,7 +295,7 @@ def mux(home, voice, path, keep_original=True, original_volume=0.35):
             raise NarrationError("ffmpeg không ghép được giọng vào video.")
         partial.replace(target)
         over = round(cursor - info["duration"], 1)
-        return {"output": str(target), "late": late, "over": over if over > 0.3 else 0}
+        return {"output": str(target), "late": late, "over": over if over > 0.3 else 0, "fitted": fitted}
     finally:
         shutil.rmtree(temp, ignore_errors=True)
 
@@ -314,7 +347,8 @@ def auto_step(home, voice, settings, since=0.0, log=lambda text: None):
             continue
         try:
             result = mux(home, voice, path)
-            _update_link(path, muxed_at=int(time.time()), mux_error="", late=result["late"], over=result["over"])
+            _update_link(path, muxed_at=int(time.time()), mux_error="", late=result["late"], over=result["over"],
+                         fitted=result["fitted"])
             done.append(f"Đã ghép giọng vào video: {Path(result['output']).name}")
             log(done[-1])
         except Exception as error:

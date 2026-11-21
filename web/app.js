@@ -746,7 +746,7 @@ async function claudeImport(path,sig,auto=false,again=false){
   if(claudeImporting.has(sig))return;claudeImporting.add(sig);
   try{
     const r=await api('/api/claude/read',{path});const prompts=r.prompts;const batch=again?crypto.randomUUID():r.batch;
-    const options={...videoOptions(),duration:0,aspect:$('vAspect').value},cost=Number($('cost').value)||1;
+    const options={...videoOptions(),duration:0,aspect:$('vAspect').value,folder:r.name},cost=Number($('cost').value)||1;  // dự án = tên bài của workflow
     for(let start=0;start<prompts.length;start+=200){
       const group=prompts.slice(start,start+200);
       await api('/api/jobs',{prompts:group,cost,mode:'text',batch,append:start,more:start+200<prompts.length,
@@ -988,7 +988,7 @@ $('nrResults').onclick=e=>{const b=e.target.closest('button');if(!b)return;
     if(b.dataset.again==='1'&&!confirm('Tạo lại dự án giọng mới từ bài thoại này? (Dự án cũ vẫn còn trong AI Voice.)'))return;
     return nrCall('/api/narration/to-voice',{path:b.dataset.nrVoice,profile:$('nrProfile').value,settings:{speed:va.speed,nfe:va.nfe,gap:va.gap,format:va.format}},r=>toast(`Đã tạo dự án “${r.made.title}” (${r.made.lines} dòng) trong AI Voice. Sửa chữ nếu cần rồi bấm Tạo giọng nói.`));}
   if(b.dataset.nrOpen){va.group=b.dataset.nrOpen;$('navVoice').click();setTimeout(()=>{try{vaShow('project');}catch{}},400);return;}
-  if(b.dataset.nrMux){toast('Đang ghép giọng vào video…');return nrCall('/api/narration/mux',{path:b.dataset.nrMux},r=>toast(`Đã ghép xong: ${r.muxed.output.split(/[\\/]/).pop()}${r.muxed.late.length?` · dòng ${r.muxed.late.slice(0,8).join(', ')} bắt đầu trễ vì dòng trước đọc dài hơn cảnh`:''}${r.muxed.over?` · giọng dài hơn video ${r.muxed.over}s (phần cuối bị cắt)`:''}`,!!(r.muxed.late.length||r.muxed.over)));}
+  if(b.dataset.nrMux){toast('Đang ghép giọng vào video…');return nrCall('/api/narration/mux',{path:b.dataset.nrMux},r=>toast(`Đã ghép xong: ${r.muxed.output.split(/[\\/]/).pop()}${r.muxed.fitted?.length?` · đã nén nhẹ ${r.muxed.fitted.length} câu cho vừa cảnh`:''}${r.muxed.late.length?` · dòng ${r.muxed.late.slice(0,8).join(', ')} vẫn trễ (dài hơn cảnh quá nhiều, kể cả sau khi nén 1,3 lần) — nên viết ngắn lại`:''}${r.muxed.over?` · giọng dài hơn video ${r.muxed.over}s (phần cuối bị cắt)`:''}`,!!(r.muxed.late.length||r.muxed.over)));}
   if(b.dataset.nrReveal)api('/api/narration/reveal',{path:b.dataset.nrReveal}).catch(err=>toast(err.message,true));};
 setInterval(()=>{if(!$('agentsView').hidden)loadNarration();},5000);
 
@@ -1681,7 +1681,7 @@ function renderLibraryIfOpen(){if($('imageLibrary').open)loadPicker();}
 // ===== Thiết lập video của Studio: tỉ lệ, thời lượng, độ phân giải, nick, tự ghép, ảnh nhân vật cố định =====
 function videoOptions(){
   return {aspect:$('vAspect').value,duration:Number($('vDuration').value)||0,resolution:$('vResolution').value,
-    stitch:$('vStitch').checked,characters:fixedCharacters.map(c=>c.token),account_id:$('vAccount').value||null};
+    stitch:$('vStitch').checked,characters:fixedCharacters.map(c=>c.token),account_id:$('vAccount').value||null,folder:$('vProject').value.trim()};
 }
 function saveVideoSettings(){try{localStorage.setItem(VIDEO_KEY,JSON.stringify({...videoOptions(),fixed:fixedCharacters}));}catch{}}
 function loadVideoSettings(){

@@ -150,7 +150,9 @@ class Engine:
         size = target_size(first["aspect"], first["resolution"]) if first["resolution"] else None
         parent = sources[0].parent  # thư mục dự án / thư mục lưu; video cũ nằm trong huy-<id> thì ghép ra thư mục cha
         root = parent.parent if parent.name.startswith("huy-") else parent
-        destination = root / f"Video ghép {time.strftime('%Y-%m-%d %H%M')} ({len(sources)} cảnh).mp4"
+        project = str(first.get("folder") or "").strip()
+        destination = root / (f"{project} - Video ghép ({len(sources)} cảnh).mp4" if project and root.name == project
+                              else f"Video ghép {time.strftime('%Y-%m-%d %H%M')} ({len(sources)} cảnh).mp4")
         try:
             self.store.set_stitch(batch, "running")
             self.post_status = f"Đang ghép {len(sources)} cảnh thành một video"
@@ -576,15 +578,24 @@ class Engine:
         return target
 
     def place(self, job, target, file, folder=None):
-        """Video tải xong nằm trong thư mục lưu: đổi tên theo số thứ tự prompt (1.mp4, 2.mp4…) ngay tại chỗ. Không ghi đè
-        (tên đã có thì thêm " (2)", " (3)"…) và KHÔNG BAO GIỜ xóa video: đổi tên/chuyển không được thì giữ nguyên file."""
+        """Video tải xong: chuyển vào <thư mục lưu>/<Tên dự án>/ và đặt tên "Cảnh 01.mp4", "Cảnh 02.mp4"… theo thứ tự
+        prompt (tác vụ cũ không có tên dự án thì giữ kiểu cũ 1.mp4 ngay trong thư mục lưu). Không ghi đè (tên đã có thì
+        thêm " (2)", " (3)"…) và KHÔNG BAO GIỜ xóa video: đổi tên/chuyển không được thì giữ nguyên file."""
         file = Path(file)
         root = Path(folder) if folder and Path(folder).is_dir() else file.parent  # thư mục lưu đã được tạo khi tải
         number = job["ordinal"] + 1
+        project = str(job.get("folder") or "").strip()
+        stem = f"Cảnh {number:02d}" if project else str(number)
+        if project:
+            try:
+                (root / project).mkdir(parents=True, exist_ok=True)
+                root = root / project
+            except OSError:
+                pass  # không tạo được thư mục con (tên lạ / ổ chỉ đọc): lưu thẳng vào thư mục lưu
         with self.place_lock:
-            final, copy = root / f"{number}.mp4", 2
+            final, copy = root / f"{stem}.mp4", 2
             while final.exists() and final != file:
-                final, copy = root / f"{number} ({copy}).mp4", copy + 1
+                final, copy = root / f"{stem} ({copy}).mp4", copy + 1
             if file != final:
                 try:
                     shutil.move(str(file), str(final))  # khác ổ đĩa (C: → D:) vẫn chuyển được

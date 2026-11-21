@@ -52,12 +52,18 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(engine.download_dir({"id": "abc"}, str(out)), out)
             download = out / "muse-download.mp4"
             download.write_bytes(b"new")
-            final = engine.place({"ordinal": 0, "folder": "Bị bỏ qua"}, out, download, str(out))
+            final = engine.place({"ordinal": 0}, out, download, str(out))  # tác vụ cũ không có tên dự án: kiểu cũ
             self.assertEqual(final, out / "1 (3).mp4")
             self.assertEqual(final.read_bytes(), b"new")
             self.assertEqual((out / "1.mp4").read_bytes(), b"old")  # không ghi đè video của lượt trước
             self.assertEqual((out / "khac.mp4").read_bytes(), b"old")  # không đụng tới file khác trong thư mục
-            self.assertEqual(sorted(p.name for p in out.iterdir() if p.is_dir()), [])
+            # có tên dự án: <thư mục lưu>/<Tên dự án>/Cảnh 01.mp4, trùng thì thêm (2)
+            for n in range(2):
+                download = out / f"muse-{n}.mp4"
+                download.write_bytes(b"p")
+                final = engine.place({"ordinal": 0, "folder": "Báo săn tập 3"}, out, download, str(out))
+            self.assertEqual(final, out / "Báo săn tập 3" / "Cảnh 01 (2).mp4")
+            self.assertTrue((out / "Báo săn tập 3" / "Cảnh 01.mp4").is_file())
             # Video còn nằm ở thư mục tạm (ổ khác): chuyển được sang thư mục lưu; chỉ xóa thư mục tạm khi video đã ra ngoài.
             temp = engine.download_dir({"id": "xyz"})
             self.assertTrue(str(temp).startswith(str(self.root / "data")))
@@ -72,6 +78,19 @@ class StoreTests(unittest.TestCase):
             self.assertEqual((kept, kept.read_bytes()), (video, b"two"))  # chuyển lỗi: KHÔNG xóa video
         finally:
             engine.shutdown()
+
+    def test_project_folder_is_named_and_kept_for_later_groups(self):
+        import uuid
+        batch = uuid.uuid4().hex
+        self.store.enqueue(["Một", "Hai"], 1, batch, options={"folder": "Kênh mèo / tập 1"})
+        self.store.enqueue(["Ba"], 1, batch, append=2)  # nhóm sau của cùng lượt: dùng lại tên dự án
+        other = uuid.uuid4().hex
+        self.store.enqueue(["Bốn"], 1, other)  # không nhập tên: tự đặt theo ngày giờ
+        jobs = self.store.snapshot()["jobs"]
+        names = {j["prompt"]: j["folder"] for j in jobs}
+        self.assertEqual(names["Một"], names["Ba"])
+        self.assertNotIn("/", names["Một"])  # bỏ ký tự không hợp lệ cho tên thư mục
+        self.assertTrue(names["Bốn"].startswith("Dự án "))
 
     def test_concurrent_claims_never_duplicate_or_exceed_budget(self):
         for i in range(10):
@@ -258,9 +277,10 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(browser.close_count, 0)
                 done_jobs = [job for job in self.store.snapshot()["jobs"] if job["status"] == "done"]
                 self.assertEqual(len(done_jobs), 2)
-                self.assertEqual({Path(job["output"]).name for job in done_jobs}, {"1.mp4", "2.mp4"})
-                # Video nằm thẳng trong thư mục lưu, không còn thư mục huy-<id>.
-                self.assertEqual({Path(job["output"]).parent for job in done_jobs}, {self.root / "output"})
+                self.assertEqual({Path(job["output"]).name for job in done_jobs}, {"Cảnh 01.mp4", "Cảnh 02.mp4"})  # thư mục dự án tự đặt theo ngày giờ
+                # Video nằm trong <thư mục lưu>/<Tên dự án>/, không còn thư mục huy-<id>.
+                self.assertEqual({Path(job["output"]).parent.parent for job in done_jobs}, {self.root / "output"})
+                self.assertTrue(all(Path(job["output"]).parent.name.startswith("Dự án ") for job in done_jobs))
                 self.assertFalse(list((self.root / "output").glob("huy-*")))
                 engine.close_browsers()
                 self.assertEqual(browser.close_count, 1)
@@ -474,7 +494,7 @@ class StoreTests(unittest.TestCase):
                 engine.fetch_work(fetched, acc, False, str(self.root / "output"))
             row = [j for j in self.store.snapshot()["jobs"] if j["id"] == job["id"]][0]
             self.assertEqual(row["status"], "done")
-            self.assertEqual(Path(row["output"]).name, "1.mp4")
+            self.assertEqual(Path(row["output"]).name, "Cảnh 01.mp4")
             self.assertEqual((calls["generate"], calls["fetch"]), (2, ["https://muse.ai/c/abc123"] * 5))  # gửi lại đúng 1 lần
             with self.assertRaises(ValueError):
                 self.store.begin_fetch(job["id"], 2)  # đã xong: không lấy lại
