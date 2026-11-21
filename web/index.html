@@ -195,6 +195,7 @@
             <label>Model<input id="voiceModel" placeholder="F5TTS_v1_Base"></label>
             <label>Checkpoint riêng (.pt / .safetensors)<input id="voiceCkpt" placeholder="để trống = checkpoint chính thức"></label>
             <label>File vocab của checkpoint riêng<input id="voiceVocab"></label>
+            <label>Số luồng đọc cùng lúc (GPU)<select id="voiceParallel"><option value="0">Tự động theo bộ nhớ card</option><option value="1">1 luồng</option><option value="2">2 luồng</option><option value="3">3 luồng</option><option value="4">4 luồng</option></select><small class="detail">Mỗi luồng nạp một bản mô hình (~1,5 GB VRAM). Card 4 GB chạy được 2 luồng; hết bộ nhớ thì tool tự bớt luồng.</small></label>
             <label>Chế độ<select id="voiceMode"><option value="development">Development (thử nghiệm)</option><option value="commercial">Commercial (checkpoint đã có quyền thương mại)</option></select></label>
             <button type="button" id="voiceSaveConfig">Lưu cấu hình</button>
             <details><summary>Nhật ký cài đặt / engine</summary><pre id="voiceLog" class="wf-log"></pre></details>
