@@ -761,6 +761,7 @@ async function claudeImport(path,sig,auto=false,again=false){
 async function pollClaude(){
   if(!key||claudeBusy)return;
   try{await claudeCall('/api/claude/status');}catch{return;}
+  showCutNotice(claude.notices||[]);
   if(claude.auto)for(const r of claude.results)if(!r.imported&&!r.folder_imported&&!r.error&&Date.now()/1000-r.updated>40)await claudeImport(r.path,r.signature,true);
 }
 setInterval(pollClaude,6000);setTimeout(pollClaude,1500);
@@ -2227,3 +2228,22 @@ $('vaPresetDel').onclick=async()=>{const id=$('vaPreset').value;if(!id)return to
 $('vaMusic').onchange=()=>{va.music_id=$('vaMusic').value;vaSave();renderVaControls();};
 $('vaMusicVol').oninput=()=>{va.music_volume=Number($('vaMusicVol').value);vaSave();renderVaControls();};
 $('vaNormalize').onchange=()=>{va.normalize=$('vaNormalize').checked;vaSave();};
+
+// ---- Báo "đã cắt cảnh xong" (mọi trang): vào Claude / Codex để phân tích ----
+let cutShown='',titleTimer=null;const baseTitle=document.title;
+function cutBeep(){try{const ctx=new (window.AudioContext||window.webkitAudioContext)();[660,880].forEach((f,i)=>{const o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=f;o.connect(g);g.connect(ctx.destination);
+  const t=ctx.currentTime+i*0.18;g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.25,t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+0.16);o.start(t);o.stop(t+0.17);});}catch{}}
+function flashTitle(text){clearInterval(titleTimer);let on=false;titleTimer=setInterval(()=>{document.title=(on=!on)?text:baseTitle;},1000);
+  const stop=()=>{clearInterval(titleTimer);document.title=baseTitle;window.removeEventListener('focus',stop);};window.addEventListener('focus',stop);setTimeout(stop,60000);}
+function showCutNotice(list){const n=list[list.length-1],box=$('cutNotice');
+  if(!n){box.hidden=true;cutShown='';return;}
+  if(n.id===cutShown&&!box.hidden)return;cutShown=n.id;
+  const facts=[n.cuts!=null?`${n.cuts} điểm cắt`:'',n.scenes?`${n.scenes} cảnh`:'',n.sheets?`${n.sheets} tờ ảnh`:''].filter(Boolean).join(' · ');
+  box.innerHTML=`<div class="cut-head"><span class="cut-ico">✂️</span><div><b>Đã cắt cảnh xong: ${esc(n.name)}</b><small>${esc(facts||n.video||'')}</small></div><button type="button" class="text-button" data-cut="close" aria-label="Đóng">✕</button></div>
+    <p>${n.auto?'Tool đang mở cửa sổ <b>Claude / Codex</b> để phân tích — xem và trò chuyện trong cửa sổ đó.':'Video đã sẵn sàng trong <code>input/</code>. Mở <b>Claude / Codex</b> để phân tích và viết prompt.'}</p>
+    <div class="wf-row">${n.auto?'<button type="button" class="primary" data-cut="ok">Đã hiểu</button>':'<button type="button" class="primary" data-cut="open">▶ Mở Claude / Codex phân tích</button><button type="button" data-cut="copy">Chép lệnh</button><button type="button" data-cut="later">Để sau</button>'}</div>`;
+  box.hidden=false;cutBeep();flashTitle(`✂️ Cắt xong: ${n.name}`);}
+$('cutNotice').onclick=async e=>{const b=e.target.closest('[data-cut]');if(!b)return;const id=cutShown,act=b.dataset.cut;
+  try{if(act==='open'){const r=await api('/api/claude/open-chat',{workflow:wf.owner?wf.slug:'wildlife'});toast(`Đã mở ${r.engine==='codex'?'Codex':'Claude Code'} với lệnh chạy workflow. Theo dõi trong cửa sổ đó.`);}
+    else if(act==='copy'){await navigator.clipboard.writeText((wf.owner&&currentWf()?.command)||'Chạy hanamedia-wildlife-workflow');toast('Đã chép lệnh. Dán vào Claude desktop hoặc Codex (mở thư mục HanaMedia).');}
+    await api('/api/claude/notice-seen',{id});$('cutNotice').hidden=true;}catch(err){toast(err.message,true);}};

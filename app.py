@@ -174,7 +174,11 @@ class AppServer(ThreadingHTTPServer):
             return Path(profile)
         return self.shared.dir / "Default" if self.shared.enabled else default_chrome_profile(self.data_dir)
 
-    def prepare_video(self, video):
+    def notify(self, kind, **data):
+        import uuid
+        self.notices = (self.notices + [dict(data, id=uuid.uuid4().hex[:10], kind=kind, at=time.time(), seen=False)])[-20:]
+
+    def prepare_video(self, video, auto=False, slug="wildlife"):
         """Chép video vào input/ của thư mục HanaMedia (dọn dự án cũ), kèm điểm cắt + gói ảnh tool đo."""
         from runner import claude_bridge as bridge
         store = self.store
@@ -188,7 +192,12 @@ class AppServer(ThreadingHTTPServer):
             except Exception:
                 cuts = None  # không đo được: để Claude / Codex tự dò điểm cắt
         # Gói đo sẵn (tờ ảnh, shots, motion): Codex trên máy khách không cần Python / opencv.
-        return bridge.send(folder, video, cuts, duration, pack=store.setting("claude_pack", True) is not False)
+        sent = bridge.send(folder, video, cuts, duration, pack=store.setting("claude_pack", True) is not False)
+        pack = sent.get("pack") or {}
+        # báo người dùng: đã cắt cảnh xong → vào Claude / Codex phân tích (tự động thì cửa sổ đang được mở)
+        self.notify("cut_done", name=sent["name"], video=Path(video).name, cuts=sent.get("cuts"),
+                    scenes=pack.get("scenes"), sheets=pack.get("sheets"), auto=bool(auto))
+        return sent
 
     def plugin_public(self):
         plugin = content.PLUGIN
@@ -260,7 +269,9 @@ class AppServer(ThreadingHTTPServer):
         self.workflows = Workflows(lambda: store.setting("claude_folder") or _bridge.default_folder())
         from runner.autorun import AutoRunner
         # Gửi video là tự chạy workflow bằng Claude Code / Codex trên máy này (máy chủ lẫn máy khách)
-        self.autorun = AutoRunner(self.workflows, self.prepare_video, lambda: store.setting("claude_engine") or "auto",
+        self.notices = []  # thông báo "đã cắt cảnh xong" cho giao diện (mới nhất cuối danh sách)
+        self.autorun = AutoRunner(self.workflows, lambda video: self.prepare_video(video, auto=True),
+                                  lambda: store.setting("claude_engine") or "auto",
                                   show_window=lambda: False,
                                   chat=lambda: True,  # đã bỏ chế độ chạy ngầm: luôn mở cửa sổ trò chuyện Claude / Codex
                                   done=lambda slug, name: _bridge.project_done(
@@ -1182,6 +1193,7 @@ class Handler(BaseHTTPRequestHandler):
                     "autorun": store.setting("claude_autorun", True) is not False,
                     "engine": store.setting("claude_engine") or "auto", "window": store.setting("claude_window", True) is not False, "chat": store.setting("claude_chat", True) is not False, "engines": self.server.workflows.engines(),
                     "queue": self.server.autorun.status(),
+                    "notices": [n for n in self.server.notices if not n["seen"]][-3:],
                     "results": bridge.results(folder, imported) if exists else []}
 
         if path == "/api/claude/status":
@@ -1254,7 +1266,23 @@ class Handler(BaseHTTPRequestHandler):
                 position = autorun.enqueue(video, slug)
                 return self.reply(dict(status(), sent=None, queued={"name": Path(video).name, "position": position,
                                                                     "engine": autorun.engine(), "workflow": slug}))
-            return self.reply(dict(status(), sent=self.server.prepare_video(video)))
+            sent = self.server.prepare_video(video, slug=slug)  # trước status(): để thông báo "cắt xong" có ngay
+            return self.reply(dict(status(), sent=sent))
+        if path == "/api/claude/notice-seen":
+            for notice in self.server.notices:
+                if notice["id"] == body.get("id") or body.get("all"):
+                    notice["seen"] = True
+            return self.reply({"ok": True})
+        if path == "/api/claude/open-chat":
+            from runner import agent_cli
+            slug = str(body.get("workflow") or "wildlife")
+            if not self.can_workflow(slug):
+                slug = "wildlife"
+            engine = agent_cli.pick(store.setting("claude_engine") or "auto")
+            if not engine:
+                raise ValueError("Máy chưa có Claude Code hay Codex. Bấm Kiểm tra máy để cài và đăng nhập.")
+            self.server.workflows.open_chat(slug, engine)
+            return self.reply({"ok": True, "engine": engine})
         if path == "/api/claude/machine":
             from runner import agent_cli
             return self.reply(dict(agent_cli.status(), folder=str(folder)))

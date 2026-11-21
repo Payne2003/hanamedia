@@ -297,6 +297,26 @@ class MediaHTTPTests(MediaBase):
         self.assertEqual((status, [i["id"] for i in listing["items"]], listing["totals"]["image"]), (200, [media_id], 1))
         self.assertEqual(json.loads(self.request("GET", "/api/library")[2])["images"][0]["token"], media_id)
 
+    def test_cut_done_notice_after_sending_a_video(self):
+        from runner import video_tools as video
+        try:
+            video.ffmpeg()
+        except Exception:
+            self.skipTest("không có ffmpeg")
+        clip = self.root / "Báo săn.mp4"
+        video.run([video.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=25:duration=3",
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p", str(clip)], 120)
+        self.store.save_setting("claude_folder", str(self.root / "HanaMedia"))
+        self.store.save_setting("claude_autorun", False)
+        status, _, body = self.request("POST", "/api/claude/send", {"path": str(clip)})
+        data = json.loads(body)
+        self.assertEqual(status, 200, data)
+        [notice] = data["notices"]
+        self.assertEqual((notice["kind"], notice["name"], notice["auto"]), ("cut_done", "bao-san", False))
+        self.request("POST", "/api/claude/notice-seen", {"id": notice["id"]})
+        _, _, body = self.request("POST", "/api/claude/status", {})
+        self.assertEqual(json.loads(body)["notices"], [])
+
     def test_upload_into_the_open_category_and_move_duplicates(self):
         status, _, body = self.request("POST", "/api/media/upload", png(seed=b"nv"),
                                        {"X-Image-Name": quote("Linh.png"), "Content-Type": "image/png",
