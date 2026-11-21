@@ -472,6 +472,11 @@ class Store:
                     db.execute("UPDATE batch_options SET stitch_status=? WHERE batch=? AND stitch_status IN ('','hold')",
                                ("hold" if more else "", batch))
                 return
+            # Thư mục dự án: video lưu thành <thư mục lưu>/<Tên dự án>/Cảnh 01.mp4. Nhóm sau của CÙNG lượt dùng lại tên đã
+            # đặt; không nhập tên thì tự đặt theo ngày giờ để các lượt không trộn vào nhau.
+            if not options["folder"]:
+                row = db.execute("SELECT folder FROM jobs WHERE batch=? AND folder!='' LIMIT 1", (batch,)).fetchone()
+                options["folder"] = row["folder"] if row else folder_name(time.strftime("Dự án %Y-%m-%d %Hh%M"))
             if db.execute("SELECT count(*) FROM jobs").fetchone()[0] + len(prompts) > 10000:
                 raise ValueError("Đã đạt giới hạn 10.000 tác vụ trong dữ liệu này.")
             now = time.time()
@@ -1068,7 +1073,7 @@ class Store:
 
     def batch_scenes(self, batch):
         with self.connect() as db:
-            return [dict(row) for row in db.execute("""SELECT id,ordinal,status,output,upscaled_output,aspect,resolution
+            return [dict(row) for row in db.execute("""SELECT id,ordinal,status,output,upscaled_output,aspect,resolution,folder
                     FROM jobs WHERE batch=? ORDER BY ordinal""", (batch,))]
 
     def set_stitch(self, batch, status, output=None, error=""):

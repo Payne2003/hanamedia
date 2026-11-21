@@ -85,7 +85,7 @@ class NarrationTests(unittest.TestCase):
                           "-f", "lavfi", "-i", "sine=frequency=220:duration=6", "-c:v", "libx264", "-pix_fmt", "yuv420p",
                           "-c:a", "aac", "-shortest", str(clip)], 120)
         self.assertEqual(done.returncode, 0, done.stderr)
-        path = self.write("phim", [{"start": 0.5, "end": 2, "text": "Câu một."}, {"start": 0.6, "end": 2.5, "text": "Câu hai."},
+        path = self.write("phim", [{"start": 0.5, "end": 2, "text": "Câu một."}, {"start": 0.55, "end": 2.5, "text": "Câu hai."},
                                   {"start": 4.0, "end": 5.5, "text": "Câu ba."}])
         studio = FakeStudio(self.base / "data")
         sample = self.base / "s.wav"
@@ -110,7 +110,10 @@ class NarrationTests(unittest.TestCase):
         info = video.probe(output)
         self.assertTrue(info["audio"])
         self.assertAlmostEqual(info["duration"], 6.0, delta=0.2)
-        self.assertEqual(result["late"], [2])  # dòng 2 đặt mốc 0,6 s nhưng dòng 1 (0,4 s từ 0,5) chưa đọc xong
+        # dòng 1 (0,4 s) chỉ có chỗ tới 0,55 s: nén tối đa 1,3 lần vẫn không vừa → dòng 2 trễ; dòng 3 rộng chỗ: giữ nguyên
+        self.assertEqual(result["late"], [2])
+        self.assertEqual([f["line"] for f in result["fitted"]], [1])
+        self.assertTrue(all(f["speed"] <= 1.3 for f in result["fitted"]))
         self.assertFalse((output.parent / ".thoai-mux").exists())
         self.assertEqual(narration.results(self.home, studio.jobs())[0]["muxed"], str(output))
 

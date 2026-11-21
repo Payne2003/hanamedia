@@ -1369,3 +1369,4 @@ details.claude-flow{display:block}details.claude-flow:not([open]){padding:12px 1
 .short-login{display:grid;gap:6px;padding:12px;border:1px solid var(--c-accent-soft);border-radius:12px;background:var(--c-surface-2)}.short-login ol{margin:0;padding-left:18px;display:grid;gap:2px}
 .nr-auto{display:flex!important;gap:8px;align-items:flex-start;padding:10px;border:1px solid var(--c-accent-soft);border-radius:10px;background:var(--c-surface-2)}.nr-auto small{display:block;color:var(--c-text-3)}
 .va-check{display:flex;gap:8px;align-items:flex-start;font-size:var(--fs-sm)}.va-check small{display:block;color:var(--c-text-3);font-size:var(--fs-xs)}.va-tab select{margin:0}
+.vs-project{grid-column:1/-1}.vs-project small{color:var(--c-text-3);font-weight:400}
