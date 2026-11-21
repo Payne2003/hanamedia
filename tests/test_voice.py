@@ -328,3 +328,101 @@ class AudioPolishTests(unittest.TestCase):
         self.assertNotIn(mine["id"], [p["id"] for p in studio.delete_preset(mine["id"])])
         with self.assertRaises(VoiceError):
             studio.save_preset({"name": " "})
+
+
+class ParallelTests(unittest.TestCase):
+    """Nhiều luồng AI Engine trên GPU: số luồng theo VRAM, đọc nhiều đoạn cùng lúc, hết VRAM thì bớt luồng."""
+
+    def setUp(self):
+        try:
+            video.ffmpeg()
+        except Exception:
+            self.skipTest("không có ffmpeg")
+        self.temp = tempfile.TemporaryDirectory()
+        self.data = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def studio(self, vram):
+        import threading
+
+        class GpuStudio(FakeStudio):
+            def gpu(self):
+                return f"NVIDIA GeForce RTX, {vram} MiB" if vram else ""
+
+            running = peak = 0
+            guard = threading.Lock()
+
+            def synth(self, ref_audio, ref_text, text, out, speed=1.0, timeout=900, nfe=None):
+                cls = type(self)
+                with cls.guard:
+                    cls.running += 1
+                    cls.peak = max(cls.peak, cls.running)
+                time.sleep(.15)
+                tone(out, .4)
+                with cls.guard:
+                    cls.running -= 1
+        return GpuStudio(self.data)
+
+    def test_parallel_follows_vram_and_setting(self):
+        self.assertEqual(self.studio(0).parallel(), 1)          # không có card NVIDIA
+        self.assertEqual(self.studio(4096).parallel(), 2)       # RTX 3050 4 GB
+        self.assertEqual(self.studio(6144).parallel(), 3)
+        studio = self.studio(12288)
+        self.assertEqual(studio.parallel(), 4)
+        studio.save_config({"parallel": 1})
+        self.assertEqual(studio.parallel(), 1)
+        studio.save_config({"parallel": 0, "device": "cpu"})
+        self.assertEqual(studio.parallel(), 1)                  # chạy CPU: một luồng
+
+    def test_chunks_are_read_at_the_same_time(self):
+        studio = self.studio(4096)
+        sample = self.data / "s.wav"
+        tone(sample, 5)
+        profile = studio.add_profile(sample.read_bytes(), "s.wav", "P", "mẫu", consent=True)
+        job = studio.create_job(profile["id"], "\n".join(f"Dòng {i}." for i in range(6)), "", "wav", split="line")
+        started = time.time()
+        studio.process(job["id"])
+        info = studio.public(studio.load_job(job["id"]))
+        self.assertEqual((info["status"], info["done"]), ("done", 6))
+        self.assertEqual(type(studio).peak, 2)
+        self.assertLess(time.time() - started, 6 * .15 + 1.5)
+
+    def test_loop_runs_jobs_together(self):
+        studio = self.studio(4096)
+        sample = self.data / "s.wav"
+        tone(sample, 5)
+        profile = studio.add_profile(sample.read_bytes(), "s.wav", "P", "mẫu", consent=True)
+        project = studio.create_batch(profile["id"], "\n".join(f"Dòng {i}." for i in range(4)), "Dự án")
+        studio.start_group(project["group"], {"format": "wav"})
+        import threading
+        threading.Thread(target=studio.loop, daemon=True).start()
+        studio.wake.set()
+        deadline = time.time() + 20
+        while time.time() < deadline and any(j["status"] != "done" for j in studio.jobs()):
+            time.sleep(.1)
+        self.assertEqual({j["status"] for j in studio.jobs()}, {"done"})
+        self.assertEqual(type(studio).peak, 2)
+
+    def test_out_of_memory_drops_a_worker_and_retries(self):
+        studio = self.studio(4096)
+        calls = []
+
+        def fake_request(slot):
+            def request(payload, timeout, slow):
+                calls.append(slot.index)
+                if slot.index == 1:
+                    raise VoiceError("CUDA out of memory. Tried to allocate 20.00 MiB")
+                return {"ok": True}
+            return request
+        for slot in studio.slots:
+            slot.request = fake_request(slot)
+        studio.slots[0].busy = True  # luồng 1 đang bận → yêu cầu rơi vào luồng 2 (hết VRAM)
+        import threading
+        threading.Timer(.3, lambda: studio.release(studio.slots[0])).start()
+        self.assertTrue(studio.request({"op": "ping"}, timeout=10)["ok"])
+        self.assertEqual(calls, [1, 0])
+        self.assertEqual(studio.parallel(), 1)
+        studio.save_config({"parallel": 0})  # lưu lại cấu hình: thử lại theo VRAM
+        self.assertEqual(studio.parallel(), 2)

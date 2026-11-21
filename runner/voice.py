@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import video_tools as video
@@ -29,6 +30,7 @@ CHUNK_CHARS = 220
 SAMPLE_RATE = 24000
 SILENCE = .28                # khoảng lặng giữa các đoạn (giây)
 FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+MAX_PARALLEL = 4             # tối đa số worker (bản mô hình) đọc cùng lúc
 
 WORKER_SCRIPT = r'''# HanaMedia AI Voice worker (chạy trong venv của engine). Giao thức: mỗi dòng JSON vào stdin → một dòng JSON ra.
 import argparse, json, os, sys, traceback
@@ -330,6 +332,111 @@ def normalize_vi(text):
     return re.sub(r"[ \t]{2,}", " ", text)
 
 
+class EngineWorker:
+    """Một tiến trình worker.py (một bản mô hình F5-TTS trong VRAM)."""
+
+    def __init__(self, studio, index):
+        self.studio, self.index = studio, index
+        self.proc = None
+        self.info = {"ready": False, "device": "", "error": ""}
+        self.responses = {}
+        self.cond = threading.Condition()
+        self.lock = threading.Lock()
+        self.busy = False
+
+    def alive(self):
+        return bool(self.proc and self.proc.poll() is None)
+
+    def start(self):
+        with self.lock:  # trang AI Voice nạp sẵn + hàng đợi có thể gọi cùng lúc
+            self._start()
+
+    def _start(self):
+        studio = self.studio
+        if self.alive() and self.info.get("ready"):
+            return
+        if not studio.installed():
+            raise VoiceError("Chưa cài AI Engine. Bấm “Cài AI Engine” trước.")
+        config = studio.config()
+        if config["mode"] == "commercial" and not config["ckpt"]:
+            raise VoiceError("Chế độ thương mại chưa có checkpoint riêng.")
+        script = studio.engine_dir / "worker.py"
+        script.write_text(WORKER_SCRIPT, encoding="utf-8")
+        args = [str(studio.venv_python), str(script), "--model", config["model"]]
+        for key in ("ckpt", "vocab", "device"):
+            if config[key]:
+                args += [f"--{key}", config[key]]
+        log = open(studio.engine_dir / "worker.log", "a", encoding="utf-8", errors="replace")
+        log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} luồng {self.index + 1}: đang nạp mô hình {config['model']} "
+                  f"{config['ckpt']}\n")
+        log.flush()
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+        # F5-TTS (pydub) và bộ nhận dạng lời mẫu (transformers) gọi chương trình tên "ffmpeg": đưa bản ffmpeg có sẵn của tool
+        # vào thư mục bin riêng với đúng tên đó rồi đặt lên đầu PATH của engine.
+        ffmpeg_bin = studio.ensure_ffmpeg()
+        if ffmpeg_bin:
+            env["PATH"] = str(ffmpeg_bin.parent) + os.pathsep + env.get("PATH", "")
+            env["FFMPEG_BINARY"] = env["IMAGEIO_FFMPEG_EXE"] = str(ffmpeg_bin)
+            args += ["--ffmpeg", str(ffmpeg_bin)]
+        self.proc = studio.popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True, encoding="utf-8",
+                                 errors="replace", cwd=str(studio.engine_dir), env=env, creationflags=FLAGS)
+        self.info = {"ready": False, "device": "", "error": "", "loading": True}
+        threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
+        deadline = time.time() + 1800  # lần đầu tải checkpoint (~1,3 GB) có thể lâu
+        with self.cond:
+            while not self.info.get("ready") and not self.info.get("error") and self.proc.poll() is None:
+                self.cond.wait(timeout=2)
+                if time.time() > deadline:
+                    break
+        if not self.info.get("ready"):
+            error = self.info.get("error") or "AI Engine không khởi động được (xem nhật ký engine)."
+            self.stop()
+            raise VoiceError(error)
+
+    def _read(self, proc):
+        for line in proc.stdout:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            with self.cond:
+                if "ready" in msg:
+                    self.info.update(ready=bool(msg["ready"]), device=msg.get("device", ""), error=msg.get("error", ""),
+                                     loading=False)
+                elif msg.get("id"):
+                    self.responses[msg["id"]] = msg
+                self.cond.notify_all()
+        with self.cond:
+            self.info.update(ready=False, loading=False)
+            self.cond.notify_all()
+
+    def stop(self):
+        proc, self.proc = self.proc, None
+        if proc and proc.poll() is None:
+            try:
+                proc.stdin.close()
+                proc.wait(5)
+            except (OSError, subprocess.SubprocessError):
+                proc.kill()
+        self.info = {"ready": False, "device": "", "error": ""}
+
+    def request(self, payload, timeout, slow):
+        self.start()
+        request_id = uuid.uuid4().hex
+        payload = dict(payload, id=request_id)
+        self.proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self.proc.stdin.flush()
+        deadline = time.time() + timeout
+        with self.cond:
+            while request_id not in self.responses:
+                if not self.alive():
+                    raise VoiceError("AI Engine dừng đột ngột (xem nhật ký engine).")
+                if time.time() > deadline:
+                    raise VoiceError(slow)
+                self.cond.wait(timeout=2)
+            return self.responses.pop(request_id)
+
+
 class VoiceStudio:
     def __init__(self, data_dir, runner=subprocess.run, popen=subprocess.Popen, autostart=True):
         self.root = Path(data_dir) / "voice"
@@ -341,13 +448,13 @@ class VoiceStudio:
         self.run_cmd, self.popen = runner, popen
         self.lock = threading.RLock()
         self.install_state = {"running": False, "phase": "", "error": ""}
-        self.worker = None
-        self.worker_info = {"ready": False, "device": "", "error": ""}
-        self.responses = {}
-        self.response_event = threading.Condition()
-        self.worker_lock = threading.Lock()
+        self.slots = [EngineWorker(self, index) for index in range(MAX_PARALLEL)]
+        self.slot_cond = threading.Condition()
+        self.merge_lock = threading.Lock()
+        self.oom_limit = 0  # 0 = chưa gặp lỗi hết VRAM; >0 = số luồng tối đa card chịu được
         self.wake = threading.Event()
         self.current = None
+        self.active = set()  # tác vụ đang chạy (nhiều tác vụ chạy cùng lúc khi có nhiều luồng)
         for job in self.jobs():  # app tắt giữa chừng: chạy tiếp
             if job["status"] == "running":
                 self.update_job(job["id"], status="waiting", note="Tiếp tục sau khi mở lại app")
@@ -367,7 +474,8 @@ class VoiceStudio:
         return {"model": str(data.get("model") or "F5TTS_v1_Base")[:60], "ckpt": str(data.get("ckpt") or "")[:500],
                 "vocab": str(data.get("vocab") or "")[:500], "device": str(data.get("device") or "")[:20],
                 "mode": "commercial" if data.get("mode") == "commercial" else "development",
-                "nfe": int(data.get("nfe") or 32)}
+                "nfe": int(data.get("nfe") or 32),
+                "parallel": max(0, min(MAX_PARALLEL, int(data.get("parallel") or 0)))}
 
     # ---------- mẫu cài đặt (preset) ----------
     @property
@@ -420,6 +528,9 @@ class VoiceStudio:
             config["mode"] = data["mode"]
         if "nfe" in data:
             config["nfe"] = max(8, min(64, int(data.get("nfe") or 32)))
+        if "parallel" in data:
+            config["parallel"] = max(0, min(MAX_PARALLEL, int(data.get("parallel") or 0)))
+            self.oom_limit = 0
         for key in ("ckpt", "vocab"):
             if config[key] and not Path(config[key]).is_file():
                 raise VoiceError(f"Không thấy file {'checkpoint' if key == 'ckpt' else 'vocab'}: {config[key]}")
@@ -459,6 +570,14 @@ class VoiceStudio:
         return None, ""
 
     def gpu(self):
+        cached = getattr(self, "_gpu_cache", None)
+        if cached and time.time() - cached[0] < 120:
+            return cached[1]
+        value = self._gpu()
+        self._gpu_cache = (time.time(), value)
+        return value
+
+    def _gpu(self):
         if not shutil.which("nvidia-smi"):
             return ""
         try:
@@ -521,70 +640,57 @@ class VoiceStudio:
         python, version = (None, "") if self.install_state["running"] else self.find_python()
         return {"installed": self.installed(), "install": dict(self.install_state), "python": version, "gpu": self.gpu(),
                 "config": self.config(), "worker": dict(self.worker_info, running=self.worker_alive()),
+                "parallel": self.parallel(), "vram": round(self.gpu_memory(), 1),
+                "workers": sum(1 for slot in self.slots if slot.alive() and slot.info.get("ready")),
                 "install_log": tail(self.engine_dir / "install.log"), "worker_log": tail(self.engine_dir / "worker.log", 3000)}
 
-    # ---------- worker ----------
+    # ---------- worker (nhiều worker chạy song song trên GPU) ----------
+    def gpu_memory(self):
+        """VRAM (GB) của card NVIDIA lớn nhất; 0 nếu không có / không đọc được."""
+        match = re.search(r"(\d+)\s*MiB", self.gpu())
+        return int(match.group(1)) / 1024 if match else 0.0
+
+    def parallel(self):
+        """Số worker đọc cùng lúc. Mỗi worker nạp một bản mô hình (~1,5 GB VRAM ở FP16): card 4 GB → 2, 6 GB → 3,
+        8 GB trở lên → 4. Chạy CPU thì 1 (PyTorch đã dùng hết các nhân CPU cho một worker)."""
+        wanted = self.config()["parallel"]
+        if self.config()["device"].lower().startswith("cpu"):
+            return 1
+        vram = self.gpu_memory()
+        auto = max(1, min(MAX_PARALLEL, int((vram - 0.9) // 1.5))) if vram else 1
+        limit = auto if not wanted else min(wanted, MAX_PARALLEL)
+        return max(1, min(limit, self.oom_limit or MAX_PARALLEL))
+
+    @property
+    def worker(self):
+        return self.slots[0].proc
+
+    @property
+    def worker_info(self):
+        return self.slots[0].info
+
     def worker_alive(self):
-        return bool(self.worker and self.worker.poll() is None)
+        return self.slots[0].alive()
 
     def start_worker(self):
-        with self.worker_lock:  # trang AI Voice nạp sẵn + hàng đợi có thể gọi cùng lúc
-            self._start_worker()
+        self.slots[0].start()
 
     def warm(self):
         """Nạp mô hình sẵn ở nền (khi mở trang AI Voice) để lúc bấm Tạo đọc được ngay."""
-        if not self.installed() or self.install_state.get("running") or (self.worker_alive() and self.worker_info.get("ready")):
+        slot = self.slots[0]
+        if not self.installed() or self.install_state.get("running") or (slot.alive() and slot.info.get("ready")):
             return False
-        if self.worker_lock.locked():
+        if slot.lock.locked():
             return False
 
-        def run():
-            try:
-                self.start_worker()
-            except VoiceError:
-                pass
+        def run():  # nạp lần lượt từng luồng (nạp cùng lúc dễ tràn VRAM)
+            for extra in self.slots[:self.parallel()]:
+                try:
+                    extra.start()
+                except VoiceError:
+                    break
         threading.Thread(target=run, daemon=True).start()
         return True
-
-    def _start_worker(self):
-        if self.worker_alive() and self.worker_info.get("ready"):
-            return
-        if not self.installed():
-            raise VoiceError("Chưa cài AI Engine. Bấm “Cài AI Engine” trước.")
-        config = self.config()
-        if config["mode"] == "commercial" and not config["ckpt"]:
-            raise VoiceError("Chế độ thương mại chưa có checkpoint riêng.")
-        script = self.engine_dir / "worker.py"
-        script.write_text(WORKER_SCRIPT, encoding="utf-8")
-        args = [str(self.venv_python), str(script), "--model", config["model"]]
-        for key in ("ckpt", "vocab", "device"):
-            if config[key]:
-                args += [f"--{key}", config[key]]
-        log = open(self.engine_dir / "worker.log", "a", encoding="utf-8", errors="replace")
-        log.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} nạp mô hình {config['model']} {config['ckpt']}\n")
-        log.flush()
-        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
-        # F5-TTS (pydub) và bộ nhận dạng lời mẫu (transformers) gọi chương trình tên "ffmpeg": đưa bản ffmpeg có sẵn của tool
-        # vào thư mục bin riêng với đúng tên đó rồi đặt lên đầu PATH của engine.
-        ffmpeg_bin = self.ensure_ffmpeg()
-        if ffmpeg_bin:
-            env["PATH"] = str(ffmpeg_bin.parent) + os.pathsep + env.get("PATH", "")
-            env["FFMPEG_BINARY"] = env["IMAGEIO_FFMPEG_EXE"] = str(ffmpeg_bin)
-            args += ["--ffmpeg", str(ffmpeg_bin)]
-        self.worker = self.popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True, encoding="utf-8",
-                                 errors="replace", cwd=str(self.engine_dir), env=env, creationflags=FLAGS)
-        self.worker_info = {"ready": False, "device": "", "error": "", "loading": True}
-        threading.Thread(target=self._read_worker, args=(self.worker,), daemon=True).start()
-        deadline = time.time() + 1800  # lần đầu tải checkpoint (~1,3 GB) có thể lâu
-        with self.response_event:
-            while not self.worker_info.get("ready") and not self.worker_info.get("error") and self.worker.poll() is None:
-                self.response_event.wait(timeout=2)
-                if time.time() > deadline:
-                    break
-        if not self.worker_info.get("ready"):
-            error = self.worker_info.get("error") or "AI Engine không khởi động được (xem nhật ký engine)."
-            self.stop_worker()
-            raise VoiceError(error)
 
     def ensure_ffmpeg(self):
         """Bản sao ffmpeg của tool mang đúng tên ffmpeg(.exe) trong engine/bin. None nếu tool không có ffmpeg."""
@@ -603,48 +709,49 @@ class VoiceStudio:
             return None
         return target
 
-    def _read_worker(self, proc):
-        for line in proc.stdout:
-            try:
-                msg = json.loads(line)
-            except ValueError:
-                continue
-            with self.response_event:
-                if "ready" in msg:
-                    self.worker_info.update(ready=bool(msg["ready"]), device=msg.get("device", ""), error=msg.get("error", ""),
-                                            loading=False)
-                elif msg.get("id"):
-                    self.responses[msg["id"]] = msg
-                self.response_event.notify_all()
-        with self.response_event:
-            self.worker_info.update(ready=False, loading=False)
-            self.response_event.notify_all()
-
     def stop_worker(self):
-        proc, self.worker = self.worker, None
-        if proc and proc.poll() is None:
-            try:
-                proc.stdin.close()
-                proc.wait(5)
-            except (OSError, subprocess.SubprocessError):
-                proc.kill()
-        self.worker_info = {"ready": False, "device": "", "error": ""}
+        for slot in self.slots:
+            slot.stop()
+
+    def acquire(self, timeout):
+        """Lấy một worker rảnh trong số `parallel()` worker (worker chưa nạp thì nạp khi dùng tới)."""
+        deadline = time.time() + timeout
+        with self.slot_cond:
+            while True:
+                limit = self.parallel()
+                for slot in self.slots[:limit]:
+                    if not slot.busy:
+                        slot.busy = True
+                        return slot
+                if time.time() > deadline:
+                    raise VoiceError("Các luồng AI Engine đều bận quá lâu.")
+                self.slot_cond.wait(timeout=1)
+
+    def release(self, slot):
+        with self.slot_cond:
+            slot.busy = False
+            self.slot_cond.notify_all()
 
     def request(self, payload, timeout=900, slow="Đọc một đoạn quá lâu, đã dừng."):
-        self.start_worker()
-        request_id = uuid.uuid4().hex
-        payload = dict(payload, id=request_id)
-        self.worker.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        self.worker.stdin.flush()
-        deadline = time.time() + timeout
-        with self.response_event:
-            while request_id not in self.responses:
-                if not self.worker_alive():
-                    raise VoiceError("AI Engine dừng đột ngột (xem nhật ký engine).")
-                if time.time() > deadline:
-                    raise VoiceError(slow)
-                self.response_event.wait(timeout=2)
-            return self.responses.pop(request_id)
+        for _ in range(MAX_PARALLEL):
+            slot = self.acquire(timeout)
+            try:
+                return slot.request(payload, timeout, slow)
+            except VoiceError as error:
+                # Card hết VRAM khi nạp thêm bản mô hình / đọc song song: bớt một luồng rồi đọc lại bằng luồng còn lại.
+                current = self.parallel()
+                if "out of memory" not in str(error).lower() or current == 1:
+                    raise
+                with self.slot_cond:
+                    self.oom_limit = max(1, min(slot.index or current - 1, current - 1))
+                for extra in self.slots[self.oom_limit:]:
+                    if extra is not slot and not extra.busy:
+                        extra.stop()
+                if slot.index >= self.oom_limit:
+                    slot.stop()
+            finally:
+                self.release(slot)
+        raise VoiceError("Card màn hình không đủ bộ nhớ để đọc.")
 
     def prepare_ref(self, ref_audio, ref_text=""):
         """Lời mẫu (do Whisper nghe ra nếu trống) — gọi một lần rồi lưu vào hồ sơ giọng."""
@@ -932,20 +1039,32 @@ class VoiceStudio:
 
     # ---------- vòng chạy tác vụ ----------
     def loop(self):
+        """Chạy cùng lúc tối đa `parallel()` tác vụ (mỗi đoạn văn bản giao cho một luồng AI Engine rảnh)."""
         while True:
             self.wake.wait(5)
             self.wake.clear()
-            waiting = [j for j in self.jobs() if j["status"] == "waiting"]
-            if not waiting or not self.installed():
+            if not self.installed():
                 continue
-            job = sorted(waiting, key=lambda j: j["created"])[0]
+            with self.lock:
+                waiting = sorted((j for j in self.jobs() if j["status"] == "waiting" and j["id"] not in self.active),
+                                 key=lambda j: j["created"])
+                room = self.parallel() - len(self.active)
+                picked = waiting[:max(0, room)]
+                self.active.update(j["id"] for j in picked)
+            for job in picked:
+                threading.Thread(target=self.run_job, args=(job["id"],), daemon=True).start()
+
+    def run_job(self, job_id):
+        try:
+            self.process(job_id)
+        except Exception as error:  # không để vòng chạy chết
             try:
-                self.process(job["id"])
-            except Exception as error:  # không để vòng chạy chết
-                try:
-                    self.update_job(job["id"], status="error", error=str(error)[:400], note="")
-                except VoiceError:
-                    pass
+                self.update_job(job_id, status="error", error=str(error)[:400], note="")
+            except VoiceError:
+                pass
+        finally:
+            with self.lock:
+                self.active.discard(job_id)
             self.wake.set()
 
     def process(self, job_id):
@@ -958,27 +1077,52 @@ class VoiceStudio:
             if not (profile.get("ref_text") or "").strip():
                 self.update_job(job_id, note="Đang nhận dạng lời mẫu (chỉ lần đầu)…")
                 profile = dict(profile, ref_text=self.ensure_ref_text(profile))
-            for index, chunk in enumerate(job["chunks"]):
-                if chunk.get("done") and (folder / f"chunk_{index:04d}.wav").is_file():
-                    continue
-                if self.load_job(job_id)["status"] != "running":
-                    return  # người dùng bấm dừng
-                self.update_job(job_id, note=f"Đang đọc đoạn {index + 1}/{len(job['chunks'])}")
+            todo = [index for index, chunk in enumerate(job["chunks"])
+                    if not (chunk.get("done") and (folder / f"chunk_{index:04d}.wav").is_file())]
+            total = len(job["chunks"])
+            failed = []
+
+            def read(index):
+                if failed or self.load_job(job_id)["status"] != "running":
+                    return  # đoạn khác lỗi hoặc người dùng bấm dừng
                 out = folder / f"chunk_{index:04d}.wav"
                 try:
-                    self.synth(ref, profile.get("ref_text", ""), chunk["text"], out, job["speed"], nfe=job.get("nfe"))
+                    self.synth(ref, profile.get("ref_text", ""), job["chunks"][index]["text"], out, job["speed"],
+                               nfe=job.get("nfe"))
                 except VoiceError as error:
-                    self.update_job(job_id, status="error", error=f"Đoạn {index + 1}: {error}", note="")
+                    failed.append((index, error))
                     return
                 with self.lock:
                     fresh = self.load_job(job_id)
                     fresh["chunks"][index]["done"] = True
-                    fresh["updated"] = time.time()
+                    done = sum(1 for c in fresh["chunks"] if c.get("done"))
+                    fresh.update(updated=time.time(), note=f"Đang đọc {done}/{total} đoạn"
+                                 + (f" · {workers} luồng song song" if workers > 1 else ""))
                     self.save_job(fresh)
+
+            workers = max(1, min(self.parallel(), len(todo)))
+            if todo:
+                self.update_job(job_id, note=f"Đang đọc {total - len(todo)}/{total} đoạn"
+                                + (f" · {workers} luồng song song" if workers > 1 else ""))
+            if workers == 1:
+                for index in todo:
+                    read(index)
+                    if failed:
+                        break
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    list(pool.map(read, todo))
+            if failed:
+                index, error = min(failed, key=lambda item: item[0])
+                self.update_job(job_id, status="error", error=f"Đoạn {index + 1}: {error}", note="")
+                return
+            if self.load_job(job_id)["status"] != "running":
+                return
             self.update_job(job_id, note="Đang ghép và xuất file…")
-            self.last_quiet = []
-            output, seconds = self.merge(job_id)
-            quiet = self.last_quiet
+            with self.merge_lock:  # ghép bằng ffmpeg lần lượt (last_quiet dùng chung)
+                self.last_quiet = []
+                output, seconds = self.merge(job_id)
+                quiet = self.last_quiet
             self.update_job(job_id, status="done", output=output, seconds=seconds,
                             note=(f"Cảnh báo: đoạn {', '.join(map(str, quiet[:10]))} gần như không có tiếng — thử giọng mẫu "
                                   "rõ hơn / có lời mẫu, rồi bấm Tạo lại." if quiet else ""))

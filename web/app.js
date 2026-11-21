@@ -1033,15 +1033,15 @@ function renderVoice(){
   const d=voiceData;if(!d)return;const st=d.status,cfg=st.config,ins=st.install;
   // engine
   const ready=st.installed&&st.worker.running&&st.worker.ready;
-  $('vaEngineText').textContent=ins.running?`Đang cài AI Engine: ${ins.phase}`:!st.installed?'AI Engine chưa cài':ready?`AI Engine sẵn sàng · ${st.worker.device||''}`:st.worker.loading?'Đang nạp mô hình…':'AI Engine đã cài';
+  $('vaEngineText').textContent=ins.running?`Đang cài AI Engine: ${ins.phase}`:!st.installed?'AI Engine chưa cài':ready?`AI Engine sẵn sàng · ${st.worker.device||''}${(st.parallel||1)>1?` · ${st.parallel} luồng`:''}`:st.worker.loading?'Đang nạp mô hình…':'AI Engine đã cài';
   $('vaEnginePill').className='va-engine '+(ready?'on':st.installed?'ok':'off');
   $('vaModelName').textContent=cfg.ckpt?cfg.ckpt.split(/[\\/]/).pop():`${cfg.model} · trên máy`;
   $('voiceEngineChip').textContent=ins.running?'Đang cài…':st.installed?'Đã cài':'Chưa cài';$('voiceEngineChip').className='status-chip '+(st.installed?'ok':ins.running?'warn':'');
   if(!st.installed&&!ins.running)$('voiceEngine').open=true;
-  $('voiceFacts').innerHTML=[['Python',st.python||'chưa có 3.10–3.12'],['Card đồ hoạ',st.gpu||'không thấy NVIDIA (chạy CPU — chậm)'],['Checkpoint',cfg.ckpt?cfg.ckpt.split(/[\\/]/).pop():`${cfg.model} (chính thức · CC BY-NC)`],['Chế độ',cfg.mode==='commercial'?'Thương mại':'Thử nghiệm']].map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
+  $('voiceFacts').innerHTML=[['Python',st.python||'chưa có 3.10–3.12'],['Card đồ hoạ',st.gpu||'không thấy NVIDIA (chạy CPU — chậm)'],['Checkpoint',cfg.ckpt?cfg.ckpt.split(/[\\/]/).pop():`${cfg.model} (chính thức · CC BY-NC)`],['Luồng đọc cùng lúc',`${st.parallel||1}${st.vram?` (card ${st.vram} GB)`:''} · đang nạp ${st.workers||0}`],['Chế độ',cfg.mode==='commercial'?'Thương mại':'Thử nghiệm']].map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
   $('voiceInstall').textContent=st.installed?'Cài lại / cập nhật':'Cài AI Engine';$('voiceInstall').disabled=ins.running;
   $('voiceInstallInfo').textContent=ins.running?`Đang cài: ${ins.phase} (lần đầu tải khoảng 3 GB, 10–30 phút)…`:ins.error?`Lỗi cài đặt: ${ins.error}`:st.worker.error?`Engine: ${st.worker.error}`:st.installed?'Lần tạo đầu tiên engine tự tải checkpoint (~1,3 GB) rồi mới đọc.':'Cần Python 3.10–3.12 trên máy. Có card NVIDIA thì nhanh hơn rất nhiều.';
-  if(!$('voiceEngine').contains(document.activeElement)){$('voiceModel').value=cfg.model;$('voiceCkpt').value=cfg.ckpt;$('voiceVocab').value=cfg.vocab;$('voiceMode').value=cfg.mode;}
+  if(!$('voiceEngine').contains(document.activeElement)){$('voiceModel').value=cfg.model;$('voiceCkpt').value=cfg.ckpt;$('voiceVocab').value=cfg.vocab;$('voiceMode').value=cfg.mode;$('voiceParallel').value=String(cfg.parallel||0);}
   const log=$('voiceLog');const atEnd=log.scrollTop+log.clientHeight>=log.scrollHeight-20;log.textContent=(st.install_log||'')+(st.worker_log?`\n\n----- engine -----\n${st.worker_log}`:'');if(atEnd)log.scrollTop=log.scrollHeight;
   // giọng
   $('vaVoiceCount').textContent=d.profiles.length;
@@ -1127,7 +1127,7 @@ $('vaVoices').onclick=async e=>{const use=e.target.closest('[data-va-use]');if(u
 $('voiceInstall').onclick=async()=>{if(!confirm('Cài AI Engine (PyTorch + F5-TTS) vào thư mục dữ liệu của tool? Lần đầu tải khoảng 3 GB.'))return;try{await api('/api/voice/install',{});loadVoice();toast('Đang cài AI Engine. Theo dõi trong Nhật ký cài đặt.');}catch(error){toast(error.message,true);}};
 $('voiceRestart').onclick=async()=>{try{await api('/api/voice/restart',{});toast('Lần tạo tới sẽ nạp lại mô hình.');loadVoice();}catch(error){toast(error.message,true);}};
 $('voiceOpenRoot').onclick=()=>api('/api/voice/open',{}).catch(e=>toast(e.message,true));
-$('voiceSaveConfig').onclick=async()=>{try{await api('/api/voice/config',{model:$('voiceModel').value,ckpt:$('voiceCkpt').value,vocab:$('voiceVocab').value,mode:$('voiceMode').value});toast('Đã lưu cấu hình engine.');loadVoice();}catch(error){toast(error.message,true);}};
+$('voiceSaveConfig').onclick=async()=>{try{await api('/api/voice/config',{model:$('voiceModel').value,ckpt:$('voiceCkpt').value,vocab:$('voiceVocab').value,mode:$('voiceMode').value,parallel:Number($('voiceParallel').value)||0});toast('Đã lưu cấu hình engine.');loadVoice();}catch(error){toast(error.message,true);}};
 function orderedPrompts(list){
   const first={};for(const j of list){const t=Number(j.created)||0;if(!(j.batch in first)||t<first[j.batch])first[j.batch]=t;}
   return [...list].sort((a,b)=>(first[a.batch]-first[b.batch])||String(a.batch).localeCompare(String(b.batch))||(Number(a.ordinal)||0)-(Number(b.ordinal)||0)||(Number(a.created)||0)-(Number(b.created)||0)).map(j=>String(j.prompt||'').trim()).filter(Boolean);
