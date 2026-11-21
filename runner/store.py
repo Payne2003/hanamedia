@@ -160,6 +160,8 @@ class Store:
                 "progress": "INTEGER NOT NULL DEFAULT 0",
                 # 1 = người dùng tự chọn tài khoản trong Prompt Studio: không chuyển sang tài khoản khác.
                 "assigned_manual": "INTEGER NOT NULL DEFAULT 0",
+                # Ảnh nhân vật cố định (khung bên phải) đã gắn vào prompt: đổi khung thì thay đúng các ảnh này.
+                "fixed_images": "TEXT NOT NULL DEFAULT '[]'",
                 # Ghi chú cảnh cho Prompt Studio: bối cảnh, góc quay, hành vi nhân vật, nội dung hành động (JSON).
                 "details": "TEXT NOT NULL DEFAULT '{}'",
                 # Thiết lập video của từng prompt (gửi kèm yêu cầu cho Muse) và hậu kỳ trên máy (nâng độ phân giải).
@@ -254,12 +256,13 @@ class Store:
         email, mailbox = mailbox_for(email, mailbox)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            account_id = uuid.uuid4().hex
             try:
                 db.execute("INSERT INTO accounts(id,email,mailbox,budget) VALUES(?,?,?,?)",
-                           (uuid.uuid4().hex, email, mailbox, number(budget)))
+                           (account_id, email, mailbox, number(budget)))
             except sqlite3.IntegrityError:
                 raise ValueError("Email này đã có trong danh sách.") from None
-        self.plan_waiting()
+        self.plan_waiting([account_id])  # thêm tài khoản khi đang chạy: nhận ngay phần prompt đang chờ
 
     def add_accounts(self, text, budget):
         """Thêm hàng loạt: mỗi dòng (hoặc cách nhau bởi dấu phẩy/khoảng trắng) một email. Email @tuan89.site tự có link
@@ -270,7 +273,7 @@ class Store:
         if len(emails) > 2000:
             raise ValueError("Mỗi lần thêm tối đa 2.000 email.")
         number(budget)
-        added, duplicate, invalid, seen = 0, 0, [], set()
+        added, duplicate, invalid, seen, fresh = 0, 0, [], set(), []
         for raw in emails:
             try:
                 email, mailbox = mailbox_for(raw, "")
@@ -283,12 +286,14 @@ class Store:
             seen.add(email)
             with self.connect() as db:
                 try:
+                    account_id = uuid.uuid4().hex
                     db.execute("INSERT INTO accounts(id,email,mailbox,budget) VALUES(?,?,?,?)",
-                               (uuid.uuid4().hex, email, mailbox, number(budget)))
+                               (account_id, email, mailbox, number(budget)))
                     added += 1
+                    fresh.append(account_id)
                 except sqlite3.IntegrityError:
                     duplicate += 1
-        self.plan_waiting()
+        self.plan_waiting(fresh)
         return {"added": added, "duplicate": duplicate, "invalid": invalid[:20], "invalid_count": len(invalid)}
 
     def account(self, account_id):
@@ -300,10 +305,13 @@ class Store:
 
     def set_account(self, account_id, state, detail=""):
         with self.connect() as db:
+            before = db.execute("SELECT state FROM accounts WHERE id=?", (account_id,)).fetchone()
             db.execute("UPDATE accounts SET state=?,detail=? WHERE id=?", (state, detail, account_id))
             if state == "ready":  # chỉ gọi 'ready' sau khi đã thấy ô soạn tin Muse: đó là bằng chứng phiên còn sống
                 db.execute("UPDATE accounts SET health='LIVE',last_checked=?,last_error='',check_failures=0 WHERE id=?",
                            (time.time(), account_id))
+        if state == "ready" and before and before["state"] not in ("ready", "busy"):
+            self.replan([account_id])  # vừa đăng nhập / đóng phiên kiểm tra: nhận phần prompt ngay
 
     def begin_check(self, account_id):
         """Giữ chỗ tài khoản để kiểm tra phiên. Trả về {state, health} trước đó, hoặc None nếu tài khoản đang chạy/đăng nhập/
@@ -334,6 +342,15 @@ class Store:
             db.execute("""UPDATE accounts SET state=?,detail=?,health=?,last_checked=?,last_error=?,check_failures=?,
                           health_before='' WHERE id=?""",
                        (state, detail, health, now, "" if health == "LIVE" else error, failures, account_id))
+        if health == "LIVE" and previous not in ("ready", "busy"):
+            self.replan([account_id])
+
+    def replan(self, fresh):
+        """Chia lại prompt đang chờ khi có tài khoản vừa sẵn sàng (CSDL bận thì lần nhận việc sau sẽ chia)."""
+        try:
+            self.plan_waiting(fresh)
+        except sqlite3.OperationalError:
+            pass
 
     def configure_account(self, account_id, enabled, budget, threads=None):
         if threads is not None and threads not in THREAD_CHOICES:
@@ -489,11 +506,12 @@ class Store:
             details = [self.prompt_details(p) or self.scene_details(sources[n] if n < len(sources) else "")
                        for n, p in enumerate(prompts)]
             db.executemany("""INSERT INTO jobs(id,prompt,cost,created,updated,batch,ordinal,images,generation_mode,details,
-                              scene_id,aspect,duration,resolution,assigned_account_id,assigned_manual,folder)
-                              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                              scene_id,aspect,duration,resolution,assigned_account_id,assigned_manual,folder,fixed_images)
+                              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                            [(uuid.uuid4().hex, p.strip(), cost, now, now, batch, start + n, json.dumps(images[n]), mode,
                              json.dumps(details[n], ensure_ascii=False), scene_ids[n], options["aspect"],
-                             durations[n], options["resolution"], account, int(bool(account)), options["folder"])
+                             durations[n], options["resolution"], account, int(bool(account)), options["folder"],
+                             json.dumps(options["characters"]))
                             for n, p in enumerate(prompts)])
             db.execute("INSERT OR IGNORE INTO batch_options(batch,stitch,created) VALUES(?,?,?)",
                        (batch, int(options["stitch"]), now))
@@ -706,8 +724,9 @@ class Store:
             job["progress"] = 3
             return job, account
 
-    def plan_waiting(self):
-        """Balance unassigned prompts across eligible accounts and retain each assignment."""
+    def plan_waiting(self, fresh=None):
+        """Balance unassigned prompts across eligible accounts and retain each assignment.
+        fresh: id các tài khoản vừa sẵn sàng — được chia thêm prompt đang chờ của tài khoản khác."""
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             accounts = [dict(row) for row in db.execute(
@@ -759,7 +778,31 @@ class Store:
                            (account["id"], job["id"]))
                 budgets[account["id"]] -= job["cost"]
                 counts[account["id"]] += 1
-            return len(unassigned)
+            # Tài khoản VỪA sẵn sàng (thêm mới, đăng nhập lại, kiểm tra xong, hết giới hạn) nhận ngay phần prompt đang chờ
+            # của tài khoản đang ôm nhiều hơn, kể cả khi đang chạy. Tài khoản chạy xong phần mình thì vẫn CHỜ như cũ (không
+            # lấy prompt của tài khoản khác). Prompt người dùng tự chọn nick (assigned_manual) giữ nguyên.
+            moved = 0
+            for receiver in [a for a in accounts if a["id"] in set(fresh or ())]:
+                movable = {a["id"]: [dict(row) for row in db.execute(
+                    """SELECT id,cost FROM jobs WHERE status='waiting' AND assigned_manual=0 AND assigned_account_id=?
+                       ORDER BY created DESC,rowid DESC""", (a["id"],))] for a in accounts if a["id"] != receiver["id"]}
+                while True:
+                    donors = [a for a in accounts if movable.get(a["id"])]
+                    if not donors:
+                        break
+                    donor = max(donors, key=lambda item: (counts[item["id"]], -item["rowid"]))
+                    job = movable[donor["id"]][0]
+                    if (counts[donor["id"]] - counts[receiver["id"]] <= 1
+                            or budgets[receiver["id"]] + 0.000001 < job["cost"]):
+                        break
+                    movable[donor["id"]].pop(0)
+                    db.execute("UPDATE jobs SET assigned_account_id=? WHERE id=?", (receiver["id"], job["id"]))
+                    counts[donor["id"]] -= 1
+                    counts[receiver["id"]] += 1
+                    budgets[donor["id"]] += job["cost"]
+                    budgets[receiver["id"]] -= job["cost"]
+                    moved += 1
+            return len(unassigned) + moved
 
     def phase(self, job_id, phase, source_url=None):
         progress = self.phase_progress(phase)
@@ -886,6 +929,43 @@ class Store:
         self.cleanup_images()
         return self.job_detail(job_id)
 
+    def apply_waiting(self, options, previous=None):
+        """Áp thiết lập video ở khung bên phải (tỉ lệ, thời lượng, độ phân giải, ảnh nhân vật cố định) cho MỌI prompt
+        đang chờ, chưa gửi Muse — không phải dán lại prompt. previous: ảnh cố định cũ (cho prompt thêm từ bản trước,
+        chưa ghi fixed_images). Trả về số prompt đã cập nhật."""
+        options = video_options(options)
+        fixed = options["characters"]
+        for token in fixed:
+            if not self.image_file(token):
+                raise ValueError("Ảnh nhân vật cố định không còn trong thư viện.")
+        previous = [t for t in (previous if isinstance(previous, list) else [])
+                    if isinstance(t, str) and re.fullmatch(r"[a-f0-9]{32}", t)][:10]
+        changed, skipped = 0, 0
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute("SELECT id,prompt,images,fixed_images,generation_mode,aspect,duration,resolution FROM jobs "
+                              "WHERE status='waiting'").fetchall()
+            for row in rows:
+                images = json.loads(row["images"] or "[]")
+                old = set(json.loads(row["fixed_images"] or "[]")) | set(previous)
+                own = [t for t in images if t not in old]
+                merged = list(dict.fromkeys(fixed + own))
+                if len(merged) > 10:
+                    skipped += 1
+                    merged = merged[:10]
+                mode = "image" if merged else "text"
+                duration = prompt_seconds(row["prompt"]) or options["duration"]
+                values = (options["aspect"], duration, options["resolution"], json.dumps(merged), json.dumps(fixed), mode)
+                if values == (row["aspect"], row["duration"], row["resolution"], row["images"], row["fixed_images"],
+                              row["generation_mode"]):
+                    continue
+                db.execute("UPDATE jobs SET aspect=?,duration=?,resolution=?,images=?,fixed_images=?,generation_mode=?,"
+                           "updated=? WHERE id=?", values + (time.time(), row["id"]))
+                changed += 1
+        if changed:
+            self.cleanup_images()
+        return {"updated": changed, "trimmed": skipped}
+
     def rerun(self, job_id, confirmed=False):
         """Đưa một prompt đã Xong hoặc Lỗi về Chờ để chạy lại. File video cũ vẫn giữ trong thư mục lưu."""
         with self.connect() as db:
@@ -928,8 +1008,13 @@ class Store:
     def release_limits(self):
         """Hạn mức đã đặt lại: cho tài khoản chạy tiếp."""
         with self.connect() as db:
+            now = time.time()
+            fresh = [row[0] for row in db.execute(
+                "SELECT id FROM accounts WHERE state='limited' AND limited_until>0 AND limited_until<=?", (now,))]
             db.execute("""UPDATE accounts SET state='ready',detail='Hạn mức đã đặt lại; tài khoản chạy tiếp.',limited_until=0
-                          WHERE state='limited' AND limited_until>0 AND limited_until<=?""", (time.time(),))
+                          WHERE state='limited' AND limited_until>0 AND limited_until<=?""", (now,))
+        if fresh:
+            self.plan_waiting(fresh)
 
     def requeue_failed(self, job_id, note, refund=True, limit=None):
         """Muse không tạo được video (lỗi, hết hạn mức, quá lâu không trả video): đưa tác vụ về hàng đợi để chạy lại, có thể

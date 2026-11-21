@@ -550,7 +550,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({"error": "Không ghi được file vào thư mục dữ liệu. Kiểm tra dung lượng ổ đĩa và quyền ghi."}, 500)
 
     # Bản quyền: chạy video / tải media cần quyền tương ứng còn hạn. Xem dữ liệu, cài đặt, kích hoạt luôn được phép.
-    JOB_PATHS = {"/api/jobs", "/api/jobs/reprompt", "/api/start", "/api/jobs/update", "/api/jobs/rerun", "/api/retry", "/api/jobs/fetch", "/api/batch/stitch",
+    JOB_PATHS = {"/api/jobs", "/api/jobs/reprompt", "/api/start", "/api/jobs/update", "/api/jobs/apply-settings", "/api/jobs/rerun", "/api/retry", "/api/jobs/fetch", "/api/batch/stitch",
                  "/api/jobs/characters", "/api/jobs/attach-characters", "/api/login", "/api/accounts/login-all",
                  "/api/review", "/api/accounts/check", "/api/accounts/check-all",
                  "/api/production/agent/run", "/api/production/agent/approve", "/api/production/agent/api-test",
@@ -1552,6 +1552,10 @@ class Handler(BaseHTTPRequestHandler):
                                        body.get("mode", "text"), account, body.get("video"))
                 engine.changed.set()
                 return self.reply({"ok": True, "job": job})
+            elif path == "/api/jobs/apply-settings":
+                result = store.apply_waiting(body.get("options"), body.get("previous"))
+                engine.changed.set()
+                return self.reply({"ok": True, **result})
             elif path in ("/api/jobs/characters", "/api/jobs/attach-characters"):
                 registry = store.characters
                 if path == "/api/jobs/characters":

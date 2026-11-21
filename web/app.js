@@ -1684,7 +1684,24 @@ function videoOptions(){
   return {aspect:$('vAspect').value,duration:Number($('vDuration').value)||0,resolution:$('vResolution').value,
     stitch:$('vStitch').checked,characters:fixedCharacters.map(c=>c.token),account_id:$('vAccount').value||null,folder:$('vProject').value.trim()};
 }
-function saveVideoSettings(){try{localStorage.setItem(VIDEO_KEY,JSON.stringify({...videoOptions(),fixed:fixedCharacters}));}catch{}}
+function saveVideoSettings(){try{localStorage.setItem(VIDEO_KEY,JSON.stringify({...videoOptions(),fixed:fixedCharacters}));}catch{}queueSettings();}
+// Đổi tỉ lệ / thời lượng / độ phân giải / ảnh nhân vật ở khung bên phải: tự áp cho MỌI prompt đang chờ trong hàng đợi
+// (không phải dán lại prompt rồi thêm vào hàng đợi). Prompt đang chạy / đã xong giữ nguyên.
+let appliedSettings=null,appliedFixed=[],applyTimer=0;
+function settingsSig(){const o=videoOptions();return JSON.stringify([o.aspect,o.duration,o.resolution,o.characters]);}
+function queueSettings(){
+  if(appliedSettings===null||settingsSig()===appliedSettings)return;
+  clearTimeout(applyTimer);applyTimer=setTimeout(applySettingsToQueue,500);
+}
+async function applySettingsToQueue(){
+  const sig=settingsSig(),options=videoOptions(),previous=appliedFixed;
+  if(sig===appliedSettings)return;
+  try{
+    const r=await api('/api/jobs/apply-settings',{options:{aspect:options.aspect,duration:options.duration,resolution:options.resolution,characters:options.characters},previous});
+    appliedSettings=sig;appliedFixed=options.characters;
+    if(r.updated){toast(`Đã cập nhật ${r.updated} prompt đang chờ theo thiết lập mới${r.trimmed?` (${r.trimmed} prompt quá 10 ảnh — giữ 10 ảnh đầu)`:''}.`);refresh();}
+  }catch(error){toast(error.message,true);}
+}
 function loadVideoSettings(){
   try{const v=JSON.parse(localStorage.getItem(VIDEO_KEY)||'null');if(!v)return;
     for(const [id,key] of [['vAspect','aspect'],['vResolution','resolution']])if([...$(id).options].some(o=>o.value===v[key]))$(id).value=v[key];
@@ -1727,7 +1744,7 @@ $('vStitch').addEventListener('change',()=>{if($('vStitch').checked&&stitchHidde
 $('vCharacters').onclick=()=>openPicker('characters');
 $('vClearCharacters').onclick=()=>{fixedCharacters=[];saveVideoSettings();renderFixedCharacters();};
 $('vCharacterChips').onclick=e=>{const b=e.target.closest('[data-remove-fixed]');if(!b)return;fixedCharacters.splice(Number(b.dataset.removeFixed),1);saveVideoSettings();renderFixedCharacters();}
-loadVideoSettings();renderFixedCharacters();if(state){renderNickOptions();renderStitchPanel();}
+loadVideoSettings();renderFixedCharacters();appliedSettings=settingsSig();appliedFixed=fixedCharacters.map(c=>c.token);if(state){renderNickOptions();renderStitchPanel();}
 
 // ===== Thanh hỗ trợ trên cùng (lời nhắn, SĐT, ảnh QR do người dùng tải lên; không có popup) =====
 function renderSupport(){
