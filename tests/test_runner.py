@@ -180,6 +180,68 @@ class StoreTests(unittest.TestCase):
             counts[job["assigned_account_id"]] += 1
         self.assertEqual(list(counts.values()), [3, 3])
 
+    def test_new_ready_account_takes_waiting_prompts_while_running(self):
+        first = self.account("first")
+        self.store.enqueue([f"Scene {index}" for index in range(6)], 1, uuid.uuid4().hex)
+        job, _ = self.store.claim(2)  # tài khoản 1 đang chạy, 5 prompt chờ vẫn chia cho nó
+        second = self.account("second")  # thêm tài khoản giữa chừng: nhận ngay phần chia
+        counts = {}
+        for item in self.store.snapshot()["jobs"]:
+            if item["status"] == "waiting":
+                counts[item["assigned_account_id"]] = counts.get(item["assigned_account_id"], 0) + 1
+        self.assertEqual(counts, {first["id"]: 2, second["id"]: 3})
+        # Tài khoản cần đăng nhập lại: prompt chuyển hết sang tài khoản khác; đăng nhập xong (ready) thì chia lại ngay.
+        self.store.set_account(second["id"], "attention", "Cần đăng nhập")
+        self.store.plan_waiting()
+        waiting = [j for j in self.store.snapshot()["jobs"] if j["status"] == "waiting"]
+        self.assertTrue(all(j["assigned_account_id"] == first["id"] for j in waiting))
+        self.store.set_account(second["id"], "ready")
+        waiting = [j for j in self.store.snapshot()["jobs"] if j["status"] == "waiting"]
+        self.assertEqual(sum(j["assigned_account_id"] == second["id"] for j in waiting), 3)
+        self.assertEqual(job["account_id"], first["id"])
+
+    def test_manual_assignment_is_not_rebalanced(self):
+        first = self.account("first")
+        self.store.enqueue(["A", "B", "C", "D"], 1, uuid.uuid4().hex, options={"account_id": first["id"]})
+        self.account("second")
+        self.assertTrue(all(j["assigned_account_id"] == first["id"] for j in self.store.snapshot()["jobs"]))
+
+    def test_settings_panel_applies_to_waiting_prompts(self):
+        old = self.store.add_image(b"\x89PNG\r\n\x1a\nold")["token"]
+        new = self.store.add_image(b"\x89PNG\r\n\x1a\nnew")["token"]
+        own = self.store.add_image(b"\x89PNG\r\n\x1a\nown")["token"]
+        self.store.enqueue(["Plain scene", "Generate a 3-second shot"], 1, uuid.uuid4().hex, [[own], []],
+                           options={"aspect": "16:9", "duration": 5, "characters": [old]})
+        self.store.enqueue(["Text only"], 1, uuid.uuid4().hex)
+        result = self.store.apply_waiting({"aspect": "9:16", "duration": 8, "resolution": "1080p", "characters": [new]})
+        self.assertEqual(result["updated"], 3)
+        jobs = {j["prompt"]: self.store.job_detail(j["id"]) for j in self.store.snapshot()["jobs"]}
+        with self.store.connect() as db:
+            rows = {r["prompt"]: dict(r) for r in db.execute("SELECT * FROM jobs")}
+        self.assertEqual(json.loads(rows["Plain scene"]["images"]), [new, own])
+        self.assertEqual(json.loads(rows["Generate a 3-second shot"]["images"]), [new])
+        self.assertEqual(json.loads(rows["Text only"]["images"]), [new])
+        self.assertEqual({r["generation_mode"] for r in rows.values()}, {"image"})
+        self.assertEqual(rows["Plain scene"]["duration"], 8)
+        self.assertEqual(rows["Generate a 3-second shot"]["duration"], 3)
+        self.assertEqual({(r["aspect"], r["resolution"]) for r in rows.values()}, {("9:16", "1080p")})
+        self.assertTrue(jobs)
+        # Bỏ hết nhân vật cố định: prompt chỉ còn ảnh riêng, không ảnh thì về text → video.
+        self.store.apply_waiting({"aspect": "9:16", "duration": 8, "resolution": "1080p", "characters": []})
+        with self.store.connect() as db:
+            rows = {r["prompt"]: dict(r) for r in db.execute("SELECT * FROM jobs")}
+        self.assertEqual(json.loads(rows["Plain scene"]["images"]), [own])
+        self.assertEqual(rows["Text only"]["generation_mode"], "text")
+        self.assertEqual(self.store.apply_waiting({"aspect": "9:16", "duration": 8, "resolution": "1080p"})["updated"], 0)
+
+    def test_settings_panel_leaves_running_prompts(self):
+        self.account()
+        self.store.enqueue(["One", "Two"], 1, uuid.uuid4().hex, options={"aspect": "16:9"})
+        job, _ = self.store.claim(1)
+        self.assertEqual(self.store.apply_waiting({"aspect": "1:1"})["updated"], 1)
+        with self.store.connect() as db:
+            self.assertEqual(db.execute("SELECT aspect FROM jobs WHERE id=?", (job["id"],)).fetchone()[0], "16:9")
+
     def test_images_are_attached_to_claimed_jobs_and_removed_with_jobs(self):
         image = b"\x89PNG\r\n\x1a\nfixture"
         token = self.store.add_image(image)["token"]
