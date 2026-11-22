@@ -5,6 +5,8 @@ from runner.muse import MuseBrowser
 
 
 class FakeDriver:
+    current_url = "https://muse.ai/"
+
     def __init__(self, side=True):
         self.side, self.visited, self.scripts = side, [], []
 
@@ -14,9 +16,11 @@ class FakeDriver:
     def execute_script(self, script):
         self.scripts.append(script)
         if script is MuseBrowser.JS_SIDE_CHAT:
-            return "row" if self.side else ""
+            return "row:button" if self.side else "no-plus"
         if script is MuseBrowser.JS_NEW_CHAT:
             return True
+        if "outerHTML" in script:
+            return "<aside>Đoạn chat phụ</aside>"
         return 0
 
 
@@ -45,8 +49,16 @@ class SideChatTests(unittest.TestCase):
         self.assertNotIn(MuseBrowser.JS_SIDE_CHAT, b.driver.scripts)
 
     def test_falls_back_to_main_chat_without_the_button(self):
+        import tempfile
+        from pathlib import Path
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
         b = browser(True, has_button=False)
+        b.profile = Path(temp.name) / "profiles" / "abc"
         b.new_chat()
+        debug = Path(temp.name) / "logs" / "muse-side-chat-debug.html"
+        self.assertIn("no-plus", debug.read_text(encoding="utf-8"))
+        self.assertIn("no-plus", b.phases[-1])
         self.assertIn("dùng Đoạn chat chính", b.phases[-1])
         self.assertEqual(b.driver.visited, ["https://muse.ai", "https://muse.ai"])
 
