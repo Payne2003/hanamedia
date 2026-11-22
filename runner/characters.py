@@ -129,6 +129,28 @@ class CharacterRegistry:
             db.execute("UPDATE projects SET updated=? WHERE id=?", (now, project_id))
         return ids
 
+    def import_workflow(self, name, characters, scenes):
+        """Kết quả workflow Universal (hanamedia_*.json): tạo dự án Character Master với nhân vật + cảnh và gắn nhân vật vào
+        từng cảnh (nguồn "ai") — tool dựa vào đây để báo cảnh nào cần ảnh tham chiếu nào. Trả về {project_id, scene_ids}.
+        characters: [{code, name, description, image_prompt}]; scenes: [{prompt, characters: [mã]}]."""
+        project_id = self.create_project(name)
+        by_code = {}
+        for item in characters or []:
+            label = text(item.get("name") or item.get("code"), 200)
+            if not label:
+                continue
+            made = self.add_character(project_id, label, item.get("description") or "", item.get("image_prompt") or "",
+                                      item.get("code") or label)
+            for key in {character_code(item.get("code") or label), made["code"]}:
+                by_code[key] = made["id"]
+        rows = [{"prompt": s.get("prompt"), "source": "workflow:" + str(name)[:80]} for s in scenes]
+        scene_ids = [sid for start in range(0, len(rows), 500) for sid in self.add_scenes(project_id, rows[start:start + 500])]
+        for scene_id, scene in zip(scene_ids, scenes):
+            wanted = [by_code[character_code(c)] for c in scene.get("characters") or [] if character_code(c) in by_code]
+            if wanted:
+                self.set_scene_characters(scene_id, wanted, source="ai")
+        return {"project_id": project_id, "scene_ids": scene_ids, "characters": len(by_code)}
+
     def set_scene_prompt(self, scene_id, prompt):
         check_id(scene_id, "Cảnh")
         with self.store.connect() as db:
@@ -644,6 +666,27 @@ def _attach_job_characters(registry, job_id, confirm=False):
     return tokens
 
 
+def _attach_waiting(registry, character_id):
+    """Nhân vật vừa có ảnh Master: gắn ảnh nhân vật vào mọi prompt ĐANG CHỜ dùng nhân vật này (qua cảnh hoặc chọn riêng) mà
+    đủ ảnh Master cho mọi nhân vật của prompt. Không đè ảnh người dùng tự gắn. Trả về số prompt đã gắn."""
+    check_id(character_id, "Nhân vật")
+    with registry.store.connect() as db:
+        rows = db.execute("""SELECT j.id,j.images,j.images_origin FROM jobs j WHERE j.status='waiting' AND
+            (j.character_ids LIKE ? OR (j.scene_id IN (SELECT scene_id FROM scene_characters WHERE character_id=?)))""",
+                          (f'%"{character_id}"%', character_id)).fetchall()
+    done = 0
+    for row in rows:
+        if json.loads(row["images"] or "[]") and row["images_origin"] == "manual":
+            continue
+        try:
+            registry.attach_job_characters(row["id"], confirm=True)
+            done += 1
+        except ValueError:
+            continue  # prompt còn nhân vật khác chưa có ảnh Master, hoặc đang chạy: bỏ qua
+    return done
+
+
+CharacterRegistry.attach_waiting = _attach_waiting
 CharacterRegistry.job_characters = _job_characters
 CharacterRegistry.set_job_characters = _set_job_characters
 CharacterRegistry.attach_job_characters = _attach_job_characters

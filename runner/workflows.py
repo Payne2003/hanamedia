@@ -38,7 +38,7 @@ DEFAULT = {
 }
 
 
-BUILTIN = ("wildlife", "thoai-phim")
+BUILTIN = ("wildlife", "thoai-phim", "universal")
 
 
 CLAUDE_TOOLS = ",".join(["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "Skill", "TodoWrite"] + [
@@ -161,6 +161,31 @@ class Workflows:
             (path / "skills").mkdir(parents=True, exist_ok=True)
             self.write_json(path / "workflow.json", {k: v for k, v in DEFAULT.items() if k != "slug"})
         self.ensure_narration()
+        self.ensure_universal()
+
+    def ensure_universal(self):
+        """Workflow "Universal" (8 module): tạo lần đầu kèm bộ kỹ năng gốc + file bài học; file đã có thì KHÔNG ghi đè."""
+        from . import universal_skills as pack
+        path = self.root / pack.SLUG
+        if not (path / "workflow.json").is_file():
+            self.write_json(path / "workflow.json", pack.WORKFLOW)
+        lessons = path / "lessons.md"
+        if not lessons.exists():
+            lessons.write_text(pack.LESSONS_TEMPLATE, encoding="utf-8", newline="\n")
+        marker = path / "skills" / ".builtin"
+        if marker.is_file():
+            return
+        for rel, text in pack.files().items():
+            target = path / "skills" / rel
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8", newline="\n")
+        marker.write_text("1", encoding="utf-8")
+
+    def lessons(self, slug="universal"):
+        """Các bài học lỗi đã rút ra (chung cho mọi dự án của workflow Universal)."""
+        text = self.read_tail(self.root / slug / "lessons.md", 20000)
+        return [line[2:].strip() for line in text.splitlines() if line.startswith("- [")]
 
     def ensure_narration(self):
         """Workflow "Thoại phim": tạo lần đầu kèm bộ kỹ năng gốc; file đã có trên máy thì KHÔNG ghi đè (bản máy là bản chính)."""
@@ -345,6 +370,15 @@ class Workflows:
             handle.write(entry)
         return self.requests(slug)
 
+    def report_error(self, slug, text, context=""):
+        """Người dùng báo lỗi video: thành một yêu cầu thay đổi mang nhãn «LỖI VIDEO». Lần chạy "chỉ áp dụng yêu cầu"
+        (hoặc lần chạy kế) AI chẩn đoán module gây lỗi, sửa kỹ năng và ghi bài học chung."""
+        text = clean(text, MAX_REQUEST - 2000)
+        if not text:
+            raise WorkflowError("Mô tả lỗi bạn thấy trong video.")
+        body = "LỖI VIDEO: " + text + (f"\nBối cảnh: {clean(context, 1800)}" if context else "")
+        return self.add_request(slug, body, "adaptive-quality-control" if slug == "universal" else "")
+
     def clear_requests(self, slug):
         path = self.folder(slug)
         (path / "requests.md").unlink(missing_ok=True)
@@ -379,6 +413,14 @@ class Workflows:
             "- Không có requests.md hoặc file trống thì bỏ qua bước này.",
             "",
         ]
+        if slug == "universal":
+            from . import universal_skills as pack
+            lines[7:7] = [
+                f"- Mục nào bắt đầu bằng nhãn «LỖI VIDEO» là LỖI NGƯỜI DÙNG BÁO về một video Muse đã tạo. Với từng mục: "
+                f"(1) chẩn đoán lỗi do module nào (xem kỹ năng {pack.QC}); (2) sửa ĐÚNG SKILL.md của module đó để lỗi "
+                f"không lặp lại; (3) thêm một dòng vào mục «Luật hiện hành» của {pack.LESSONS} theo mẫu trong file "
+                "(gộp nếu trùng ý với luật đã có, giữ file ngắn gọn); (4) ghi vào CHANGELOG.md module nào đã sửa và vì sao.",
+            ]
         if mode == "apply":
             lines.append("BƯỚC 2 — CHỈ sửa kỹ năng theo yêu cầu, KHÔNG chạy workflow. Trả lời ngắn gọn đã sửa những gì.")
         else:
