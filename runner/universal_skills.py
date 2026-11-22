@@ -19,7 +19,7 @@ LESSONS = "workflows/universal/lessons.md"
 
 # Bản cũ (chưa sửa tay) của các kỹ năng đã nâng cấp: sha256 16 ký tự đầu. File trên máy trùng bản cũ thì tool thay bằng bản mới.
 UPGRADES = {
-    f"{CONDUCTOR}/SKILL.md": ("1ace46fa19b76644",),
+    f"{CONDUCTOR}/SKILL.md": ("1ace46fa19b76644", "c55b238635204502"),
     f"{ASSETS}/SKILL.md": ("63dbcef80ac2238b",),
 }
 REFERENCE_RULE = (
@@ -65,6 +65,8 @@ description: "Điều phối workflow Universal: video tham chiếu + kịch b�
 Đầu vào (thư mục HanaMedia):
 - `input/<ten-ngan>.mp4` video tham chiếu (có thể không có nếu chỉ có chủ đề trong brief).
 - `input/<ten-ngan>_pack/` (nếu có): `shots.txt`, `sheets/*.jpg` + `sheets.txt`, `motion.txt`. Dùng luôn, xem ĐỦ mọi tờ ảnh.
+- **Nhiều video trong `input/`:** nếu người dùng nêu tên dự án (vd «cho dự án X») thì CHỈ làm `input/X.*` + `input/X_pack/`
+  và ghi kết quả vào `output/X/`; tuyệt đối không đụng các video / dự án khác trong `input/`.
 - `workflows/universal/brief.json`: `topic` (chủ đề/kịch bản), `genre`, `language`, `note`.
 - **`{LESSONS}`: ĐỌC TRƯỚC TIÊN.** Đây là các luật rút ra từ lỗi video đã gặp; mọi module phải tuân theo.
 
