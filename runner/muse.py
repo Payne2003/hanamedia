@@ -487,6 +487,10 @@ const press=e => { const r=e.getBoundingClientRect(), o={bubbles:true,cancelable
   for (const t of ['pointerover','pointerenter','mouseover','pointerdown','mousedown','pointerup','mouseup','click'])
     e.dispatchEvent(new (t.startsWith('pointer')?PointerEvent:MouseEvent)(t,o)); };
 const all=[...document.querySelectorAll('body *')].filter(visible);
+const clickable=e => e.closest('button,[role="button"],a') || e;
+// Chưa có đoạn chat phụ nào: khung trống "Bắt đầu đoạn chat phụ" có nút "Đoạn chat phụ mới".
+const fresh=all.find(e => /^đoạn chat phụ mới$/i.test(text(e)) && e.closest('button,[role="button"],a'));
+if (fresh) { press(clickable(fresh)); return 'row:empty-state'; }
 const direct=all.find(e => /(đoạn chat phụ|chat phụ|side chat)/.test(label(e)) && /(mới|thêm|tạo|new|add|create|\+)/.test(label(e)));
 if (direct) { press(direct); return 'aria:' + label(direct).trim(); }
 const heads=all.filter(e => /^(đoạn chat phụ|side chats?)$/i.test(text(e)) &&
@@ -502,6 +506,11 @@ for (const head of heads) {
     const pick=cands.find(c => c.matches('button,[role="button"]')) || cands.find(c => c.matches('svg')) || cands[0];
     if (pick) { press(pick.closest('button,[role="button"]') || pick); return 'row:' + pick.tagName.toLowerCase(); }
   }
+}
+if (!heads.length) {
+  // Cửa sổ hẹp: danh sách bị thu gọn thành nút "≡ Đoạn chat" — mở danh sách rồi tìm lại.
+  const toggle=all.find(e => /^đoạn chat$/i.test(text(e)) && e.closest('button,[role="button"],a'));
+  if (toggle) { press(clickable(toggle)); return 'toggle'; }
 }
 return heads.length ? 'no-plus' : 'no-header';
 """
@@ -566,10 +575,15 @@ return location.href + '|' + [...document.querySelectorAll('[role="log"] [data-m
             before = self.driver.execute_script(self.JS_PAGE_SIGNATURE)
         except Exception:
             before = ""
-        try:
-            clicked = self.driver.execute_script(self.JS_SIDE_CHAT) or ""
-        except Exception as error:
-            clicked = f"lỗi {type(error).__name__}"
+        clicked = ""
+        for _ in range(3):  # "toggle": vừa mở danh sách đoạn chat bị thu gọn → tìm lại nút
+            try:
+                clicked = self.driver.execute_script(self.JS_SIDE_CHAT) or ""
+            except Exception as error:
+                clicked = f"lỗi {type(error).__name__}"
+            if clicked != "toggle":
+                break
+            time.sleep(1)
         self.side_chat_result = clicked
         if not clicked.startswith(("aria", "row")):
             self.write_side_chat_debug(clicked)
