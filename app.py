@@ -866,7 +866,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def pick_video(self):
+    def pick_videos(self):
+        """Hộp chọn NHIỀU video một lần. Trả về danh sách đường dẫn (rỗng nếu bấm Hủy)."""
+        return [line.strip() for line in self.pick_video(multi=True).splitlines() if line.strip()][:100]
+
+    def pick_video(self, multi=False):
         """Hộp chọn video gốc của Windows (tiến trình riêng vì Tk cần luồng chính). Trả về đường dẫn hoặc ''."""
         if not self.server.folder_lock.acquire(blocking=False):
             raise ValueError("Hộp chọn file đang mở.")
@@ -874,11 +878,11 @@ class Handler(BaseHTTPRequestHandler):
             if frozen():
                 answer = DATA / ".video-choice.txt"
                 answer.unlink(missing_ok=True)
-                result = subprocess.run([sys.executable, "--pick-video", str(answer)], timeout=300)
+                result = subprocess.run([sys.executable, "--pick-video", str(answer)] + (["--multi"] if multi else []), timeout=300)
                 chosen = answer.read_text(encoding="utf-8").strip() if answer.is_file() else ""
                 answer.unlink(missing_ok=True)
             else:
-                result = subprocess.run([sys.executable, str(ROOT / "folder_picker.py"), "--video"],
+                result = subprocess.run([sys.executable, str(ROOT / "folder_picker.py"), "--video"] + (["--multi"] if multi else []),
                                         capture_output=True, timeout=300, encoding="utf-8")
                 chosen = (result.stdout or "").strip()
             if result.returncode:
@@ -897,12 +901,14 @@ class Handler(BaseHTTPRequestHandler):
         return self.is_owner() or self.server.license.allows(feature)
 
     def can_workflow(self, slug):
-        return slug == "wildlife" or self.is_owner() or (slug == "thoai-phim" and self.can("narration"))
+        return (slug == "wildlife" or self.is_owner() or (slug == "thoai-phim" and self.can("narration"))
+                or (slug == "universal" and self.can("universal")))
 
     def features(self):
         owner = self.is_owner()
         return {"owner": owner, "ai_voice": owner or self.server.license.allows("ai_voice"),
                 "narration": owner or self.server.license.allows("narration"),
+                "universal": owner or self.server.license.allows("universal"),
                 "veo_short": False}  # Short Veo hàng loạt đã bỏ
 
     def short_action(self, path, body):
@@ -962,14 +968,15 @@ class Handler(BaseHTTPRequestHandler):
             allowed = {"/api/workflows/list", "/api/workflows/status", "/api/workflows/run", "/api/workflows/stop",
                        "/api/workflows/prompt", "/api/workflows/request", "/api/workflows/clear-requests",
                        "/api/workflows/sync", "/api/workflows/open"}
-            if not self.can("narration") or path not in allowed or \
-                    (path != "/api/workflows/list" and slug != "thoai-phim" and not (path == "/api/workflows/status" and slug == "wildlife")):
+            ok_slugs = [x for x, feature in (("thoai-phim", "narration"), ("universal", "universal")) if self.can(feature)]
+            if not ok_slugs or path not in allowed or \
+                    (path != "/api/workflows/list" and slug not in ok_slugs and not (path == "/api/workflows/status" and slug == "wildlife")):
                 return self.reply({"error": "Tài khoản này không có quyền dùng phần này."}, 403)
         try:
             if path == "/api/workflows/list":
                 items = flows.list()
                 if limited:
-                    items = [w for w in items if w["slug"] in ("wildlife", "thoai-phim")]
+                    items = [w for w in items if w["slug"] == "wildlife" or w["slug"] in ok_slugs]
                 return self.reply({"workflows": items, "engines": flows.engines(), "limited": limited})
             if path == "/api/workflows/save":
                 return self.reply({"workflow": flows.save(body)})
@@ -1302,13 +1309,30 @@ class Handler(BaseHTTPRequestHandler):
             store.save_setting("claude_folder", str(root))
             folder = root
             return self.reply(status())
+        if path == "/api/claude/send" and body.get("workflow") == "universal" and body.get("multi") and self.can_workflow("universal"):
+            # Phân tích hàng loạt: chọn nhiều video → xếp hàng, tool chạy LẦN LƯỢT từng dự án (mỗi dự án một đoạn chat riêng)
+            videos = [str(v) for v in (body.get("paths") or [])][:100] or self.pick_videos()
+            if not videos:
+                return self.reply(dict(status(), sent=None))
+            autorun = self.server.autorun
+            if store.setting("claude_autorun", True) is False or not autorun.engine():
+                raise ValueError("Chạy hàng loạt cần Claude Code hoặc Codex trên máy và bật tự chạy workflow. Mở Kiểm tra máy để cài.")
+            self.server.workflows.folder("universal")
+            queued, failed = [], []
+            for video in videos:
+                try:
+                    queued.append({"name": Path(video).name, "position": autorun.enqueue(video, "universal")})
+                except ValueError as error:
+                    failed.append(f"{Path(video).name}: {error}")
+            return self.reply(dict(status(), sent=None, queued_many={"items": queued, "failed": failed,
+                                                                      "engine": autorun.engine()}))
         if path == "/api/claude/send":
             video = str(body.get("path") or "").strip() or self.pick_video()
             if not video:
                 return self.reply(dict(status(), sent=None))
             slug = str(body.get("workflow") or "wildlife")
             if not self.can_workflow(slug):
-                slug = "wildlife"  # workflow riêng: máy Super Admin, hoặc tài khoản có quyền Thoại phim
+                slug = "wildlife"  # workflow riêng: máy Super Admin, hoặc tài khoản có quyền Thoại phim / Universal
             autorun = self.server.autorun
             if store.setting("claude_autorun", True) is not False and autorun.engine():
                 self.server.workflows.folder(slug)
@@ -1655,6 +1679,10 @@ class Handler(BaseHTTPRequestHandler):
                 result = store.characters.import_reference_images(files)
                 engine.changed.set()
                 return self.reply(result)
+            elif path == "/api/projects/sequential":
+                store.save_setting("project_sequential", body.get("enabled") is not False)
+                engine.changed.set()
+                return self.reply({"ok": True})
             elif path == "/api/characters/guard":
                 store.save_setting("character_guard", body.get("enabled") is not False)
                 engine.changed.set()
@@ -2061,7 +2089,7 @@ def main():
             import folder_picker
             index = sys.argv.index(flag)
             return folder_picker.main(sys.argv[index + 1] if len(sys.argv) > index + 1 else None, video=flag == "--pick-video",
-                                      plugin=flag == "--pick-plugin")
+                                      plugin=flag == "--pick-plugin", multi="--multi" in sys.argv)
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-open", action="store_true")

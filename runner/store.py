@@ -740,10 +740,34 @@ class Store:
                 db.executemany("UPDATE jobs SET phase='Đợi tài khoản' WHERE id=?", clears)
         return blocked
 
+    def sequential(self):
+        """Chạy lần lượt từng dự án (mỗi lượt thêm vào hàng đợi = một dự án): xong dự án này mới chạy dự án sau."""
+        return self.setting("project_sequential", True) is not False
+
+    @staticmethod
+    def current_project(db, blocked=()):
+        """Dự án đang tới lượt: dự án cũ nhất còn prompt đang chạy hoặc chờ đã có tài khoản (chưa bị chặn thiếu ảnh nhân vật).
+        Prompt chưa có tài khoản nào nhận được / bị chặn không giữ hàng đợi lại (tránh kẹt cả hàng)."""
+        guard = ("AND j.id NOT IN (" + ",".join("?" * len(blocked)) + ")") if blocked else ""
+        row = db.execute(f"""SELECT j.batch FROM jobs j WHERE j.status='running' OR
+            (j.status='waiting' AND j.assigned_account_id IS NOT NULL {guard})
+            GROUP BY j.batch ORDER BY (SELECT MIN(x.created) FROM jobs x WHERE x.batch=j.batch), MIN(j.rowid) LIMIT 1""",
+                         tuple(blocked)).fetchone()
+        return row["batch"] if row else None
+
+    def project_queue(self, db, blocked=()):
+        """Các dự án chưa xong theo thứ tự chạy; dự án đang tới lượt có current=True."""
+        current = self.current_project(db, blocked) if self.sequential() else None
+        rows = db.execute("""SELECT batch, MAX(folder) AS folder, MIN(created) AS created, COUNT(*) AS total,
+            SUM(status='waiting') AS waiting, SUM(status='running') AS running, SUM(status='done') AS done,
+            SUM(status='error') AS error FROM jobs GROUP BY batch HAVING waiting+running>0 ORDER BY created, MIN(rowid)""")
+        return [dict(row, current=row["batch"] == current) for row in rows]
+
     def claim(self, limit):
         self.release_limits()
         self.plan_waiting()
         blocked = self.guard_jobs()
+        sequential = self.sequential()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             # limit = số Chrome (tài khoản) chạy cùng lúc. Tài khoản đang chạy còn luồng trống thì mở thêm TAB (không thêm
@@ -761,7 +785,14 @@ class Store:
             # Prompt đã chia cho tài khoản nào thì chỉ tài khoản đó chạy: tài khoản khác làm xong phần mình thì CHỜ, không
             # nhận prompt của tài khoản đang chạy (không mở thêm tab chạy chen). Tài khoản bị tắt/hết lượt thì plan_waiting
             # vẫn chia lại prompt của nó như cũ.
-            pair = db.execute(pick, (room, *blocked)).fetchone()
+            params = [room, *blocked]
+            if sequential:  # chỉ dự án tới lượt được nhận việc; dự án sau đợi dự án trước xong
+                batch = self.current_project(db, blocked)
+                if batch is None:
+                    return None
+                pick = pick.replace("ORDER BY j.created", "AND j.batch=? ORDER BY j.created", 1)
+                params.append(batch)
+            pair = db.execute(pick, params).fetchone()
             if not pair:
                 return None
             job = dict(db.execute("SELECT * FROM jobs WHERE id=?", (pair["job_id"],)).fetchone())
@@ -1247,7 +1278,11 @@ class Store:
             totals.update({r[0]: r[1] for r in db.execute("SELECT status,count(*) FROM jobs GROUP BY status")})
             result = {"accounts": accounts, "jobs": jobs, "totals": totals, "batches": batches,
                       "assign_hint": self.assign_hint(db) if totals["waiting"] else ""}
-        result["character_needs"] = self.character_needs()[0] if totals["waiting"] else []
+        needs, blocked = self.character_needs() if totals["waiting"] else ([], {})
+        result["character_needs"] = needs
+        with self.connect() as db:
+            result["project_queue"] = self.project_queue(db, blocked)
+        result["project_sequential"] = self.sequential()
         result["character_guard"] = self.setting("character_guard", True) is not False
         return result
 

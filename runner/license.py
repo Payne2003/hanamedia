@@ -37,12 +37,13 @@ ROLES = ("super_admin", "admin", "manager", "user", "viewer")
 ROLE_NAMES = {"super_admin": "Super Admin", "admin": "Admin / Reseller", "manager": "Manager / Team Lead",
               "user": "User / Operator", "viewer": "Viewer / Support"}
 PERMISSIONS = ("create_users", "renew", "manage_roles", "view_revenue", "manage_quota", "view_audit", "create_jobs",
-               "upload_media", "ai_voice", "narration")
-FEATURES = ("ai_voice", "narration")  # chức năng riêng: chỉ tài khoản được Super Admin tick mới dùng
+               "upload_media", "ai_voice", "narration", "universal")
+FEATURES = ("ai_voice", "narration", "universal")  # chức năng riêng: chỉ tài khoản được Super Admin tick mới dùng
 PERMISSION_NAMES = {"create_users": "Tạo tài khoản con", "renew": "Gia hạn tài khoản", "manage_roles": "Quản lý role",
                     "view_revenue": "Xem doanh thu", "manage_quota": "Quản lý quota", "view_audit": "Xem audit logs",
                     "create_jobs": "Tạo job", "upload_media": "Tải media",
-                    "ai_voice": "AI Voice (nhân bản giọng, đọc văn bản)", "narration": "Thoại phim (viết thoại + ghép giọng)"}
+                    "ai_voice": "AI Voice (nhân bản giọng, đọc văn bản)", "narration": "Thoại phim (viết thoại + ghép giọng)",
+                    "universal": "Universal (phân tích hàng loạt video, chạy lần lượt theo dự án)"}
 ROLE_DEFAULTS = {
     "super_admin": list(PERMISSIONS),
     "admin": ["create_users", "renew", "manage_roles", "view_revenue", "manage_quota", "create_jobs", "upload_media"],

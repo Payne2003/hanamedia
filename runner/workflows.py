@@ -463,7 +463,7 @@ class Workflows:
         self.write_json(path / "brief.json", record)
         return record
 
-    def open_chat(self, slug, engine):
+    def open_chat(self, slug, engine, project=""):
         """Mở cửa sổ trò chuyện Claude Code / Codex (chế độ tương tác) và gửi sẵn lệnh chạy workflow: người dùng xem
         từng bước, trả lời / trò chuyện tiếp ngay trong cửa sổ đó. Trả về process (Windows) hoặc None (Mac/Linux)."""
         from .agent_cli import WINDOWS, find, open_terminal
@@ -480,8 +480,9 @@ class Workflows:
         prompt_file = runs / f"{time.strftime('%Y%m%d-%H%M%S')}-lenh.md"
         prompt_file.write_text(self.prompt(slug, "run"), encoding="utf-8")
         rel = prompt_file.relative_to(self.home).as_posix()
-        short = (f"Đây là lệnh tự động từ tool HanaMedia. Đọc file {rel} và làm đúng theo hướng dẫn trong đó, "
-                 "chạy liền một mạch tới khi xong rồi báo ngắn gọn.")
+        short = (f"Đây là lệnh tự động từ tool HanaMedia" + (f" cho DỰ ÁN «{project}» (video input/{project}.*; kết quả vào "
+                                                                f"output/{project}/)" if project else "") +
+                 f". Đọc file {rel} và làm đúng theo hướng dẫn trong đó, chạy liền một mạch tới khi xong rồi báo ngắn gọn.")
         model = os.environ.get("HANAMEDIA_MODEL", "").strip()
         if engine == "claude":
             args = [exe, "--permission-mode", "acceptEdits", "--allowedTools", CLAUDE_TOOLS] + (["--model", model] if model else [])
