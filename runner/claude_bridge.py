@@ -496,8 +496,10 @@ def parse(path):
                 start, end = _number(item.get("start")), _number(item.get("end"))
                 duration = end - start if start is not None and end is not None else None
             scene = item.get("scene")
+            codes = item.get("characters") if isinstance(item.get("characters"), list) else []
             scenes.append({"scene": scene if isinstance(scene, int) else index + 1,
-                           "duration": round(duration, 1) if duration and duration > 0 else None, "prompt": prompt})
+                           "duration": round(duration, 1) if duration and duration > 0 else None, "prompt": prompt,
+                           "characters": [c for c in dict.fromkeys(str(x).strip() for x in codes[:20]) if c]})
     else:
         lines = _prompt_lines(raw)[:MAX_SCENES]
         # Số giây từng dòng: groups_<ten>.json (workflow gộp cảnh thành prompt 8–10 giây) → shots.txt của gói tool,
@@ -515,8 +517,13 @@ def parse(path):
     if not scenes:
         raise BridgeError(f"{path.name} không có prompt nào.")
     name = path.parent.name
+    characters = []
+    for item in (info.get("characters") if isinstance(info.get("characters"), list) else [])[:60]:
+        if isinstance(item, dict) and str(item.get("code") or item.get("name") or "").strip():
+            characters.append({k: " ".join(str(item.get(k) or "").split())[:2000] for k in ("code", "name", "description", "image_prompt")})
     return {"name": name, "file": str(path), "video": str(info.get("video") or ""), "scene_count": len(scenes),
-            "duration": _number(info.get("duration")), "cut_source": str(info.get("cut_source") or ""), "scenes": scenes}
+            "duration": _number(info.get("duration")), "cut_source": str(info.get("cut_source") or ""), "scenes": scenes,
+            "characters": characters}
 
 
 def result_files(folder):
@@ -659,7 +666,8 @@ def project_done(folder, name, slug="wildlife", settle=20):
     """Workflow đã ghi xong kết quả cho dự án <name> chưa (dùng khi chạy trong cửa sổ trò chuyện, tool không biết lúc
     nào Claude / Codex xong): có file kết quả cuối và không ghi thêm trong settle giây."""
     root = Path(folder).expanduser() / "output"
-    patterns = {"wildlife": ("hanamedia_*.json",), "thoai-phim": ("thoai_*.json",)}.get(slug, ("*",))
+    patterns = {"wildlife": ("hanamedia_*.json",), "universal": ("hanamedia_*.json",),
+                "thoai-phim": ("thoai_*.json",)}.get(slug, ("*",))
     if not root.is_dir():
         return False
     for sub in root.iterdir():

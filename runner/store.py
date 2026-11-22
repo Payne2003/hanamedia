@@ -685,9 +685,63 @@ class Store:
                 image[0].unlink(missing_ok=True)
         return len(job_ids)
 
+    GUARD_PHASE = "Thiếu ảnh nhân vật: "
+
+    def character_needs(self):
+        """Nhân vật các prompt đang chờ cần tham chiếu (theo nhân vật riêng của prompt, không có thì theo cảnh gốc).
+        Trả về (needs, blocked): needs = danh sách nhân vật {id, code, name, master_token, scenes, project_id} (thiếu ảnh
+        lên đầu); blocked = {job_id: [mã nhân vật chưa có ảnh Master đã duyệt]}."""
+        with self.connect() as db:
+            jobs = db.execute("""SELECT id,scene_id,character_ids FROM jobs WHERE status='waiting'
+                                 AND (scene_id IS NOT NULL OR character_ids NOT IN ('','[]'))""").fetchall()
+            if not jobs:
+                return [], {}
+            links = {}
+            for row in db.execute("SELECT scene_id,character_id FROM scene_characters ORDER BY rowid"):
+                links.setdefault(row["scene_id"], []).append(row["character_id"])
+            chars = {row["id"]: dict(row) for row in db.execute(
+                """SELECT c.id,c.code,c.name,c.project_id,a.image_token AS master_token FROM characters c
+                   LEFT JOIN character_assets a ON a.id=c.approved_asset_id""")}
+        needs, blocked = {}, {}
+        for job in jobs:
+            try:
+                own = [c for c in json.loads(job["character_ids"] or "[]") if c in chars]
+            except (TypeError, ValueError):
+                own = []
+            for char_id in own or [c for c in links.get(job["scene_id"], []) if c in chars]:
+                info = chars[char_id]
+                token = info["master_token"] if info["master_token"] and self.image_file(info["master_token"]) else None
+                item = needs.setdefault(char_id, {"id": char_id, "code": info["code"], "name": info["name"],
+                                                  "project_id": info["project_id"], "master_token": token, "scenes": 0})
+                item["scenes"] += 1
+                if not token:
+                    blocked.setdefault(job["id"], []).append(info["code"])
+        ordered = sorted(needs.values(), key=lambda item: (item["master_token"] is not None, item["code"]))
+        return ordered, blocked
+
+    def guard_jobs(self):
+        """Cảnh thiếu ảnh nhân vật thì KHÔNG giao cho Muse (tránh tốn credit tạo nhân vật sai). Ghi lý do vào trạng thái
+        prompt; có ảnh rồi thì tự bỏ chặn. Tắt được bằng cài đặt character_guard."""
+        if self.setting("character_guard", True) is False:
+            blocked = {}
+        else:
+            blocked = self.character_needs()[1]
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for job_id, codes in blocked.items():
+                db.execute("UPDATE jobs SET phase=? WHERE id=? AND status='waiting' AND phase!=?",
+                           (self.GUARD_PHASE + ", ".join(codes[:4]) + " — gắn ảnh ở Character Library", job_id,
+                            self.GUARD_PHASE + ", ".join(codes[:4]) + " — gắn ảnh ở Character Library"))
+            marks = db.execute("SELECT id FROM jobs WHERE status='waiting' AND phase LIKE ?", (self.GUARD_PHASE + "%",)).fetchall()
+            for row in marks:
+                if row["id"] not in blocked:
+                    db.execute("UPDATE jobs SET phase='Đợi tài khoản' WHERE id=?", (row["id"],))
+        return blocked
+
     def claim(self, limit):
         self.release_limits()
         self.plan_waiting()
+        blocked = self.guard_jobs()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             # limit = số Chrome (tài khoản) chạy cùng lúc. Tài khoản đang chạy còn luồng trống thì mở thêm TAB (không thêm
@@ -700,11 +754,12 @@ class Store:
                 AND ((a.state IN ('new','ready') AND ?=1) OR (a.state='busy'
                      AND (SELECT count(*) FROM jobs r WHERE r.status='running' AND r.account_id=a.id) < MAX(a.threads, 1)
                      AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.status='running' AND r.account_id=a.id AND r.submitted=0)))
-                WHERE j.status='waiting' ORDER BY j.created,j.rowid LIMIT 1"""
+                WHERE j.status='waiting' {guard} ORDER BY j.created,j.rowid LIMIT 1""".replace(
+                "{guard}", ("AND j.id NOT IN (" + ",".join("?" * len(blocked)) + ")") if blocked else "")
             # Prompt đã chia cho tài khoản nào thì chỉ tài khoản đó chạy: tài khoản khác làm xong phần mình thì CHỜ, không
             # nhận prompt của tài khoản đang chạy (không mở thêm tab chạy chen). Tài khoản bị tắt/hết lượt thì plan_waiting
             # vẫn chia lại prompt của nó như cũ.
-            pair = db.execute(pick, (room,)).fetchone()
+            pair = db.execute(pick, (room, *blocked)).fetchone()
             if not pair:
                 return None
             job = dict(db.execute("SELECT * FROM jobs WHERE id=?", (pair["job_id"],)).fetchone())
@@ -1188,8 +1243,11 @@ class Store:
                 FROM batch_options b WHERE b.stitch=1 ORDER BY b.created DESC LIMIT 20""")]
             totals = {s: 0 for s in ("waiting", "running", "done", "error")}
             totals.update({r[0]: r[1] for r in db.execute("SELECT status,count(*) FROM jobs GROUP BY status")})
-            return {"accounts": accounts, "jobs": jobs, "totals": totals, "batches": batches,
-                    "assign_hint": self.assign_hint(db) if totals["waiting"] else ""}
+            result = {"accounts": accounts, "jobs": jobs, "totals": totals, "batches": batches,
+                      "assign_hint": self.assign_hint(db) if totals["waiting"] else ""}
+        result["character_needs"] = self.character_needs()[0] if totals["waiting"] else []
+        result["character_guard"] = self.setting("character_guard", True) is not False
+        return result
 
     @staticmethod
     def assign_hint(db):

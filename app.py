@@ -987,6 +987,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"workflow": flows.load(slug)})
             if path == "/api/workflows/request":
                 return self.reply({"requests": flows.add_request(slug, body.get("text"), body.get("target"))})
+            if path == "/api/workflows/report-error":
+                # Người dùng báo lỗi một video: lưu thành yêu cầu «LỖI VIDEO» rồi cho AI sửa kỹ năng + ghi bài học chung.
+                slug = slug or "universal"
+                context = ""
+                if body.get("job_id"):
+                    job = self.server.store.job_detail(str(body["job_id"]))
+                    info = self.server.store.characters.job_characters(job["id"])
+                    names = ", ".join(f"{c['code']} ({'có ảnh Master' if c['master_token'] else 'THIẾU ảnh Master'})"
+                                      for c in info["selected"]) or "không có"
+                    context = (f"Cảnh {job['ordinal'] + 1} · dự án «{job.get('folder') or ''}» · trạng thái {job['status']} · "
+                               f"nhân vật: {names} · prompt đã dùng: {job['prompt'][:1400]}"
+                               + (f" · lỗi của tool: {job['error'][:200]}" if job.get("error") else ""))
+                requests = flows.report_error(slug, body.get("text"), context)
+                result = {"requests": requests, "applied": False}
+                if body.get("apply") is not False:
+                    from runner import agent_cli
+                    engine_name = agent_cli.pick(self.server.store.setting("claude_engine") or "auto")
+                    if engine_name and not flows.running(slug):
+                        result["status"] = flows.run(slug, engine_name, "apply")
+                        result["applied"] = True
+                return self.reply(result)
             if path == "/api/workflows/clear-requests":
                 flows.clear_requests(slug)
                 return self.reply({"requests": []})
@@ -1304,8 +1325,30 @@ class Handler(BaseHTTPRequestHandler):
             data = bridge.parse(file)
             return self.reply({"name": data["name"], "batch": bridge.batch_id(file), "signature": bridge.signature(file),
                                "folder_key": bridge.folder_key(file),
+                               "has_characters": bool(data["characters"]),
                                "prompts": [bridge.studio_prompt(s) for s in data["scenes"]],
                                "scenes": [s["scene"] for s in data["scenes"]]})
+        if path == "/api/claude/characters":
+            # Kết quả có danh sách nhân vật (workflow Universal): tạo nhân vật + cảnh trong Character Master và trả Scene ID
+            # để prompt vào hàng đợi gắn đúng cảnh → tool biết cảnh nào cần ảnh tham chiếu nào.
+            file = str(body.get("path") or "")
+            if not bridge.inside(folder, file):
+                raise ValueError("File kết quả không nằm trong thư mục output của HanaMedia.")
+            data = bridge.parse(file)
+            if not data["characters"]:
+                return self.reply({"scene_ids": None, "characters": 0})
+            known = store.setting("claude_char_projects", {})
+            key = bridge.folder_key(file)
+            record = known.get(key) or {}
+            ids = record.get("scene_ids") or []
+            with store.connect() as db:
+                alive = db.execute(f"SELECT count(*) FROM scenes WHERE id IN ({','.join('?' * len(ids))})", ids).fetchone()[0] if ids else 0
+            if not ids or alive != len(data["scenes"]) or len(ids) != len(data["scenes"]):
+                record = store.characters.import_workflow(data["name"], data["characters"], data["scenes"])
+                known[key] = {"project_id": record["project_id"], "scene_ids": record["scene_ids"], "characters": record["characters"]}
+                store.save_setting("claude_char_projects", dict(list(known.items())[-40:]))
+            return self.reply({"scene_ids": known[key]["scene_ids"], "characters": known[key]["characters"],
+                               "project_id": known[key]["project_id"]})
         if path == "/api/claude/mark":
             keys = [str(body.get("signature") or ""), str(body.get("folder_key") or "")]
             if not re.fullmatch(r"[a-f0-9]{20}", keys[0]) or not re.fullmatch(r"(d[a-f0-9]{19})?", keys[1]):
@@ -1552,6 +1595,18 @@ class Handler(BaseHTTPRequestHandler):
                                        body.get("mode", "text"), account, body.get("video"))
                 engine.changed.set()
                 return self.reply({"ok": True, "job": job})
+            elif path == "/api/characters/master":
+                # Gắn ảnh (từ Thư viện) làm ảnh Master đã duyệt của nhân vật, rồi gắn vào mọi prompt đang chờ dùng nhân vật này
+                registry = store.characters
+                asset = registry.add_asset(str(body.get("character_id") or ""), str(body.get("token") or ""), "library")
+                registry.approve_asset(asset)
+                attached = registry.attach_waiting(str(body.get("character_id") or ""))
+                engine.changed.set()
+                return self.reply({"ok": True, "attached": attached})
+            elif path == "/api/characters/guard":
+                store.save_setting("character_guard", body.get("enabled") is not False)
+                engine.changed.set()
+                return self.reply({"ok": True})
             elif path == "/api/jobs/apply-settings":
                 result = store.apply_waiting(body.get("options"), body.get("previous"))
                 engine.changed.set()

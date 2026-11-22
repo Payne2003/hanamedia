@@ -138,7 +138,7 @@ async function refreshLibrary(){const response=await fetch('/api/library');if(!r
 function renderLibrary(){renderLibraryIfOpen();}
 function safeMuse(url){try{const u=new URL(url);return u.protocol==='https:'&&u.hostname==='muse.ai';}catch{return false;}}
 function renderAccounts(){if(!state)return;renderNickOptions();renderStitchPanel();renderAccountStats();const active=document.activeElement;if(active&&$('accountList').contains(active))return;$('accountList').innerHTML=state.accounts.length?state.accounts.map(a=>`<div class="account-row" data-account="${a.id}"><div class="account-top"><strong>${esc(a.email)}</strong><span class="badge ${a.state==='busy'?'running':a.state==='ready'?'done':a.state==='attention'||a.state==='limited'?'error':''}">${esc(accountNames[a.state]||a.state)}${a.state==='limited'&&a.limited_until?` · đặt lại ${esc(new Date(a.limited_until*1000).toLocaleDateString('vi-VN',{day:'2-digit',month:'2-digit'}))}`:''}</span></div>${a.video_blocked?`<div class="video-blocked">⛔ Bị Muse chặn tạo video ở khu vực của tài khoản — tool không giao prompt cho tài khoản này. <button type="button" data-unblock="${a.id}">Bỏ chặn</button></div>`:''}<div class="detail">${esc(a.detail||'Phiên Chrome riêng cho tài khoản này')}</div><div class="account-health"><span class="badge ${healthClass(accountHealth(a))}">${esc(healthNames[accountHealth(a)]||accountHealth(a))}</span><span>Kiểm tra: ${esc(ago(a.last_checked))}</span><span>Chờ ${Number(a.jobs_assigned||0)} · Xong ${Number(a.jobs_completed||0)} · Lỗi ${Number(a.jobs_failed||0)}</span>${a.last_error&&a.last_error!==a.detail?`<span class="detail error">${esc(a.last_error)}</span>`:''}</div><div class="account-controls"><label><input data-enabled type="checkbox" ${a.enabled?'checked':''} ${['busy','authenticating','reviewing'].includes(a.state)?'disabled':''}> Sử dụng</label><label title="Số tab Muse chạy cùng lúc cho nick này. Tab 1 dùng Đoạn chat chính, tab 2 trở đi mỗi prompt một Đoạn chat phụ mới.">Số tab <select data-threads ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''}>${[1,2,3,4,5].map(n=>`<option value="${n}" ${Number(a.threads||1)===n?'selected':''}>${n} tab</option>`).join('')}</select></label><label>Credit dự kiến <input data-budget type="number" min="0" step="0.01" value="${Number(a.budget).toFixed(2)}" ${['busy','authenticating','reviewing'].includes(a.state)?'disabled':''}></label><button data-save="${a.id}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''}>Lưu</button><button data-check="${a.id}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''} title="Mở muse.ai bằng hồ sơ của tài khoản để xem phiên còn đăng nhập không">↻ Kiểm tra</button><button data-login="${a.id}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''}>Đăng nhập</button>${a.state==='reviewing'?`<button data-close-review="${a.id}">Đóng phiên</button>`:`<button data-review="${a.id}" ${['busy','authenticating','checking'].includes(a.state)?'disabled':''}>Mở phiên Muse</button>`}<button class="danger-outline" data-delete-account="${a.id}" data-email="${esc(a.email)}" ${['busy','authenticating','reviewing','checking'].includes(a.state)?'disabled':''} title="Xóa tài khoản khỏi tool">✕ Xóa</button></div></div>`).join(''):'<div class="notice">Thêm email đầu tiên để tạo phiên Chrome riêng.</div>';}
-async function refresh(){try{const response=await fetch('/api/state');if(!response.ok)throw Error();state=await response.json();key=state.key;$('connection').textContent='● Bộ chạy đã kết nối';syncSettings();renderJobs();renderAccounts();}catch{$('connection').textContent='● Mất kết nối bộ chạy';}}
+async function refresh(){try{const response=await fetch('/api/state');if(!response.ok)throw Error();state=await response.json();key=state.key;$('connection').textContent='● Bộ chạy đã kết nối';syncSettings();renderJobs();renderAccounts();renderCharacterNeeds();}catch{$('connection').textContent='● Mất kết nối bộ chạy';}}
 async function action(fn){try{await fn();await refresh();}catch(e){toast(e.message,true);}}
 async function addJobs(run){
   if(busy)return;
@@ -749,14 +749,17 @@ async function claudeImport(path,sig,auto=false,again=false){
   try{
     const r=await api('/api/claude/read',{path});const prompts=r.prompts;const batch=again?crypto.randomUUID():r.batch;
     const options={...videoOptions(),duration:0,aspect:$('vAspect').value,folder:r.name},cost=Number($('cost').value)||1;  // dự án = tên bài của workflow
+    // Workflow Universal có danh sách nhân vật: tạo nhân vật + cảnh trong Character Master để biết cảnh cần ảnh tham chiếu nào
+    let sceneIds=null,charCount=0;
+    if(r.has_characters){try{const c=await api('/api/claude/characters',{path});sceneIds=c.scene_ids;charCount=c.characters||0;}catch(error){toast(`Chưa tạo được danh sách nhân vật: ${error.message}`,true);}}
     for(let start=0;start<prompts.length;start+=200){
       const group=prompts.slice(start,start+200);
       await api('/api/jobs',{prompts:group,cost,mode:'text',batch,append:start,more:start+200<prompts.length,
-        images:group.map(()=>[]),sources:group.map(()=>'claude:'+r.name),scene_ids:group.map(()=>null),options});
+        images:group.map(()=>[]),sources:group.map(()=>'claude:'+r.name),scene_ids:group.map((_,i)=>sceneIds?.[start+i]||null),options});
     }
     await api('/api/claude/mark',{signature:r.signature,folder_key:r.folder_key});
     await claudeCall('/api/claude/status');await refresh();
-    toast(`${auto?'Workflow xong · đã tự ':'Đã '}đưa ${prompts.length} prompt của "${r.name}" vào hàng đợi Studio, đúng thứ tự cảnh. Bấm ▶ Chạy để tạo video.`);
+    toast(`${auto?'Workflow xong · đã tự ':'Đã '}đưa ${prompts.length} prompt của "${r.name}" vào hàng đợi Studio, đúng thứ tự cảnh. Bấm ▶ Chạy để tạo video.${charCount?` Có ${charCount} nhân vật cần ảnh tham chiếu — xem khung "Nhân vật cần tham chiếu" ở hàng đợi.`:''}`);
   }catch(error){toast(`Chưa đưa được kết quả workflow vào Studio: ${error.message}`,true);}
   finally{claudeImporting.delete(sig);}
 }
@@ -897,7 +900,7 @@ async function loadWorkflows(){
   $('wfSelect').innerHTML=wf.list.map(w=>`<option value="${esc(w.slug)}">${esc(w.name)}</option>`).join('');$('wfSelect').value=wf.slug;
   renderWorkflow();loadNarration();
 }
-const WF_ICONS={wildlife:'🐾','thoai-phim':'🎬'};
+const WF_ICONS={wildlife:'🐾','thoai-phim':'🎬',universal:'🌐'};
 function renderWfTabs(){markNarrationNav();const el=$('wfTabs');el.hidden=!wf.owner||wf.list.length<2;if(el.hidden)return;
   el.innerHTML=wf.list.map(w=>`<button type="button" role="tab" data-wf-tab="${esc(w.slug)}" class="${w.slug===wf.slug?'active':''}" aria-selected="${w.slug===wf.slug}"><span>${WF_ICONS[w.slug]||'🧩'}</span><b>${esc(w.name)}</b><small>${esc(w.description||'')}</small></button>`).join('');}
 $('wfTabs').onclick=e=>{const b=e.target.closest('[data-wf-tab]');if(!b||b.dataset.wfTab===wf.slug)return;$('wfSelect').value=b.dataset.wfTab;$('wfSelect').onchange({target:$('wfSelect')});
@@ -1618,7 +1621,9 @@ function pickerCurrent(){
 }
 async function openPicker(target){
   pickerTarget=target;pickerSelected.clear();
-  if(target==='characters'){
+  if(target==='master'){
+    $('pickerTarget').textContent='Chọn MỘT ảnh làm ảnh tham chiếu chuẩn của nhân vật. Tool gắn ảnh này vào mọi cảnh có nhân vật.';
+  }else if(target==='characters'){
     $('pickerTarget').textContent='Chọn ảnh nhân vật cố định: tool gắn các ảnh này vào MỌI cảnh của lượt chạy (tối đa 10 ảnh mỗi cảnh).';
   }else if(target==='composer'){
     const prompts=splitPrompts(),index=Number($('imagePromptIndex').value);
@@ -1656,6 +1661,11 @@ $('pickerFiles').onchange=()=>{const files=[...$('pickerFiles').files];$('picker
 $('closeImageLibrary').onclick=()=>$('imageLibrary').close();
 $('pickerAttach').onclick=()=>{
   const chosen=[...pickerSelected].map(id=>pickerItems.find(item=>item.id===id)).filter(Boolean);if(!chosen.length)return;
+  if(pickerTarget==='master'){
+    const item=chosen[0],target=masterTarget;masterTarget='';$('imageLibrary').close();
+    action(async()=>{const r=await api('/api/characters/master',{character_id:target,token:item.id});toast(`Đã gắn ảnh tham chiếu${r.attached?` · đã gắn vào ${r.attached} prompt đang chờ`:''}. Các cảnh của nhân vật này được chạy tiếp.`);});
+    return;
+  }
   if(pickerTarget==='characters'){
     const fresh=chosen.filter(item=>!fixedCharacters.some(c=>c.token===item.id));
     if(fixedCharacters.length+fresh.length>10)return toast('Tối đa 10 ảnh nhân vật cố định.',true);
@@ -1679,6 +1689,31 @@ $('pickerAttach').onclick=()=>{
   $('imageLibrary').close();
 };
 $('jobLibrary').onclick=()=>openPicker('studio');
+// ---- Nhân vật cần tham chiếu: nhân vật của các prompt đang chờ; thiếu ảnh thì cảnh đó bị chặn tới khi gắn ảnh ----
+let masterTarget='';
+function renderCharacterNeeds(){
+  const box=$('characterNeeds'),list=state?.character_needs||[];
+  if(!box)return;box.hidden=!list.length;if(!list.length)return;
+  const missing=list.filter(c=>!c.master_token);
+  box.innerHTML=`<div class="stitch-head"><b>🧬 Nhân vật cần tham chiếu</b><label class="detail"><input type="checkbox" id="guardToggle" ${state.character_guard?'checked':''}> Chặn cảnh thiếu ảnh</label></div>
+    <div class="need-list">${list.map(c=>c.master_token
+      ?`<span class="image-chip need-ok" title="${esc(c.code)}"><img src="/api/library/image/${c.master_token}" alt=""><span>${esc(c.name)} · ${c.scenes} cảnh</span></span>`
+      :`<span class="need-missing" title="${esc(c.code)}">⚠ ${esc(c.name)} · thiếu ảnh · ${c.scenes} cảnh${state.character_guard?' đang bị chặn':''}<button type="button" data-need-master="${c.id}">Gắn ảnh</button></span>`).join('')}</div>
+    ${missing.length&&state.character_guard?'<small class="detail">Cảnh thiếu ảnh nhân vật chưa được gửi Muse (tránh tốn credit tạo nhân vật sai). Bấm “Gắn ảnh” rồi chọn ảnh từ Thư viện.</small>':''}`;
+}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-need-master]');if(!b)return;masterTarget=b.dataset.needMaster;openPicker('master');});
+document.addEventListener('change',e=>{if(e.target.id!=='guardToggle')return;const on=e.target.checked;action(async()=>{await api('/api/characters/guard',{enabled:on});toast(on?'Đã bật chặn cảnh thiếu ảnh nhân vật.':'Đã tắt chặn: cảnh thiếu ảnh vẫn được gửi Muse.');});});
+
+// ---- Báo lỗi video → AI tự nâng cấp kỹ năng workflow Universal + ghi bài học chung ----
+let reportJob='';
+function updateReportButton(){const b=$('jobReport');if(b)b.hidden=!(wf.owner&&location.hash.startsWith('#job='));}
+$('jobReport').onclick=()=>{const m=location.hash.match(/^#job=([a-f0-9]{32})$/);if(!m)return;reportJob=m[1];$('reportText').value='';$('reportInfo').textContent='';$('reportDialog').showModal();};
+$('reportClose').onclick=()=>$('reportDialog').close();
+$('reportForm').onsubmit=async e=>{e.preventDefault();const b=$('reportSend');b.disabled=true;
+  try{const r=await api('/api/workflows/report-error',{slug:'universal',job_id:reportJob,text:$('reportText').value});
+    $('reportDialog').close();toast(r.applied?'Đã gửi báo lỗi. AI đang sửa kỹ năng và ghi bài học — theo dõi trong Không gian Agent 3D → Universal.':'Đã lưu báo lỗi. Máy chưa có Claude Code / Codex nên chưa tự sửa: vào Agent 3D → Universal → “Chỉ áp dụng yêu cầu”.');
+  }catch(error){$('reportInfo').textContent=error.message;}finally{b.disabled=false;}};
+window.addEventListener('hashchange',updateReportButton);setInterval(updateReportButton,1500);setTimeout(()=>{if(!wf.loaded)loadWorkflows().catch(()=>{});},2500);
 function renderLibraryIfOpen(){if($('imageLibrary').open)loadPicker();}
 
 // ===== Thiết lập video của Studio: tỉ lệ, thời lượng, độ phân giải, nick, tự ghép, ảnh nhân vật cố định =====
