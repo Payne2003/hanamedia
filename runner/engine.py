@@ -365,6 +365,8 @@ class Engine:
             tab.url_seen = MuseBrowser.url_seen
             tab.root = root
             tab.owns_tab = True
+            # Tab khác của tài khoản đang chạy: luồng này dùng Đoạn chat phụ riêng, không chờ video của Đoạn chat chính.
+            tab.side_chat = router.active() > 1
             if fresh or not tab.session_ready():
                 self.store.phase(job["id"], "Mở tab Muse mới cho luồng này")
                 try:
