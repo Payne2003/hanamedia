@@ -12,6 +12,8 @@ class FakeDriver:
 
     def get(self, url):
         self.visited.append(url)
+        # Muse cũ không có trang thread/new: ở lại trang chính
+        self.current_url = url if self.side or "/thread/" not in url else "https://muse.ai/"
 
     def execute_script(self, script):
         self.scripts.append(script)
@@ -40,8 +42,19 @@ class SideChatTests(unittest.TestCase):
     def test_extra_thread_opens_a_side_chat(self):
         b = browser(True)
         b.new_chat()
-        self.assertIn(MuseBrowser.JS_SIDE_CHAT, b.driver.scripts)
+        self.assertEqual(b.driver.visited, ["https://muse.ai/thread/new"])  # vào thẳng trang Đoạn chat phụ mới
+        self.assertNotIn(MuseBrowser.JS_SIDE_CHAT, b.driver.scripts)
         self.assertIn("Đoạn chat phụ", b.phases[-1])
+
+    def test_side_chat_falls_back_to_the_plus_button(self):
+        b = browser(True)
+        b.driver.side = False
+        b.SIDE_CHAT_WAIT = 0.2
+        b.driver.execute_script = lambda script: (b.driver.scripts.append(script) or
+                                                  ("row:svg" if script is MuseBrowser.JS_SIDE_CHAT else 0))
+        b.new_chat()
+        self.assertIn(MuseBrowser.JS_SIDE_CHAT, b.driver.scripts)
+        self.assertIn("Đã mở Đoạn chat phụ", b.phases[-1])
 
     def test_main_thread_keeps_the_main_chat(self):
         b = browser(False)
@@ -54,13 +67,14 @@ class SideChatTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         b = browser(True, has_button=False)
+        b.SIDE_CHAT_WAIT = 0.2
         b.profile = Path(temp.name) / "profiles" / "abc"
         b.new_chat()
         debug = Path(temp.name) / "logs" / "muse-side-chat-debug.html"
         self.assertIn("no-plus", debug.read_text(encoding="utf-8"))
         self.assertIn("no-plus", b.phases[-1])
         self.assertIn("dùng Đoạn chat chính", b.phases[-1])
-        self.assertEqual(b.driver.visited, ["https://muse.ai", "https://muse.ai"])
+        self.assertEqual(b.driver.visited, ["https://muse.ai/thread/new", "https://muse.ai", "https://muse.ai"])
 
 
 if __name__ == "__main__":
