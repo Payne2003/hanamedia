@@ -26,6 +26,12 @@ class AccountThreadTests(unittest.TestCase):
     def test_new_account_defaults_to_one_thread_and_100_credit(self):
         self.assertEqual((self.account["threads"], self.account["budget"]), (1, DEFAULT_BUDGET))
 
+    def test_up_to_five_tabs_per_account(self):
+        self.store.configure_account(self.account["id"], True, 100, 5)
+        self.assertEqual(self.state()["threads"], 5)
+        with self.assertRaises(ValueError):
+            self.store.configure_account(self.account["id"], True, 100, 6)
+
     def test_second_tab_only_after_first_prompt_is_sent_and_up_to_thread_count(self):
         self.store.configure_account(self.account["id"], True, 100, 2)
         first, _ = self.store.claim(1)

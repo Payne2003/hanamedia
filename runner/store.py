@@ -104,7 +104,7 @@ ACCOUNT_COLUMNS = {
     # Hết hạn mức Muse (state 'limited') tới thời điểm này; quá hạn thì tool tự cho tài khoản chạy lại.
     "limited_until": "REAL NOT NULL DEFAULT 0",
 }
-THREAD_CHOICES = (1, 2, 3)
+THREAD_CHOICES = (1, 2, 3, 4, 5)
 DEFAULT_BUDGET = 10000  # credit dự kiến mặc định của tài khoản mới
 
 
@@ -354,7 +354,7 @@ class Store:
 
     def configure_account(self, account_id, enabled, budget, threads=None):
         if threads is not None and threads not in THREAD_CHOICES:
-            raise ValueError("Số luồng mỗi tài khoản là 1, 2 hoặc 3.")
+            raise ValueError("Số tab mỗi tài khoản từ 1 đến 5.")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
