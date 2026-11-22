@@ -178,7 +178,7 @@ class AppServer(ThreadingHTTPServer):
         import uuid
         self.notices = (self.notices + [dict(data, id=uuid.uuid4().hex[:10], kind=kind, at=time.time(), seen=False)])[-20:]
 
-    def prepare_video(self, video, auto=False, slug="wildlife"):
+    def prepare_video(self, video, auto=False, slug="wildlife", keep=None):
         """Chép video vào input/ của thư mục HanaMedia (dọn dự án cũ), kèm điểm cắt + gói ảnh tool đo."""
         from runner import claude_bridge as bridge
         store = self.store
@@ -192,7 +192,7 @@ class AppServer(ThreadingHTTPServer):
             except Exception:
                 cuts = None  # không đo được: để Claude / Codex tự dò điểm cắt
         # Gói đo sẵn (tờ ảnh, shots, motion): Codex trên máy khách không cần Python / opencv.
-        sent = bridge.send(folder, video, cuts, duration, pack=store.setting("claude_pack", True) is not False)
+        sent = bridge.send(folder, video, cuts, duration, pack=store.setting("claude_pack", True) is not False, keep=keep)
         pack = sent.get("pack") or {}
         # báo người dùng: đã cắt cảnh xong → vào Claude / Codex phân tích (tự động thì cửa sổ đang được mở)
         self.notify("cut_done", name=sent["name"], video=Path(video).name, cuts=sent.get("cuts"),
@@ -1246,7 +1246,7 @@ class Handler(BaseHTTPRequestHandler):
                     "cuts": store.setting("claude_cuts", True) is not False,
                     "pack": store.setting("claude_pack", True) is not False,
                     "pending": bridge.pending(folder) if exists else [],
-                    "autorun": store.setting("claude_autorun", True) is not False,
+                    "autorun": False,  # đã bỏ chế độ tự chạy: người dùng tự mở từng đoạn chat và chạy từng dự án
                     "engine": store.setting("claude_engine") or "auto", "window": store.setting("claude_window", True) is not False, "chat": store.setting("claude_chat", True) is not False, "engines": self.server.workflows.engines(),
                     "queue": self.server.autorun.status(),
                     "notices": [n for n in self.server.notices if not n["seen"]][-3:],
@@ -1310,22 +1310,20 @@ class Handler(BaseHTTPRequestHandler):
             folder = root
             return self.reply(status())
         if path == "/api/claude/send" and body.get("workflow") == "universal" and body.get("multi") and self.can_workflow("universal"):
-            # Phân tích hàng loạt: chọn nhiều video → xếp hàng, tool chạy LẦN LƯỢT từng dự án (mỗi dự án một đoạn chat riêng)
+            # Gửi hàng loạt: chọn nhiều video → chép hết vào input/ (kèm điểm cắt + tờ ảnh). Người dùng tự mở từng đoạn chat
+            # Claude / Codex và chạy từng dự án theo tên (nút "Chép lệnh" của từng dự án).
             videos = [str(v) for v in (body.get("paths") or [])][:100] or self.pick_videos()
             if not videos:
                 return self.reply(dict(status(), sent=None))
-            autorun = self.server.autorun
-            if store.setting("claude_autorun", True) is False or not autorun.engine():
-                raise ValueError("Chạy hàng loạt cần Claude Code hoặc Codex trên máy và bật tự chạy workflow. Mở Kiểm tra máy để cài.")
             self.server.workflows.folder("universal")
-            queued, failed = [], []
+            keep = {bridge.short_name(Path(v).name) for v in videos}
+            sent, failed = [], []
             for video in videos:
                 try:
-                    queued.append({"name": Path(video).name, "position": autorun.enqueue(video, "universal")})
-                except ValueError as error:
+                    sent.append(self.server.prepare_video(video, slug="universal", keep=keep))
+                except (ValueError, OSError) as error:
                     failed.append(f"{Path(video).name}: {error}")
-            return self.reply(dict(status(), sent=None, queued_many={"items": queued, "failed": failed,
-                                                                      "engine": autorun.engine()}))
+            return self.reply(dict(status(), sent=None, sent_many={"items": [x["name"] for x in sent], "failed": failed}))
         if path == "/api/claude/send":
             video = str(body.get("path") or "").strip() or self.pick_video()
             if not video:
@@ -1333,12 +1331,6 @@ class Handler(BaseHTTPRequestHandler):
             slug = str(body.get("workflow") or "wildlife")
             if not self.can_workflow(slug):
                 slug = "wildlife"  # workflow riêng: máy Super Admin, hoặc tài khoản có quyền Thoại phim / Universal
-            autorun = self.server.autorun
-            if store.setting("claude_autorun", True) is not False and autorun.engine():
-                self.server.workflows.folder(slug)
-                position = autorun.enqueue(video, slug)
-                return self.reply(dict(status(), sent=None, queued={"name": Path(video).name, "position": position,
-                                                                    "engine": autorun.engine(), "workflow": slug}))
             sent = self.server.prepare_video(video, slug=slug)  # trước status(): để thông báo "cắt xong" có ngay
             return self.reply(dict(status(), sent=sent))
         if path == "/api/claude/notice-seen":

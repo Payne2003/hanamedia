@@ -218,6 +218,25 @@ class SequentialProjectTests(unittest.TestCase):
         self.assertEqual(self.store.snapshot()["project_queue"][0]["folder"], "Truyện C")
 
 
+class ManualBatchSendTests(unittest.TestCase):
+    def test_batch_keeps_every_selected_video_in_input_and_archives_the_rest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp) / "HanaMedia"
+            source = Path(temp) / "src"
+            source.mkdir()
+            for name in ("Truyện một", "Truyện hai", "Cũ"):
+                (source / f"{name}.mp4").write_bytes(b"v")
+            old = bridge.send(home, source / "Cũ.mp4")
+            names = {bridge.short_name(f"{n}.mp4") for n in ("Truyện một", "Truyện hai")}
+            for n in ("Truyện một", "Truyện hai"):
+                bridge.send(home, source / f"{n}.mp4", keep=names)
+            self.assertEqual(sorted(p.name for p in (home / "input").glob("*.mp4")), sorted(f"{n}.mp4" for n in names))
+            self.assertTrue(list((home / "input-done" / old["name"]).glob("*.mp4")))  # dự án cũ chuyển sang input-done
+            self.assertEqual(sorted(p["name"] for p in bridge.pending(home)), sorted(names))
+            single = bridge.send(home, source / "Cũ.mp4")  # gửi một video như trước: dọn các dự án khác
+            self.assertEqual([p.name for p in (home / "input").glob("*.mp4")], [f"{single['name']}.mp4"])
+
+
 class BridgeCharactersTests(unittest.TestCase):
     def test_reference_files_follow_json_paths_and_folder_but_stay_inside_hanamedia(self):
         with tempfile.TemporaryDirectory() as temp:

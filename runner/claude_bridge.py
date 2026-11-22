@@ -49,8 +49,9 @@ Dành cho Claude hoặc Codex khi được yêu cầu "Chạy hanamedia-wildlife
   và hanamedia_<ten-ngan>.json nếu làm được. Tool tự đưa prompt vào hàng đợi Studio khi thấy file.
 - Trong hanamedia_<ten-ngan>.json thêm "character": tên nhân vật chính (tiếng Việt, vd "Báo mẹ và đàn con") — tool
   dùng để đặt tên thư mục kết quả.
-- Không sửa hay xoá video trong input/. Mỗi lần tool chỉ để MỘT dự án trong input/ (dự án cũ đã chuyển sang input-done/),
-  chỉ làm video đang có trong input/, không đọc input-done/.
+- Không sửa hay xoá video trong input/. Dự án cũ đã chuyển sang input-done/ (không đọc input-done/). Input/ có thể có NHIỀU
+  video khi người dùng gửi hàng loạt: nếu người dùng nêu tên dự án (vd "cho dự án X") thì CHỈ làm video input/X.* và ghi
+  kết quả vào output/X/, không đụng các video khác; không nêu tên thì làm video đang có trong input/ (nếu có nhiều video, hỏi lại).
 """
 
 
@@ -79,7 +80,7 @@ def write_cuts(target, cuts):
     return len(values)
 
 
-def send(folder, video, cuts=None, duration=None, pack=False, stop=None, status=lambda text: None):
+def send(folder, video, cuts=None, duration=None, pack=False, stop=None, status=lambda text: None, keep=None):
     """Chép video vào input/ (tên chuẩn của workflow). cuts: danh sách giây đổi cảnh (None = để Claude tự dò).
     pack=True (cần cuts + duration): làm thêm input/<ten>_pack/ (tờ ảnh, shots, motion) cho Claude / Codex dùng luôn."""
     source = Path(video)
@@ -90,7 +91,7 @@ def send(folder, video, cuts=None, duration=None, pack=False, stop=None, status=
     root = ensure(folder)
     name = short_name(source.name)
     target = root / "input" / f"{name}{source.suffix.lower()}"
-    archive_inputs(root, keep=name, source=source)
+    archive_inputs(root, keep=(set(keep) | {name}) if keep else name, source=source)  # keep: các video khác của cùng đợt gửi
     try:
         same = target.exists() and target.resolve() == source.resolve()
     except OSError:
@@ -140,7 +141,8 @@ def archive_inputs(root, keep=None, source=None, only=None):
         return moved
     for path in items:
         group = input_group(path)
-        if group == keep or path.name.startswith(".") or (only is not None and group != only):
+        keeping = group in keep if isinstance(keep, (set, frozenset, list, tuple)) else group == keep
+        if keeping or path.name.startswith(".") or (only is not None and group != only):
             continue
         try:
             if source is not None and path.resolve() == Path(source).resolve():
