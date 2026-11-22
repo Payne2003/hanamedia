@@ -479,40 +479,91 @@ return true;
     # Muse có "Đoạn chat chính" và các "Đoạn chat phụ" (nút + cạnh tiêu đề): mỗi đoạn chat là một cuộc trò chuyện riêng,
     # tạo video độc lập. Luồng thứ 2, 3 của cùng tài khoản mở Đoạn chat phụ mới để không phải chờ video của Đoạn chat chính.
     JS_SIDE_CHAT = r"""
-const visible=e => e && e.offsetParent!==null;
-const label=e => ((e.getAttribute('aria-label')||'') + ' ' + (e.getAttribute('title')||'')).toLowerCase();
-const direct=[...document.querySelectorAll('button,a,[role="button"]')].filter(visible)
-  .find(e => /(đoạn chat phụ|chat phụ|side chat)/.test(label(e)) && /(mới|thêm|tạo|new|add|create|\+)/.test(label(e)));
-if (direct) { direct.click(); return 'aria'; }
-const heads=[...document.querySelectorAll('body *')].filter(e => visible(e) && e.children.length===0 &&
-  /^(đoạn chat phụ|side chats?)$/i.test((e.textContent||'').trim()));
+const visible=e => { if (!e) return false; const r=e.getBoundingClientRect(); return r.width>0 && r.height>0 &&
+  getComputedStyle(e).visibility!=='hidden'; };
+const text=e => (e.innerText||e.textContent||'').trim();
+const label=e => ((e.getAttribute && (e.getAttribute('aria-label')||'') + ' ' + (e.getAttribute('title')||'')) || '').toLowerCase();
+const press=e => { const r=e.getBoundingClientRect(), o={bubbles:true,cancelable:true,view:window,clientX:r.x+r.width/2,clientY:r.y+r.height/2};
+  for (const t of ['pointerover','pointerenter','mouseover','pointerdown','mousedown','pointerup','mouseup','click'])
+    e.dispatchEvent(new (t.startsWith('pointer')?PointerEvent:MouseEvent)(t,o)); };
+const all=[...document.querySelectorAll('body *')].filter(visible);
+const direct=all.find(e => /(đoạn chat phụ|chat phụ|side chat)/.test(label(e)) && /(mới|thêm|tạo|new|add|create|\+)/.test(label(e)));
+if (direct) { press(direct); return 'aria:' + label(direct).trim(); }
+const heads=all.filter(e => /^(đoạn chat phụ|side chats?)$/i.test(text(e)) &&
+  ![...e.children].some(c => /^(đoạn chat phụ|side chats?)$/i.test(text(c))));
 for (const head of heads) {
   let row=head;
-  for (let i=0; i<4 && row; i++) {
+  for (let i=0; i<4 && row.parentElement; i++) {
     row=row.parentElement;
-    if (!row) break;
-    const btn=[...row.querySelectorAll('button,[role="button"]')].filter(visible)
-      .find(b => !(b.innerText||'').trim() || (b.innerText||'').trim()==='+');
-    if (btn) { btn.click(); return 'row'; }
-    if (row.tagName==='BUTTON' || row.getAttribute('role')==='button') { row.click(); return 'head'; }
+    if (/đoạn chat chính/i.test(text(row))) break;  // đã ra tới cả danh sách: thôi
+    const cands=[...row.querySelectorAll('button,[role="button"],a,svg,span,div,i')].filter(c => visible(c) && c!==head &&
+      !c.contains(head) && !head.contains(c) && (text(c)==='' || text(c)==='+') &&
+      (c.matches('button,[role="button"],a,svg') || getComputedStyle(c).cursor==='pointer'));
+    const pick=cands.find(c => c.matches('button,[role="button"]')) || cands.find(c => c.matches('svg')) || cands[0];
+    if (pick) { press(pick.closest('button,[role="button"]') || pick); return 'row:' + pick.tagName.toLowerCase(); }
   }
 }
-return '';
+return heads.length ? 'no-plus' : 'no-header';
 """
 
-    def open_side_chat(self):
-        """Mở một Đoạn chat phụ mới (trống). False nếu trang không có nút này (tool dùng Đoạn chat chính như cũ)."""
+    JS_SIDE_DIALOG = r"""
+const d=[...document.querySelectorAll('[role="dialog"],dialog')].find(e => e.getBoundingClientRect().width>0);
+if (!d) return false;
+const b=[...d.querySelectorAll('button')].find(e => /^(tạo|ok|lưu|xác nhận|bắt đầu|create|save|start|done|xong)$/i.test((e.innerText||'').trim()));
+if (b) { b.click(); return true; }
+return false;
+"""
+
+    JS_PAGE_SIGNATURE = r"""
+return location.href + '|' + [...document.querySelectorAll('[role="log"] [data-message-turn-id]')].slice(-3)
+  .map(e => e.getAttribute('data-message-turn-id')).join(',');
+"""
+
+    def write_side_chat_debug(self, result):
+        """Không mở được Đoạn chat phụ: lưu cấu trúc thanh bên trái (bỏ script/style/ảnh, không cookie) để sửa tool."""
         try:
-            clicked = self.driver.execute_script(self.JS_SIDE_CHAT)
+            html = self.driver.execute_script("""
+                const all=[...document.querySelectorAll('body *')];
+                const head=all.find(e => /^(đoạn chat phụ|side chats?)$/i.test((e.innerText||'').trim()));
+                let box=head||document.body;
+                for (let i=0; head && i<6 && box.parentElement; i++) box=box.parentElement;
+                const copy=box.cloneNode(true);
+                copy.querySelectorAll('script,style,img,path').forEach(e=>e.remove());
+                return copy.outerHTML.slice(0,150000);""")
+            folder = self.profile.parent.parent / "logs"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "muse-side-chat-debug.html").write_text(
+                f"<!-- kết quả: {result} · trang: {self.driver.current_url} -->\n{html or ''}", encoding="utf-8")
         except Exception:
-            clicked = ""
-        if not clicked:
+            pass
+
+    def open_side_chat(self):
+        """Mở một Đoạn chat phụ mới. False nếu không mở được (tool dùng Đoạn chat chính như cũ)."""
+        try:
+            before = self.driver.execute_script(self.JS_PAGE_SIGNATURE)
+        except Exception:
+            before = ""
+        try:
+            clicked = self.driver.execute_script(self.JS_SIDE_CHAT) or ""
+        except Exception as error:
+            clicked = f"lỗi {type(error).__name__}"
+        self.side_chat_result = clicked
+        if not clicked.startswith(("aria", "row")):
+            self.write_side_chat_debug(clicked)
             return False
         until = time.monotonic() + 20
         while time.monotonic() < until:
-            if self.composer() and not self.turn_count() and not self.named("button", {"Dừng"}):
-                return True
             time.sleep(0.5)
+            try:
+                if self.driver.execute_script(self.JS_SIDE_DIALOG):
+                    continue
+                after = self.driver.execute_script(self.JS_PAGE_SIGNATURE)
+            except Exception:
+                after = before
+            if (after != before or not self.turn_count()) and self.composer() and not self.named("button", {"Dừng"}):
+                return True
+        self.side_chat_result = clicked + " · đã bấm nhưng trang không đổi"
+        self.write_side_chat_debug(self.side_chat_result)
         return False
 
     def turn_count(self):
@@ -533,7 +584,8 @@ return '';
             if self.open_side_chat():
                 self.phase("Đã mở Đoạn chat phụ mới cho luồng này (chạy song song với Đoạn chat chính)")
                 return
-            self.phase("Không mở được Đoạn chat phụ · dùng Đoạn chat chính")
+            self.phase(f"Không mở được Đoạn chat phụ ({getattr(self, 'side_chat_result', '')}) · dùng Đoạn chat chính · "
+                       "đã lưu data/logs/muse-side-chat-debug.html")
             self.driver.get("https://muse.ai")
             try:
                 self.wait(lambda: self.composer(), 60, "Không mở được cuộc trò chuyện Muse mới. Kiểm tra phiên Muse.")
