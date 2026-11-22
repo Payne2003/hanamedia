@@ -17,6 +17,17 @@ PROMPTS = "universal-prompt-generator"
 QC = "adaptive-quality-control"
 LESSONS = "workflows/universal/lessons.md"
 
+# Bản cũ (chưa sửa tay) của các kỹ năng đã nâng cấp: sha256 16 ký tự đầu. File trên máy trùng bản cũ thì tool thay bằng bản mới.
+UPGRADES = {
+    f"{CONDUCTOR}/SKILL.md": ("1ace46fa19b76644",),
+    f"{ASSETS}/SKILL.md": ("63dbcef80ac2238b",),
+}
+REFERENCE_RULE = (
+    "- ẢNH THAM CHIẾU (bắt buộc): với MỌI mục trong characters[] (nhân vật, đồ vật, bối cảnh cần nhất quán) tạo một ảnh nền "
+    "trơn bằng công cụ tạo ảnh bạn có, lưu output/<ten-ngan>/anh-tham-chieu/<CODE>.png (tên file = đúng code) và ghi đường dẫn "
+    "tương đối vào characters[].image trong hanamedia_<ten-ngan>.json. Tool HanaMedia tự lấy ảnh, duyệt làm ảnh Master và gắn vào "
+    "mọi cảnh có nhân vật đó. Không tạo được ảnh thì vẫn ghi image_prompt cho từng mục.")
+
 WORKFLOW = {
     "name": "Universal", "builtin": True,
     "command": f"Chạy {CONDUCTOR}",
@@ -73,11 +84,18 @@ Ghi `output/<ten-ngan>/hanamedia_<ten-ngan>.json`:
 {{
   "video": "<ten-ngan>.mp4", "duration": 120.5, "character": "tên chính (tiếng Việt)",
   "style": "một câu tóm tắt phong cách đã khóa",
-  "characters": [{{"code": "LEOPARD_MOTHER", "name": "Báo mẹ", "description": "ngoại hình CỐ ĐỊNH, đủ để vẽ lại"}}],
+  "characters": [{{"code": "LEOPARD_MOTHER", "name": "Báo mẹ", "description": "ngoại hình CỐ ĐỊNH, đủ để vẽ lại",
+                   "image_prompt": "prompt tạo ảnh tham chiếu, nền trơn", "image": "anh-tham-chieu/LEOPARD_MOTHER.png"}}],
   "scenes": [{{"scene": 1, "duration": 8, "prompt": "…", "characters": ["LEOPARD_MOTHER"], "route": "character|easy|hard"}}]
 }}
 ```
 - `characters[].code`: IN HOA, dấu gạch dưới, duy nhất, dùng đúng mã này trong prompt và trong `scenes[].characters`.
+- `characters[]` gồm MỌI thứ cần giữ nhất quán bằng ảnh tham chiếu: nhân vật, đồ vật quan trọng, bối cảnh đặc trưng.
+- **Ảnh tham chiếu (BẮT BUỘC làm):** tạo cho mỗi mục một ảnh (nền trơn, thấy rõ toàn thân / toàn cảnh, đúng `description`)
+  bằng công cụ tạo ảnh mà bạn có (Codex / Claude / MCP tạo ảnh). Lưu vào `output/<ten-ngan>/anh-tham-chieu/<CODE>.png`
+  (tên file = đúng `code`) và ghi đường dẫn tương đối vào `characters[].image`. **Tool HanaMedia tự lấy các ảnh này,
+  duyệt làm ảnh Master rồi gắn vào mọi cảnh có nhân vật đó** — bạn không cần làm gì thêm. Không tạo được ảnh thì vẫn ghi
+  `image_prompt`: tool hiện nút «Chép prompt ảnh» và «Nhập ảnh từ thư mục» để người dùng tự tạo.
 - Cảnh nào có nhân vật xuất hiện thì BẮT BUỘC liệt kê mã trong `scenes[].characters` — tool dựa vào đây để báo bạn cần
   ảnh tham chiếu nào và CHẶN chạy cảnh nếu nhân vật chưa có ảnh.
 - Ghi tiến độ vào `output/_status/universal.json` mỗi khi chuyển module.
@@ -135,6 +153,9 @@ description: "Module 04 — Nhân vật, đồ vật, bối cảnh có mã cố 
   nhận dạng — đủ để một họa sĩ vẽ lại giống hệt), `image_prompt` (prompt tạo ảnh tham chiếu chuẩn, nền trơn).
 - `props[]` và `locations[]` tương tự nếu cần giữ nhất quán.
 - `scene_map`: với MỖI cảnh, danh sách `code` nhân vật xuất hiện (chỉ nhân vật có mặt trong khung).
+**Ảnh tham chiếu:** tạo ảnh cho từng mục trong `characters[]` / `props[]` / `locations[]` bằng công cụ tạo ảnh bạn có, lưu
+`output/<ten-ngan>/anh-tham-chieu/<CODE>.png` (tên file = `code`), ghi `image` (đường dẫn tương đối) vào `hanamedia_<ten>.json`.
+Tool HanaMedia tự lấy ảnh, duyệt làm Master và gắn vào mọi cảnh có nhân vật đó. Không tạo được ảnh thì giữ `image_prompt`.
 Số nhân vật mỗi cảnh phải khớp đúng số nhân vật thấy trong cảnh (lỗi hay gặp: thừa / thiếu con vật hoặc người).
 '''
 

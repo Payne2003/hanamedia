@@ -9,6 +9,7 @@ Nguyên tắc:
   ('manual' = người dùng tự gắn, 'auto' = Auto Character Mapper gắn) để không ghi đè ảnh người dùng tự gắn.
 """
 import json
+from pathlib import Path
 import re
 import time
 import unicodedata
@@ -666,27 +667,77 @@ def _attach_job_characters(registry, job_id, confirm=False):
     return tokens
 
 
+REF_SUFFIX = re.compile(r"_(MASTER|REF|REFERENCE|THAM_CHIEU|ANH|IMAGE|IMG|V\d+|\d+)$")
+
+
+def reference_key(stem):
+    """Tên file ảnh → khóa so khớp nhân vật: bỏ hậu tố ref / master / số thứ tự (BAO_ME_master_2.png → BAO_ME)."""
+    key = character_code(stem)
+    while True:
+        shorter = REF_SUFFIX.sub("", key)
+        if shorter == key or not shorter:
+            return key
+        key = shorter
+
+
+def _import_reference_images(registry, files, project_id=None):
+    """Ảnh tham chiếu do workflow (Claude / Codex) tạo hoặc người dùng chọn: khớp từng ảnh với nhân vật CHƯA có ảnh Master
+    (theo mã gợi ý, mã hoặc tên nhân vật trong tên file), đưa vào Thư viện, duyệt làm Master rồi gắn vào các prompt đang chờ.
+    files: [(Path, mã gợi ý | None)]. Trả về {imported: [mã], unmatched: [tên file], attached: số prompt}."""
+    store = registry.store
+    with store.connect() as db:
+        rows = db.execute("""SELECT id,code,name,locked FROM characters WHERE approved_asset_id IS NULL AND locked=0
+                             AND (?1 IS NULL OR project_id=?1) ORDER BY created DESC,rowid DESC""", (project_id,)).fetchall()
+    index = {}
+    for row in rows:  # mới nhất trước: trùng mã giữa các dự án thì lấy nhân vật của dự án mới nhất
+        for key in {character_code(row["code"]), character_code(row["name"])}:
+            index.setdefault(key, row)
+    imported, unmatched, done = [], [], set()
+    for path, hint in files:
+        path = Path(path)
+        key = character_code(hint) if hint else reference_key(path.stem)
+        row = index.get(key) or index.get(reference_key(path.stem))
+        if row is None:  # tên file dài hơn / ngắn hơn mã: BAO_ME_CON khớp BAO_ME khi duy nhất
+            near = [r for k, r in index.items() if min(len(k), len(key)) >= 4 and (key.startswith(k + "_") or k.startswith(key + "_"))]
+            row = near[0] if len({r["id"] for r in near}) == 1 else None
+        if row is None or row["id"] in done:
+            unmatched.append(path.name)
+            continue
+        try:
+            token = store.add_image(path.read_bytes())["token"]
+            store.add_library_image(token, path.name)
+            registry.approve_asset(registry.add_asset(row["id"], token, "upload"))
+        except (OSError, ValueError):
+            unmatched.append(path.name)
+            continue
+        done.add(row["id"])
+        imported.append(row["code"])
+    attached = {job for char_id in done for job in registry.attach_waiting(char_id)}
+    return {"imported": imported, "unmatched": unmatched, "attached": len(attached)}
+
+
 def _attach_waiting(registry, character_id):
     """Nhân vật vừa có ảnh Master: gắn ảnh nhân vật vào mọi prompt ĐANG CHỜ dùng nhân vật này (qua cảnh hoặc chọn riêng) mà
-    đủ ảnh Master cho mọi nhân vật của prompt. Không đè ảnh người dùng tự gắn. Trả về số prompt đã gắn."""
+    đủ ảnh Master cho mọi nhân vật của prompt. Không đè ảnh người dùng tự gắn. Trả về danh sách mã prompt đã gắn."""
     check_id(character_id, "Nhân vật")
     with registry.store.connect() as db:
         rows = db.execute("""SELECT j.id,j.images,j.images_origin FROM jobs j WHERE j.status='waiting' AND
             (j.character_ids LIKE ? OR (j.scene_id IN (SELECT scene_id FROM scene_characters WHERE character_id=?)))""",
                           (f'%"{character_id}"%', character_id)).fetchall()
-    done = 0
+    done = []
     for row in rows:
         if json.loads(row["images"] or "[]") and row["images_origin"] == "manual":
             continue
         try:
             registry.attach_job_characters(row["id"], confirm=True)
-            done += 1
+            done.append(row["id"])
         except ValueError:
             continue  # prompt còn nhân vật khác chưa có ảnh Master, hoặc đang chạy: bỏ qua
     return done
 
 
 CharacterRegistry.attach_waiting = _attach_waiting
+CharacterRegistry.import_reference_images = _import_reference_images
 CharacterRegistry.job_characters = _job_characters
 CharacterRegistry.set_job_characters = _set_job_characters
 CharacterRegistry.attach_job_characters = _attach_job_characters

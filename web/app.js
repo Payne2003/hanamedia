@@ -751,7 +751,7 @@ async function claudeImport(path,sig,auto=false,again=false){
     const options={...videoOptions(),duration:0,aspect:$('vAspect').value,folder:r.name},cost=Number($('cost').value)||1;  // dự án = tên bài của workflow
     // Workflow Universal có danh sách nhân vật: tạo nhân vật + cảnh trong Character Master để biết cảnh cần ảnh tham chiếu nào
     let sceneIds=null,charCount=0;
-    if(r.has_characters){try{const c=await api('/api/claude/characters',{path});sceneIds=c.scene_ids;charCount=c.characters||0;}catch(error){toast(`Chưa tạo được danh sách nhân vật: ${error.message}`,true);}}
+    if(r.has_characters){try{const c=await api('/api/claude/characters',{path});sceneIds=c.scene_ids;charCount=c.characters||0;if(c.images?.imported?.length)toast(`Workflow đã tạo ảnh tham chiếu: tool đã gắn ảnh cho ${c.images.imported.length} nhân vật (${c.images.imported.join(', ')}).`);}catch(error){toast(`Chưa tạo được danh sách nhân vật: ${error.message}`,true);}}
     for(let start=0;start<prompts.length;start+=200){
       const group=prompts.slice(start,start+200);
       await api('/api/jobs',{prompts:group,cost,mode:'text',batch,append:start,more:start+200<prompts.length,
@@ -1698,10 +1698,17 @@ function renderCharacterNeeds(){
   box.innerHTML=`<div class="stitch-head"><b>🧬 Nhân vật cần tham chiếu</b><label class="detail"><input type="checkbox" id="guardToggle" ${state.character_guard?'checked':''}> Chặn cảnh thiếu ảnh</label></div>
     <div class="need-list">${list.map(c=>c.master_token
       ?`<span class="image-chip need-ok" title="${esc(c.code)}"><img src="/api/library/image/${c.master_token}" alt=""><span>${esc(c.name)} · ${c.scenes} cảnh</span></span>`
-      :`<span class="need-missing" title="${esc(c.code)}">⚠ ${esc(c.name)} · thiếu ảnh · ${c.scenes} cảnh${state.character_guard?' đang bị chặn':''}<button type="button" data-need-master="${c.id}">Gắn ảnh</button></span>`).join('')}</div>
+      :`<span class="need-missing" title="${esc(c.code)}">⚠ ${esc(c.name)} · thiếu ảnh · ${c.scenes} cảnh${state.character_guard?' đang bị chặn':''}<button type="button" data-need-master="${c.id}">Gắn ảnh</button>${c.image_prompt?`<button type="button" data-need-prompt="${c.id}" title="Chép prompt tạo ảnh tham chiếu của nhân vật này">Chép prompt ảnh</button>`:''}</span>`).join('')}</div>
+    <div class="need-actions"><button type="button" id="needImport">📁 Nhập ảnh từ thư mục…</button>${missing.some(c=>c.image_prompt)?'<small class="detail">Chưa có ảnh? Bấm “Chép prompt ảnh” rồi tạo ảnh ở ChatGPT / Flow, lưu vào một thư mục (tên file = mã nhân vật) và nhập lại.</small>':''}</div>
     ${missing.length&&state.character_guard?'<small class="detail">Cảnh thiếu ảnh nhân vật chưa được gửi Muse (tránh tốn credit tạo nhân vật sai). Bấm “Gắn ảnh” rồi chọn ảnh từ Thư viện.</small>':''}`;
 }
-document.addEventListener('click',e=>{const b=e.target.closest('[data-need-master]');if(!b)return;masterTarget=b.dataset.needMaster;openPicker('master');});
+document.addEventListener('click',e=>{
+  const p=e.target.closest('[data-need-prompt]');
+  if(p){const c=(state?.character_needs||[]).find(x=>x.id===p.dataset.needPrompt);if(c)navigator.clipboard.writeText(`${c.image_prompt}\n\nFile ảnh đặt tên: ${c.code}.png`).then(()=>toast(`Đã chép prompt ảnh của ${c.name}. Tạo ảnh rồi lưu tên ${c.code}.png.`));return;}
+  if(e.target.closest('#needImport')){action(async()=>{const r=await api('/api/characters/import-folder',{});if(r.cancelled)return;
+    toast(r.imported.length?`Đã nhập ảnh cho ${r.imported.length} nhân vật (${r.imported.join(', ')}) · gắn vào ${r.attached} prompt${r.unmatched.length?` · ${r.unmatched.length} ảnh không khớp tên nhân vật nào`:''}.`
+      :`Không có ảnh nào khớp tên nhân vật đang thiếu ảnh${r.unmatched.length?` (${r.unmatched.slice(0,4).join(', ')}…)`:''}. Đặt tên file theo mã nhân vật, vd BAO_ME.png.`,!r.imported.length);});return;}
+  const b=e.target.closest('[data-need-master]');if(!b)return;masterTarget=b.dataset.needMaster;openPicker('master');});
 document.addEventListener('change',e=>{if(e.target.id!=='guardToggle')return;const on=e.target.checked;action(async()=>{await api('/api/characters/guard',{enabled:on});toast(on?'Đã bật chặn cảnh thiếu ảnh nhân vật.':'Đã tắt chặn: cảnh thiếu ảnh vẫn được gửi Muse.');});});
 
 // ---- Báo lỗi video → AI tự nâng cấp kỹ năng workflow Universal + ghi bài học chung ----

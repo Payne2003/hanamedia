@@ -1205,7 +1205,35 @@ class Handler(BaseHTTPRequestHandler):
         folder = Path(store.setting("claude_folder") or bridge.default_folder())
         imported = store.setting("claude_imported") or {}
 
+        def scan_references():
+            """Nhân vật còn thiếu ảnh Master: xem workflow đã tạo thêm ảnh trong anh-tham-chieu/ chưa (gọi mỗi lần giao diện
+            hỏi trạng thái, chỉ chạy khi còn nhân vật thiếu ảnh và không quá 1 lần / 4 giây)."""
+            now = time.monotonic()
+            if now - getattr(self.server, "reference_scan", 0) < 4:
+                return
+            self.server.reference_scan = now
+            if not any(not c["master_token"] for c in store.character_needs()[0]):
+                return
+            known = store.setting("claude_char_projects", {})
+            for record in list(known.values())[-10:]:
+                file = record.get("file")
+                if not file or not Path(file).is_file() or not bridge.inside(folder, file):
+                    continue
+                try:
+                    data = bridge.parse(file)
+                    result = store.characters.import_reference_images(
+                        bridge.reference_files(file, data["characters"], folder), record.get("project_id"))
+                except (OSError, ValueError):
+                    continue
+                if result["imported"]:
+                    self.server.engine.changed.set()
+
         def status():
+            if folder.is_dir():
+                try:
+                    scan_references()
+                except Exception:
+                    pass  # quét ảnh lỗi không được làm hỏng trạng thái
             exists = folder.is_dir()
             return {"folder": str(folder), "exists": exists, "auto": store.setting("claude_auto", True) is not False,
                     "cuts": store.setting("claude_cuts", True) is not False,
@@ -1346,9 +1374,13 @@ class Handler(BaseHTTPRequestHandler):
             if not ids or alive != len(data["scenes"]) or len(ids) != len(data["scenes"]):
                 record = store.characters.import_workflow(data["name"], data["characters"], data["scenes"])
                 known[key] = {"project_id": record["project_id"], "scene_ids": record["scene_ids"], "characters": record["characters"]}
-                store.save_setting("claude_char_projects", dict(list(known.items())[-40:]))
+            known[key]["file"] = file
+            store.save_setting("claude_char_projects", dict(list(known.items())[-40:]))
+            # Workflow (Claude / Codex) đã tạo ảnh tham chiếu thì lấy luôn: duyệt làm Master + gắn vào các cảnh
+            images = store.characters.import_reference_images(
+                bridge.reference_files(file, data["characters"], folder), known[key]["project_id"])
             return self.reply({"scene_ids": known[key]["scene_ids"], "characters": known[key]["characters"],
-                               "project_id": known[key]["project_id"]})
+                               "project_id": known[key]["project_id"], "images": images})
         if path == "/api/claude/mark":
             keys = [str(body.get("signature") or ""), str(body.get("folder_key") or "")]
             if not re.fullmatch(r"[a-f0-9]{20}", keys[0]) or not re.fullmatch(r"(d[a-f0-9]{19})?", keys[1]):
@@ -1600,9 +1632,29 @@ class Handler(BaseHTTPRequestHandler):
                 registry = store.characters
                 asset = registry.add_asset(str(body.get("character_id") or ""), str(body.get("token") or ""), "library")
                 registry.approve_asset(asset)
-                attached = registry.attach_waiting(str(body.get("character_id") or ""))
+                attached = len(registry.attach_waiting(str(body.get("character_id") or "")))
                 engine.changed.set()
                 return self.reply({"ok": True, "attached": attached})
+            elif path == "/api/characters/import-folder":
+                # Chọn thư mục có ảnh tham chiếu (vd. thư mục nháp của workflow): khớp tên file với nhân vật đang thiếu ảnh
+                chosen = str(body.get("path") or "").strip() or self.server.pick_directory("--pick-folder", [])
+                if not chosen:
+                    return self.reply({"imported": [], "unmatched": [], "attached": 0, "cancelled": True})
+                from runner import claude_bridge as _bridge
+                root = Path(chosen).expanduser()
+                if not root.is_dir():
+                    raise ValueError("Không thấy thư mục đã chọn.")
+                files = []
+                for sub in [root, root / "anh-tham-chieu", *sorted(p for p in root.iterdir() if p.is_dir())[:20]]:
+                    try:
+                        files += [(p, None) for p in sorted(sub.iterdir())
+                                  if p.is_file() and p.suffix.lower() in _bridge.IMAGE_TYPES and p.stat().st_size <= 10_000_000]
+                    except OSError:
+                        continue
+                files = list(dict.fromkeys(files))[:200]
+                result = store.characters.import_reference_images(files)
+                engine.changed.set()
+                return self.reply(result)
             elif path == "/api/characters/guard":
                 store.save_setting("character_guard", body.get("enabled") is not False)
                 engine.changed.set()

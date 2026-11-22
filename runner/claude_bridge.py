@@ -520,10 +520,43 @@ def parse(path):
     characters = []
     for item in (info.get("characters") if isinstance(info.get("characters"), list) else [])[:60]:
         if isinstance(item, dict) and str(item.get("code") or item.get("name") or "").strip():
-            characters.append({k: " ".join(str(item.get(k) or "").split())[:2000] for k in ("code", "name", "description", "image_prompt")})
+            characters.append({k: " ".join(str(item.get(k) or "").split())[:2000] for k in ("code", "name", "description", "image_prompt", "image")})
     return {"name": name, "file": str(path), "video": str(info.get("video") or ""), "scene_count": len(scenes),
             "duration": _number(info.get("duration")), "cut_source": str(info.get("cut_source") or ""), "scenes": scenes,
             "characters": characters}
+
+
+IMAGE_TYPES = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def reference_files(result_path, characters, folder, limit=200):
+    """Ảnh tham chiếu mà workflow đã tạo cho kết quả này: đường dẫn ghi trong characters[].image (tương đối với file JSON)
+    và mọi ảnh trong thư mục anh-tham-chieu/ cạnh file JSON. Chỉ nhận file nằm trong thư mục HanaMedia, ≤ 10 MB.
+    Trả về [(Path, mã nhân vật gợi ý hoặc None)]."""
+    root = Path(result_path).parent
+    base = Path(folder).expanduser().resolve()
+    found, seen = [], set()
+
+    def add(path, code=None):
+        try:
+            path = Path(path).resolve()
+            ok = path.is_file() and path.suffix.lower() in IMAGE_TYPES and path.is_relative_to(base) and path.stat().st_size <= 10_000_000
+        except OSError:
+            return
+        if ok and path not in seen and len(found) < limit:
+            seen.add(path)
+            found.append((path, code))
+    for item in characters or []:
+        if item.get("image"):
+            add(root / item["image"], item.get("code") or item.get("name"))
+    for sub in (root / "anh-tham-chieu", root):
+        try:
+            names = sorted(sub.iterdir()) if sub.is_dir() else []
+        except OSError:
+            names = []
+        for path in names:
+            add(path)
+    return found
 
 
 def result_files(folder):

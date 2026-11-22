@@ -700,7 +700,7 @@ class Store:
             for row in db.execute("SELECT scene_id,character_id FROM scene_characters ORDER BY rowid"):
                 links.setdefault(row["scene_id"], []).append(row["character_id"])
             chars = {row["id"]: dict(row) for row in db.execute(
-                """SELECT c.id,c.code,c.name,c.project_id,a.image_token AS master_token FROM characters c
+                """SELECT c.id,c.code,c.name,c.project_id,c.image_prompt,a.image_token AS master_token FROM characters c
                    LEFT JOIN character_assets a ON a.id=c.approved_asset_id""")}
         needs, blocked = {}, {}
         for job in jobs:
@@ -712,7 +712,8 @@ class Store:
                 info = chars[char_id]
                 token = info["master_token"] if info["master_token"] and self.image_file(info["master_token"]) else None
                 item = needs.setdefault(char_id, {"id": char_id, "code": info["code"], "name": info["name"],
-                                                  "project_id": info["project_id"], "master_token": token, "scenes": 0})
+                                                  "project_id": info["project_id"], "master_token": token, "scenes": 0,
+                                                  "image_prompt": info["image_prompt"] or ""})
                 item["scenes"] += 1
                 if not token:
                     blocked.setdefault(job["id"], []).append(info["code"])

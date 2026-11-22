@@ -172,15 +172,20 @@ class Workflows:
         lessons = path / "lessons.md"
         if not lessons.exists():
             lessons.write_text(pack.LESSONS_TEMPLATE, encoding="utf-8", newline="\n")
-        marker = path / "skills" / ".builtin"
-        if marker.is_file():
-            return
+        import hashlib
         for rel, text in pack.files().items():
             target = path / "skills" / rel
             if not target.exists():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(text, encoding="utf-8", newline="\n")
-        marker.write_text("1", encoding="utf-8")
+            elif rel in pack.UPGRADES:  # bản cũ chưa sửa tay → nâng lên bản mới (bản đã sửa tay giữ nguyên)
+                try:
+                    digest = hashlib.sha256(target.read_text(encoding="utf-8").encode()).hexdigest()[:16]
+                    if digest in pack.UPGRADES[rel]:
+                        target.write_text(text, encoding="utf-8", newline="\n")
+                except OSError:
+                    pass
+        (path / "skills" / ".builtin").write_text("2", encoding="utf-8")
 
     def lessons(self, slug="universal"):
         """Các bài học lỗi đã rút ra (chung cho mọi dự án của workflow Universal)."""
@@ -436,6 +441,9 @@ class Workflows:
                 '"note": "<một câu>"} — cập nhật mỗi khi chuyển bước.',
                 "- Không hỏi lại người dùng giữa chừng.",
             ]
+            if slug == "universal":
+                from . import universal_skills as pack
+                lines.append(pack.REFERENCE_RULE)
             brief = self.brief(slug)
             if brief:
                 lines.append("- THIẾT LẬP LẦN CHẠY NÀY (cũng lưu ở " + f"{rel}/brief.json): "
