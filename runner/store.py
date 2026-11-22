@@ -727,16 +727,17 @@ class Store:
             blocked = {}
         else:
             blocked = self.character_needs()[1]
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            for job_id, codes in blocked.items():
-                db.execute("UPDATE jobs SET phase=? WHERE id=? AND status='waiting' AND phase!=?",
-                           (self.GUARD_PHASE + ", ".join(codes[:4]) + " — gắn ảnh ở Character Library", job_id,
-                            self.GUARD_PHASE + ", ".join(codes[:4]) + " — gắn ảnh ở Character Library"))
-            marks = db.execute("SELECT id FROM jobs WHERE status='waiting' AND phase LIKE ?", (self.GUARD_PHASE + "%",)).fetchall()
-            for row in marks:
-                if row["id"] not in blocked:
-                    db.execute("UPDATE jobs SET phase='Đợi tài khoản' WHERE id=?", (row["id"],))
+        wanted = {job_id: self.GUARD_PHASE + ", ".join(codes[:4]) + " — gắn ảnh ở Character Library"
+                  for job_id, codes in blocked.items()}
+        with self.connect() as db:  # đọc trước: không có gì đổi thì không mở giao dịch ghi (claim chạy mỗi giây)
+            marked = {row["id"]: row["phase"] for row in db.execute(
+                "SELECT id,phase FROM jobs WHERE status='waiting' AND phase LIKE ?", (self.GUARD_PHASE + "%",))}
+            changes = [(phase, job_id) for job_id, phase in wanted.items() if marked.get(job_id) != phase]
+            clears = [(job_id,) for job_id in marked if job_id not in wanted]
+            if changes or clears:
+                db.execute("BEGIN IMMEDIATE")
+                db.executemany("UPDATE jobs SET phase=? WHERE id=? AND status='waiting'", changes)
+                db.executemany("UPDATE jobs SET phase='Đợi tài khoản' WHERE id=?", clears)
         return blocked
 
     def claim(self, limit):
