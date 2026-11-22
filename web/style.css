@@ -1381,3 +1381,5 @@ details.claude-flow{display:block}details.claude-flow:not([open]){padding:12px 1
 .need-panel .need-missing{display:inline-flex;gap:6px;align-items:center;padding:4px 10px;border:1px dashed var(--danger,#d33);border-radius:999px;color:var(--danger,#d33)}
 .need-panel .need-missing button{font-size:var(--fs-sm)}
 .need-panel .need-ok{opacity:.95}
+
+.need-panel .need-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
