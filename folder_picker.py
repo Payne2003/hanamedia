@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 
-def main(output=None, video=False, plugin=False):
+def main(output=None, video=False, plugin=False, multi=False):
     import tkinter as tk
     from tkinter import filedialog
     try:
@@ -12,7 +12,11 @@ def main(output=None, video=False, plugin=False):
     root = tk.Tk()
     root.withdraw()
     root.attributes("-topmost", True)
-    if video:
+    if video and multi:  # chọn nhiều video một lần (mỗi dòng một đường dẫn)
+        folder = "\n".join(filedialog.askopenfilenames(
+            title="Chọn các video kịch bản (giữ Ctrl / Shift để chọn nhiều)",
+            filetypes=[("Video", "*.mp4 *.mov *.mkv *.webm *.m4v *.avi"), ("Tất cả", "*.*")]))
+    elif video:
         folder = filedialog.askopenfilename(title="Chọn video gốc",
                                             filetypes=[("Video", "*.mp4 *.mov *.mkv *.webm *.m4v *.avi"), ("Tất cả", "*.*")])
     else:
@@ -27,4 +31,4 @@ def main(output=None, video=False, plugin=False):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(video="--video" in sys.argv, plugin="--plugin" in sys.argv))
+    raise SystemExit(main(video="--video" in sys.argv, plugin="--plugin" in sys.argv, multi="--multi" in sys.argv))

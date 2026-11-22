@@ -69,12 +69,12 @@ class AutoRunTests(unittest.TestCase):
             video.write_bytes(b"v")
             flows = FakeFlows()
             opened, ready = [], {"ok": False}
-            flows.open_chat = lambda slug, engine: opened.append((slug, engine))
+            flows.open_chat = lambda slug, engine, project="": opened.append((slug, engine, project))
             runner = AutoRunner(flows, lambda v: {"name": "a"}, pick=lambda pref: "claude", poll=.02, chat=lambda: True,
                                 done=lambda slug, name: ready["ok"] and name == "a")
             runner.enqueue(video)
             time.sleep(.2)
-            self.assertEqual(opened, [("wildlife", "claude")])
+            self.assertEqual(opened, [("wildlife", "claude", "a")])  # đoạn chat biết tên dự án
             self.assertTrue(runner.status()["current"]["chat"])
             ready["ok"] = True
             for _ in range(100):

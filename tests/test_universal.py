@@ -165,6 +165,59 @@ class CharacterNeedsTests(unittest.TestCase):
         self.assertEqual((again["imported"], again["unmatched"]), ([], ["anything.png"]))  # đã có Master: giữ nguyên
 
 
+class SequentialProjectTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = Store(Path(self.temp.name) / "t.db")
+        for name in ("a", "b", "c"):
+            self.store.add_account(f"{name}@tuan89.site", "", 100)
+        self.store.enqueue(["A1", "A2"], 1, uuid.uuid4().hex, options={"folder": "Truyện A"})
+        self.store.enqueue(["B1", "B2"], 1, uuid.uuid4().hex, options={"folder": "Truyện B"})
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_next_project_waits_until_the_previous_one_is_finished(self):
+        first, _ = self.store.claim(3)
+        second, _ = self.store.claim(3)
+        self.assertEqual({first["prompt"], second["prompt"]}, {"A1", "A2"})
+        self.assertIsNone(self.store.claim(3))  # còn 1 tài khoản rảnh nhưng dự án B phải đợi
+        queue = self.store.snapshot()["project_queue"]
+        self.assertEqual([(p["folder"], p["current"]) for p in queue], [("Truyện A", True), ("Truyện B", False)])
+        self.store.finish(first["id"], output="1.mp4")
+        self.assertIsNone(self.store.claim(3))  # A2 vẫn đang chạy
+        self.store.finish(second["id"], output="2.mp4")
+        third, _ = self.store.claim(3)
+        self.assertEqual(third["prompt"], "B1")
+        self.assertEqual([p["folder"] for p in self.store.snapshot()["project_queue"]], ["Truyện B"])
+
+    def test_error_in_a_project_does_not_hold_the_queue_and_switch_off_overlaps_projects(self):
+        first, _ = self.store.claim(3)
+        second, _ = self.store.claim(3)
+        self.store.finish(first["id"], error="Muse lỗi", account_state="ready")
+        self.store.finish(second["id"], output="x.mp4")
+        job, _ = self.store.claim(3)
+        self.assertEqual(job["batch"] != first["batch"], True)  # A xong (1 lỗi, 1 xong) → tới B
+        other = Store(Path(self.temp.name) / "o.db")
+        for name in ("a", "b"):
+            other.add_account(f"{name}@tuan89.site", "", 100)
+        other.enqueue(["A1"], 1, uuid.uuid4().hex)
+        other.enqueue(["B1"], 1, uuid.uuid4().hex)
+        other.save_setting("project_sequential", False)
+        self.assertEqual({other.claim(3)[0]["prompt"], other.claim(3)[0]["prompt"]}, {"A1", "B1"})  # tắt: chạy chồng như cũ
+
+    def test_blocked_project_does_not_hold_the_queue(self):
+        registry = self.store.characters
+        imported = registry.import_workflow("Truyện C", [{"code": "HERO", "name": "Hero"}],
+                                            [{"prompt": "C1", "characters": ["HERO"]}])
+        self.store.enqueue(["C1"], 1, uuid.uuid4().hex, None, "text", None, imported["scene_ids"], {"folder": "Truyện C"})
+        for _ in range(4):  # chạy hết A và B
+            job, _ = self.store.claim(3)
+            self.store.finish(job["id"], output="x.mp4")
+        self.assertIsNone(self.store.claim(3))  # C thiếu ảnh nhân vật: bị chặn, không có gì chạy
+        self.assertEqual(self.store.snapshot()["project_queue"][0]["folder"], "Truyện C")
+
+
 class BridgeCharactersTests(unittest.TestCase):
     def test_reference_files_follow_json_paths_and_folder_but_stay_inside_hanamedia(self):
         with tempfile.TemporaryDirectory() as temp:

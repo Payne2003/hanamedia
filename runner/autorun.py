@@ -99,7 +99,7 @@ class AutoRunner:
             self.current.update(phase="running", engine=engine, project=project)
             if self.chat() and self.done:
                 self.current.update(chat=True)
-                process = self.workflows.open_chat(item["slug"], engine)
+                process = self.workflows.open_chat(item["slug"], engine, project)
                 start = time.time()
                 while True:
                     if self.done(item["slug"], project):

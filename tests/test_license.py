@@ -117,6 +117,11 @@ class LicenseTests(unittest.TestCase):
         self.client.activate(token)
         self.assertTrue(self.client.allows("ai_voice"))
         self.assertFalse(self.client.allows("narration"))
+        self.assertFalse(self.client.allows("universal"))  # Universal (hàng loạt) mặc định chỉ chủ máy
+        _, token = self.create(name="Khách Universal", permissions=["create_jobs", "upload_media", "universal"])
+        self.client.activate(token)
+        self.assertTrue(self.client.allows("universal"))
+        self.assertFalse(self.client.allows("ai_voice"))
         from runner.license import LicenseError, clean_record
         with self.assertRaises(LicenseError):
             clean_record({"name": "x", "role": "user", "permissions": ["bay-bong"]})
