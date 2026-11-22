@@ -537,8 +537,31 @@ return location.href + '|' + [...document.querySelectorAll('[role="log"] [data-m
         except Exception:
             pass
 
+    SIDE_CHAT_WAIT = 30
+    SIDE_CHAT_URL = "https://muse.ai/thread/new"  # nút + cạnh "Đoạn chat phụ" mở đúng trang này
+
     def open_side_chat(self):
-        """Mở một Đoạn chat phụ mới. False nếu không mở được (tool dùng Đoạn chat chính như cũ)."""
+        """Mở một Đoạn chat phụ mới: vào thẳng muse.ai/thread/new (như bấm + cạnh "Đoạn chat phụ"); không được thì bấm
+        nút +. False nếu không mở được (tool dùng Đoạn chat chính như cũ)."""
+        try:
+            self.driver.get(self.SIDE_CHAT_URL)
+            until = time.monotonic() + self.SIDE_CHAT_WAIT
+            while time.monotonic() < until:
+                if ("/thread/" in (self.driver.current_url or "") and self.composer() and not self.turn_count()
+                        and not self.named("button", {"Dừng"})):
+                    self.side_chat_result = "thread/new"
+                    return True
+                time.sleep(0.5)
+        except Exception:
+            pass
+        try:
+            self.driver.get("https://muse.ai")
+            self.wait(lambda: self.composer(), 60, "Không mở được trang Muse.")
+        except Exception:
+            pass
+        return self.click_side_chat()
+
+    def click_side_chat(self):
         try:
             before = self.driver.execute_script(self.JS_PAGE_SIGNATURE)
         except Exception:
@@ -575,22 +598,17 @@ return location.href + '|' + [...document.querySelectorAll('[role="log"] [data-m
 
     def new_chat(self):
         """Mở cuộc trò chuyện Muse mới cho mỗi prompt: prompt sau không dùng ngữ cảnh/ảnh của prompt trước."""
+        if getattr(self, "side_chat", False) and self.open_side_chat():
+            self.phase("Đã mở Đoạn chat phụ mới cho luồng này (chạy song song với Đoạn chat chính)")
+            return
         self.driver.get("https://muse.ai")
         try:
             self.wait(lambda: self.composer(), 60, "Không mở được cuộc trò chuyện Muse mới. Kiểm tra phiên Muse.")
         except MuseFailure as error:  # prompt chưa gửi: bộ chạy tự đưa lại hàng đợi
             raise MuseFailure(str(error), unsent=True) from None
         if getattr(self, "side_chat", False):
-            if self.open_side_chat():
-                self.phase("Đã mở Đoạn chat phụ mới cho luồng này (chạy song song với Đoạn chat chính)")
-                return
             self.phase(f"Không mở được Đoạn chat phụ ({getattr(self, 'side_chat_result', '')}) · dùng Đoạn chat chính · "
                        "đã lưu data/logs/muse-side-chat-debug.html")
-            self.driver.get("https://muse.ai")
-            try:
-                self.wait(lambda: self.composer(), 60, "Không mở được cuộc trò chuyện Muse mới. Kiểm tra phiên Muse.")
-            except MuseFailure as error:
-                raise MuseFailure(str(error), unsent=True) from None
         if self.turn_count():  # trang hiện lại cuộc trò chuyện cũ: bấm "Mới"
             try:
                 clicked = self.driver.execute_script(self.JS_NEW_CHAT)
