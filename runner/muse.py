@@ -476,6 +476,45 @@ hit.click();
 return true;
 """
 
+    # Muse có "Đoạn chat chính" và các "Đoạn chat phụ" (nút + cạnh tiêu đề): mỗi đoạn chat là một cuộc trò chuyện riêng,
+    # tạo video độc lập. Luồng thứ 2, 3 của cùng tài khoản mở Đoạn chat phụ mới để không phải chờ video của Đoạn chat chính.
+    JS_SIDE_CHAT = r"""
+const visible=e => e && e.offsetParent!==null;
+const label=e => ((e.getAttribute('aria-label')||'') + ' ' + (e.getAttribute('title')||'')).toLowerCase();
+const direct=[...document.querySelectorAll('button,a,[role="button"]')].filter(visible)
+  .find(e => /(đoạn chat phụ|chat phụ|side chat)/.test(label(e)) && /(mới|thêm|tạo|new|add|create|\+)/.test(label(e)));
+if (direct) { direct.click(); return 'aria'; }
+const heads=[...document.querySelectorAll('body *')].filter(e => visible(e) && e.children.length===0 &&
+  /^(đoạn chat phụ|side chats?)$/i.test((e.textContent||'').trim()));
+for (const head of heads) {
+  let row=head;
+  for (let i=0; i<4 && row; i++) {
+    row=row.parentElement;
+    if (!row) break;
+    const btn=[...row.querySelectorAll('button,[role="button"]')].filter(visible)
+      .find(b => !(b.innerText||'').trim() || (b.innerText||'').trim()==='+');
+    if (btn) { btn.click(); return 'row'; }
+    if (row.tagName==='BUTTON' || row.getAttribute('role')==='button') { row.click(); return 'head'; }
+  }
+}
+return '';
+"""
+
+    def open_side_chat(self):
+        """Mở một Đoạn chat phụ mới (trống). False nếu trang không có nút này (tool dùng Đoạn chat chính như cũ)."""
+        try:
+            clicked = self.driver.execute_script(self.JS_SIDE_CHAT)
+        except Exception:
+            clicked = ""
+        if not clicked:
+            return False
+        until = time.monotonic() + 20
+        while time.monotonic() < until:
+            if self.composer() and not self.turn_count() and not self.named("button", {"Dừng"}):
+                return True
+            time.sleep(0.5)
+        return False
+
     def turn_count(self):
         try:
             return int(self.driver.execute_script(
@@ -490,6 +529,16 @@ return true;
             self.wait(lambda: self.composer(), 60, "Không mở được cuộc trò chuyện Muse mới. Kiểm tra phiên Muse.")
         except MuseFailure as error:  # prompt chưa gửi: bộ chạy tự đưa lại hàng đợi
             raise MuseFailure(str(error), unsent=True) from None
+        if getattr(self, "side_chat", False):
+            if self.open_side_chat():
+                self.phase("Đã mở Đoạn chat phụ mới cho luồng này (chạy song song với Đoạn chat chính)")
+                return
+            self.phase("Không mở được Đoạn chat phụ · dùng Đoạn chat chính")
+            self.driver.get("https://muse.ai")
+            try:
+                self.wait(lambda: self.composer(), 60, "Không mở được cuộc trò chuyện Muse mới. Kiểm tra phiên Muse.")
+            except MuseFailure as error:
+                raise MuseFailure(str(error), unsent=True) from None
         if self.turn_count():  # trang hiện lại cuộc trò chuyện cũ: bấm "Mới"
             try:
                 clicked = self.driver.execute_script(self.JS_NEW_CHAT)
