@@ -173,7 +173,7 @@ class BridgeCharactersTests(unittest.TestCase):
             (out / "anh-tham-chieu").mkdir(parents=True)
             (out / "anh-tham-chieu" / "BAO_ME.png").write_bytes(b"x")
             (out / "extra.webp").write_bytes(b"x")
-            (out / "notes.txt").write_text("không phải ảnh")
+            (out / "notes.txt").write_text("không phải ảnh", encoding="utf-8")
             outside = Path(temp) / "secret.png"
             outside.write_bytes(b"x")
             result = out / "hanamedia_p.json"
