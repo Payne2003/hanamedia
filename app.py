@@ -1603,7 +1603,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"ok": True, **engine.health.check_all()})
             elif path == "/api/accounts/update":
                 with engine.lock:
-                    store.configure_account(body["id"], body["enabled"], body["budget"], body.get("threads"))
+                    store.configure_account(body["id"], body["enabled"], body["budget"], body.get("threads"), body.get("chat_mode"))
             elif path == "/api/login":
                 engine.login(body["id"])
             elif path == "/api/review":

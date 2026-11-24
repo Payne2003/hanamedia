@@ -101,10 +101,14 @@ ACCOUNT_COLUMNS = {
     # Số luồng (tab) chạy cùng lúc trên một tài khoản. Mặc định 1: Muse chỉ nhận một yêu cầu mỗi lúc trên một tài khoản
     # (mọi prompt chung một cuộc trò chuyện) — luồng 2 chỉ gửi ngay khi luồng 1 vừa xong.
     "threads": "INTEGER NOT NULL DEFAULT 1",
+    # Chạy ở đoạn chat nào của Muse: auto = tab 1 ở Đoạn chat chính, tab 2 trở đi ở Đoạn chat phụ; main = luôn Đoạn chat chính;
+    # side = luôn một Đoạn chat phụ mới cho mỗi prompt (để Đoạn chat chính rảnh cho bạn trò chuyện với Muse).
+    "chat_mode": "TEXT NOT NULL DEFAULT 'auto'",
     # Hết hạn mức Muse (state 'limited') tới thời điểm này; quá hạn thì tool tự cho tài khoản chạy lại.
     "limited_until": "REAL NOT NULL DEFAULT 0",
 }
 THREAD_CHOICES = (1, 2, 3, 4, 5)
+CHAT_MODES = ("auto", "main", "side")
 DEFAULT_BUDGET = 10000  # credit dự kiến mặc định của tài khoản mới
 
 
@@ -352,16 +356,19 @@ class Store:
         except sqlite3.OperationalError:
             pass
 
-    def configure_account(self, account_id, enabled, budget, threads=None):
+    def configure_account(self, account_id, enabled, budget, threads=None, chat_mode=None):
         if threads is not None and threads not in THREAD_CHOICES:
             raise ValueError("Số tab mỗi tài khoản từ 1 đến 5.")
+        if chat_mode is not None and chat_mode not in CHAT_MODES:
+            raise ValueError("Chọn Đoạn chat chính, Đoạn chat phụ hoặc Tự động.")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
             if not row or row["state"] in LOCKED_STATES:
                 raise ValueError("Tài khoản đang bận hoặc không tồn tại.")
-            db.execute("UPDATE accounts SET enabled=?,budget=?,threads=? WHERE id=?",
-                       (int(bool(enabled)), number(budget), row["threads"] if threads is None else threads, account_id))
+            db.execute("UPDATE accounts SET enabled=?,budget=?,threads=?,chat_mode=? WHERE id=?",
+                       (int(bool(enabled)), number(budget), row["threads"] if threads is None else threads,
+                        row["chat_mode"] if chat_mode is None else chat_mode, account_id))
         self.plan_waiting()
 
     def delete_account(self, account_id):
@@ -1257,7 +1264,7 @@ class Store:
     def snapshot(self):
         with self.connect() as db:
             accounts = [dict(r) for r in db.execute(
-                """SELECT a.id,a.email,a.enabled,a.budget,a.state,a.detail,a.health,a.last_checked,a.last_error,a.video_blocked,a.threads,a.limited_until,
+                """SELECT a.id,a.email,a.enabled,a.budget,a.state,a.detail,a.health,a.last_checked,a.last_error,a.video_blocked,a.threads,a.chat_mode,a.limited_until,
                    (SELECT count(*) FROM jobs j WHERE j.status='running' AND j.account_id=a.id) AS jobs_running,
                    (SELECT count(*) FROM jobs j WHERE j.status='waiting' AND j.assigned_account_id=a.id) AS jobs_assigned,
                    (SELECT count(*) FROM jobs j WHERE j.status='done' AND j.account_id=a.id) AS jobs_completed,

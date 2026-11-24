@@ -366,7 +366,8 @@ class Engine:
             tab.root = root
             tab.owns_tab = True
             # Tab khác của tài khoản đang chạy: luồng này dùng Đoạn chat phụ riêng, không chờ video của Đoạn chat chính.
-            tab.side_chat = router.active() > 1
+            mode = account.get("chat_mode") or "auto"
+            tab.side_chat = mode == "side" or (mode == "auto" and router.active() > 1)  # main: luôn Đoạn chat chính
             if fresh or not tab.session_ready():
                 self.store.phase(job["id"], "Mở tab Muse mới cho luồng này")
                 try:
@@ -375,7 +376,7 @@ class Engine:
                     pass
                 if not tab.session_ready():
                     tab.login(account)
-            elif hasattr(tab, "new_chat") and not getattr(root, "just_logged_in", False):
+            elif hasattr(tab, "new_chat") and (tab.side_chat or not getattr(root, "just_logged_in", False)):
                 self.store.phase(job["id"], "Mở cuộc trò chuyện Muse mới")
                 tab.new_chat()
                 if not tab.session_ready():
