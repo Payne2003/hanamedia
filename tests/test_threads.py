@@ -26,6 +26,17 @@ class AccountThreadTests(unittest.TestCase):
     def test_new_account_defaults_to_one_thread_and_100_credit(self):
         self.assertEqual((self.account["threads"], self.account["budget"]), (1, DEFAULT_BUDGET))
 
+    def test_chat_mode_per_account_defaults_to_auto_and_is_validated(self):
+        self.assertEqual(self.state()["chat_mode"], "auto")
+        self.store.configure_account(self.account["id"], True, 100, None, "side")
+        self.assertEqual((self.state()["chat_mode"], self.state()["threads"]), ("side", 1))
+        self.store.configure_account(self.account["id"], True, 100, 3)  # không truyền chat_mode: giữ nguyên
+        self.assertEqual(self.state()["chat_mode"], "side")
+        with self.assertRaises(ValueError):
+            self.store.configure_account(self.account["id"], True, 100, 1, "khac")
+        job, account = self.store.claim(1)
+        self.assertEqual(account["chat_mode"], "side")  # engine đọc chế độ từ tài khoản được giao
+
     def test_up_to_five_tabs_per_account(self):
         self.store.configure_account(self.account["id"], True, 100, 5)
         self.assertEqual(self.state()["threads"], 5)
