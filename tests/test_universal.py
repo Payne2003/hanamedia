@@ -272,6 +272,11 @@ if __name__ == "__main__":
 
 
 class PortFallbackTests(unittest.TestCase):
+    def test_windows_gets_an_exclusive_port_so_two_programs_cannot_share_it(self):
+        import os
+        import app
+        self.assertEqual(app.AppServer.allow_reuse_address, os.name != "nt")
+
     def test_busy_default_port_falls_back_to_the_next_port_and_message_names_the_address(self):
         import socket
         import app
