@@ -1171,7 +1171,7 @@ function closeJob(){studioJob=null;$('jobView').hidden=true;showView('studio');}
 function fillJob(){
   const job=studioJob;if(!job)return;
   $('jobName').textContent=`${job.name} · ${statusLabel[job.status]||job.status}`;
-  $('jobPrompt').value=job.prompt;$('jobSetting').value=job.details.setting;$('jobBehavior').value=job.details.behavior;$('jobAction').value=job.details.action;$('jobCamera').value=job.details.camera;
+  $('jobPrompt').value=job.prompt;renderJobFields(job);
   const accounts=state?.accounts||[];
   $('jobAccount').innerHTML=`<option value="">Chờ tài khoản (tool tự chia)</option>`+accounts.map((a,i)=>`<option value="${a.id}">Tài khoản ${i+1} · ${esc(a.email)}${a.enabled?'':' (đang tắt)'}</option>`).join('');
   $('jobAccount').value=job.assigned_account_id&&accounts.some(a=>a.id===job.assigned_account_id)?job.assigned_account_id:'';
@@ -1195,8 +1195,17 @@ function renderJobEditing(){
   $('jobRerun').disabled=running||studioJob?.status==='waiting';
   renderJobImages();
 }
-function jobPayload(){return {id:studioJob.id,prompt:$('jobPrompt').value,details:{setting:$('jobSetting').value,behavior:$('jobBehavior').value,action:$('jobAction').value,camera:$('jobCamera').value},images:studioImages,mode:studioMode,account_id:$('jobAccount').value||null,video:{aspect:$('jobAspect').value,duration:Number($('jobDuration').value)||0,resolution:$('jobResolution').value}};}
-function jobChanged(){if(!studioJob||!studioEditing)return false;const p=jobPayload(),j=studioJob;return p.prompt.trim()!==j.prompt||JSON.stringify(Object.values(p.details).map(v=>v.trim()))!==JSON.stringify([j.details.setting,j.details.behavior,j.details.action,j.details.camera])||JSON.stringify(p.images)!==JSON.stringify(j.images)||p.mode!==(j.generation_mode==='image'?'image':'text')||(p.account_id||'')!==(j.assigned_account_id&&state?.accounts?.some(a=>a.id===j.assigned_account_id)?j.assigned_account_id:'');}
+// Mọi trường của prompt khung đầy đủ: tách sẵn từ prompt; sửa ở đây thì tool gán ngược vào đúng chỗ trong prompt khi Lưu.
+const JOB_FIELDS=[['setting','Bối cảnh · SETTING / ENVIRONMENT'],['characters','Nhân vật · CHARACTERS'],['camera','Góc quay · CAMERA'],['behavior','Hành vi nhân vật · CHARACTER BEHAVIOR'],['action','Hành động · ACTION'],['audio','Âm thanh · AUDIO'],['continuity','Liên tục giữa các cảnh · CONTINUITY'],['rendering','Quy tắc render · RENDERING RULES'],['ending','Khung cuối · ENDING FRAME']];
+function renderJobFields(job){
+  const box=$('jobFields');if(!box)return;
+  box.innerHTML=JOB_FIELDS.map(([key,label])=>`<label for="jobField_${key}">${esc(label)}${job.details[key]?'':' <small class="detail">(chưa có trong prompt)</small>'}</label><textarea id="jobField_${key}" data-field="${key}" rows="2" maxlength="5000" data-job-field></textarea>`).join('');
+  JOB_FIELDS.forEach(([key])=>{$('jobField_'+key).value=job.details[key]||'';});
+  const filled=JOB_FIELDS.filter(([key])=>job.details[key]).length;$('jobFieldsInfo').textContent=`· ${filled}/${JOB_FIELDS.length} trường có trong prompt`;
+}
+function jobFieldValues(){return Object.fromEntries(JOB_FIELDS.map(([key])=>[key,$('jobField_'+key)?.value||'']));}
+function jobPayload(){return {id:studioJob.id,prompt:$('jobPrompt').value,details:jobFieldValues(),images:studioImages,mode:studioMode,account_id:$('jobAccount').value||null,video:{aspect:$('jobAspect').value,duration:Number($('jobDuration').value)||0,resolution:$('jobResolution').value}};}
+function jobChanged(){if(!studioJob||!studioEditing)return false;const p=jobPayload(),j=studioJob;return p.prompt.trim()!==j.prompt||JOB_FIELDS.some(([key])=>(p.details[key]||'').trim()!==(j.details[key]||'').trim())||JSON.stringify(p.images)!==JSON.stringify(j.images)||p.mode!==(j.generation_mode==='image'?'image':'text')||(p.account_id||'')!==(j.assigned_account_id&&state?.accounts?.some(a=>a.id===j.assigned_account_id)?j.assigned_account_id:'');}
 async function saveJob(){
   if(!$('jobPrompt').value.trim()){$('jobNotice').innerHTML='<b>Prompt không được để trống.</b>';$('jobNotice').hidden=false;$('jobPrompt').focus();return false;}
   try{const {job}=await api('/api/jobs/update',jobPayload());studioJob=job;await refresh();return true;}

@@ -591,32 +591,74 @@ STRUCT_FIELDS = (("setting", "SETTING"), ("characters", "CHARACTERS"), ("camera"
 MUSE_STYLE = ("Ultra-photorealistic, natural wildlife documentary footage, authentic animal anatomy and behavior, natural "
               "daylight, real-time 1x, non-cinematic, natural ambient ASMR only, no narration, no music, no slow motion, "
               "no artificial effects, no text, no watermark")
-STRUCT_LABEL = re.compile(r"(?:(?<=^)|(?<=[\s;|.,(\[]))(setting|camera(?:\s*angle)?|character\s*behaviou?r|behaviou?r|characters?"
-                          r"|action|ending\s*frame|style|duration|aspect\s*ratio)\s*[:：]", re.IGNORECASE)
+STRUCT_LABEL = re.compile(r"(?:(?<=^)|(?<=[\s;|.,(\[]))(setting|environment|location|camera(?:\s*angle)?|character\s*behaviou?r|behaviou?r"
+                          r"|characters?|action|audio|sound|continuity|render(?:ing)?\s*rules?|ending\s*frame|style|duration"
+                          r"|aspect\s*ratio)\s*[:：]", re.IGNORECASE)
 # Đuôi kỹ thuật cuối prompt: "15 seconds", "16:9 aspect ratio" (một hoặc cả hai, theo thứ tự bất kỳ).
 ASPECT_TAIL = re.compile(r"(?:[\s;,.]*(?:\d{1,3}\s*(?:seconds?|secs?|s|giây)|\d{1,2}\s*:\s*\d{1,2}\s*aspect\s*ratio))+\.?\s*$",
                          re.IGNORECASE)
 
 
+def _field_key(label):
+    label = re.sub(r"\s+", " ", label.lower())
+    return ("setting" if label.startswith(("environment", "location")) else
+            "camera" if label.startswith("camera") else "behavior" if "behavio" in label else
+            "characters" if label.startswith("character") else "ending" if label.startswith("ending") else
+            "audio" if label.startswith(("audio", "sound")) else "rendering" if label.startswith("render") else
+            "aspect" if label.startswith("aspect") else label)
+
+
+def field_spans(prompt):
+    """Vị trí giá trị của từng trường có nhãn trong prompt: {khóa: (đầu, cuối)} (nhãn xuất hiện đầu tiên có giá trị).
+    Dùng chung cho tách trường (parse_structured) và ghi giá trị đã sửa ngược lại vào prompt (apply_fields)."""
+    text = str(prompt or "")
+    marks = list(STRUCT_LABEL.finditer(text))
+    spans = {}
+    for index, mark in enumerate(marks):
+        key = _field_key(mark.group(1))
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
+        raw = text[mark.end():end]
+        tail = ASPECT_TAIL.search(raw)
+        if tail:
+            raw = raw[:tail.start()]
+        start = mark.end() + (len(raw) - len(raw.lstrip(" \t;|,\n")))
+        stop = mark.end() + len(raw.rstrip(" \t;|,\n"))
+        if stop > start and key not in spans:
+            spans[key] = (start, stop)
+    return spans
+
+
 def parse_structured(prompt):
-    """Tách "Setting: ...; Camera: ...; Character behavior: ...; Action: ...; Style: ..." thành các trường.
+    """Tách "Setting: ...; Camera: ...; Character behavior: ...; Action: ...; Audio: ...; Style: ..." thành các trường.
 
     Thuật toán: tìm vị trí mọi nhãn đã biết, giá trị của một nhãn là đoạn chữ từ sau dấu ":" đến trước nhãn kế
     tiếp; bỏ dấu ngăn cách (; | ,) và đuôi "16:9 aspect ratio". Trả về {} nếu không có nhãn nào.
+    Nhãn đồng nghĩa gộp về một khóa: ENVIRONMENT / LOCATION → setting, SOUND → audio, RENDER(ING) RULES → rendering.
     """
     text = str(prompt or "")
-    marks = list(STRUCT_LABEL.finditer(text))
-    fields = {}
-    for index, mark in enumerate(marks):
-        label = re.sub(r"\s+", " ", mark.group(1).lower())
-        key = ("camera" if label.startswith("camera") else "behavior" if "behavio" in label else
-               "characters" if label.startswith("character") else "ending" if label.startswith("ending") else
-               "aspect" if label.startswith("aspect") else label)
-        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
-        value = ASPECT_TAIL.sub("", text[mark.end():end]).strip(" \t;|,")
-        if value and key not in fields:
-            fields[key] = value[:FIELD_LIMIT * 2]
-    return fields
+    return {key: text[start:stop][:FIELD_LIMIT * 2] for key, (start, stop) in field_spans(text).items()}
+
+
+DEFAULT_LABELS = {"setting": "SETTING", "characters": "CHARACTERS", "camera": "CAMERA", "behavior": "CHARACTER BEHAVIOR",
+                  "action": "ACTION", "audio": "AUDIO", "continuity": "CONTINUITY", "rendering": "RENDERING RULES",
+                  "ending": "ENDING FRAME"}
+
+
+def apply_fields(prompt, values):
+    """Gán giá trị đã sửa của từng trường vào đúng chỗ của nó trong prompt (giữ nhãn và dấu ngăn cách). Trường chưa có nhãn
+    trong prompt được thêm vào cuối với nhãn chuẩn. Chỉ nhận giá trị không rỗng; prompt không có khung nhãn thì giữ nguyên."""
+    text = str(prompt or "")
+    spans = field_spans(text)
+    if len(spans) < 2:
+        return text
+    changes = {k: " ".join(str(v).split()) for k, v in (values or {}).items() if k in DEFAULT_LABELS and str(v).strip()}
+    for key, (start, stop) in sorted(((k, spans[k]) for k in changes if k in spans), key=lambda item: -item[1][0]):
+        text = text[:start] + changes[key] + text[stop:]
+    missing = [k for k in DEFAULT_LABELS if k in changes and k not in spans]
+    if missing:
+        sep = " | " if " | " in text else "; "
+        text = text.rstrip().rstrip(";|") + "".join(f"{sep}{DEFAULT_LABELS[k]}: {changes[k]}" for k in missing)
+    return text
 
 
 def structured_complete(prompt):

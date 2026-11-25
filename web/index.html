@@ -310,19 +310,15 @@
         <div class="job-left">
           <label for="jobPrompt">Prompt <b class="required">*</b></label>
           <textarea id="jobPrompt" rows="14" maxlength="20000" data-job-field></textarea>
-          <label for="jobSetting" class="job-extra" hidden>Bối cảnh</label>
-          <textarea id="jobSetting" class="job-extra" hidden rows="3" maxlength="5000" data-job-field></textarea>
-          <label for="jobBehavior" class="job-extra" hidden>Hành vi nhân vật</label>
-          <textarea id="jobBehavior" class="job-extra" hidden rows="3" maxlength="5000" data-job-field></textarea>
-          <label for="jobAction" class="job-extra" hidden>Nội dung hành động nhân vật</label>
-          <textarea id="jobAction" class="job-extra" hidden rows="3" maxlength="5000" data-job-field></textarea>
+          <details class="job-fields" id="jobFieldsBox" open><summary>Các trường của prompt <small id="jobFieldsInfo" class="detail"></small></summary>
+            <p class="detail">Prompt có đủ nhãn (SETTING/ENVIRONMENT, CHARACTERS, CAMERA, ACTION, AUDIO, CONTINUITY, RENDERING RULES…) thì tool tách sẵn từng trường. Sửa ở ô nào, bấm Lưu: tool gán giá trị mới vào đúng chỗ của trường đó trong prompt. Trường chưa có trong prompt: nhập vào để thêm.</p>
+            <div id="jobFields" class="job-fields-grid"></div></details>
         </div>
         <div class="job-right">
           <label>Ảnh tham chiếu / Tải tệp lên</label>
           <div id="jobDrop" class="job-drop"><span><svg class="ic" aria-hidden="true"><use href="#i-image"/></svg> Kéo thả tệp vào đây hoặc</span><button id="jobChoose" type="button" data-job-field>Chọn tệp</button><small>Hỗ trợ: JPG, PNG, WEBP (tối đa 10MB) · tối đa 10 ảnh</small><button id="jobLibrary" type="button" data-job-field><svg class="ic" aria-hidden="true"><use href="#i-images"/></svg> Chọn từ thư viện</button><input id="jobFiles" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></div>
           <div id="jobImages" class="job-images"></div>
-          <label for="jobCamera" class="job-extra" hidden>Góc quay</label>
-          <input id="jobCamera" class="job-extra" hidden list="jobCameras" maxlength="5000" data-job-field placeholder="Ví dụ: Góc quay ngang, cận cảnh, theo chân (tracking)"><datalist id="jobCameras"><option value="Góc quay ngang, cận cảnh, theo chân (tracking)"><option value="Toàn cảnh, máy quay cố định"><option value="Trung cảnh, lia máy chậm"><option value="Cận cảnh khuôn mặt, máy quay đứng yên"><option value="Góc thấp nhìn lên, máy quay theo dõi"><option value="Góc cao nhìn xuống (high angle)"><option value="Flycam bao quát từ xa"></datalist>
+
           <div class="job-grid"><div><label>Loại <b class="required">*</b></label><div class="job-type" role="group"><button type="button" data-job-type="text" data-job-field><svg class="ic" aria-hidden="true"><use href="#i-video"/></svg> Video</button><button type="button" data-job-type="image" data-job-field><svg class="ic" aria-hidden="true"><use href="#i-images"/></svg> Ảnh → video</button></div></div>
           <div><label for="jobAccount">Tài khoản <b class="required">*</b></label><select id="jobAccount" data-job-field></select></div></div>
           <div class="job-video-spec"><div><label for="jobAspect">Tỉ lệ khung</label><select id="jobAspect" data-job-field><option value="">Để Muse tự chọn</option><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="3:4">3:4</option></select></div><div><label for="jobDuration">Thời lượng</label><select id="jobDuration" data-job-field><option value="">Để Muse tự chọn</option><option value="10">10 giây</option><option value="8">8 giây</option><option value="6">6 giây</option><option value="5">5 giây</option><option value="4">4 giây</option><option value="3">3 giây</option><option value="2">2 giây</option></select></div><div><label for="jobResolution">Độ phân giải</label><select id="jobResolution" data-job-field><option value="">Giữ nguyên của Muse</option><option value="4K">4K</option><option value="1080p">1080p</option><option value="720p">720p</option></select></div></div>
