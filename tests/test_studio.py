@@ -27,8 +27,9 @@ class PromptStudioTests(unittest.TestCase):
         job = self.job("Bối cảnh 1: Vách đá cao, góc quay: Cận cảnh, theo chân, hành vi nhân vật: Báo tuyết leo, "
                        "Nội dung hành động nhân vật: Báo tuyết trượt nhẹ rồi dừng lại;")
         detail = self.store.job_detail(job["id"])
-        self.assertEqual(detail["details"], {"setting": "Vách đá cao", "camera": "Cận cảnh, theo chân",
-                                             "behavior": "Báo tuyết leo", "action": "Báo tuyết trượt nhẹ rồi dừng lại"})
+        self.assertEqual({k: v for k, v in detail["details"].items() if v},
+                         {"setting": "Vách đá cao", "camera": "Cận cảnh, theo chân",
+                          "behavior": "Báo tuyết leo", "action": "Báo tuyết trượt nhẹ rồi dừng lại"})
         self.assertTrue(detail["editable"])
 
     def test_update_saves_prompt_details_images_type_and_account(self):
@@ -86,10 +87,11 @@ class EnglishSourceFieldsTests(unittest.TestCase):
                           1, uuid.uuid4().hex, sources=sources)
             jobs = {j["prompt"]: store.job_detail(j["id"]) for j in store.snapshot()["jobs"]}
             first = jobs["Ultra-photorealistic goats grazing, 16:9 aspect ratio."]["details"]
-            self.assertEqual(first, {"setting": "Sườn núi đá vôi", "camera": "Cận cảnh ngang tầm mắt",
-                                     "behavior": "Dê mẹ bình thản", "action": "Dê mẹ nhai cỏ"})
+            self.assertEqual({k: v for k, v in first.items() if v},
+                             {"setting": "Sườn núi đá vôi", "camera": "Cận cảnh ngang tầm mắt",
+                              "behavior": "Dê mẹ bình thản", "action": "Dê mẹ nhai cỏ"})
             self.assertEqual(jobs["A leopard on a ledge."]["details"]["setting"], "Cảnh tự do không theo mẫu")
-            self.assertEqual(jobs["A wide cliff."]["details"], {"setting": "", "camera": "", "behavior": "", "action": ""})
+            self.assertFalse(any(jobs["A wide cliff."]["details"].values()))
             with self.assertRaises(ValueError):
                 store.enqueue(["x"], 1, uuid.uuid4().hex, sources=["a", "b"])
 
@@ -110,3 +112,46 @@ class EnglishSourceFieldsTests(unittest.TestCase):
         lines = ["Bối cảnh 1: A", "Bối cảnh 2: B"]
         result = gemini_web.run_english(Session(), lines, lambda _: None, threading.Event())
         self.assertEqual(result["lines"], lines)
+
+
+class PromptFieldsTests(unittest.TestCase):
+    PROMPT = ("SCENE 83 | Duration 8 seconds | ENVIRONMENT: sausage tree at the riverbank | CHARACTERS: exactly 3 animals | "
+              "ACTION: the leopards wake | CAMERA: 0-4.9s low angle | AUDIO: dry grass rustling | "
+              "CONTINUITY: opens on the hatchling; hands off to scene 84 | RENDERING RULES: real-time, no music, 16:9, 4K")
+
+    def setUp(self):
+        import tempfile
+        import uuid
+        from pathlib import Path
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = Store(Path(self.temp.name) / "s.db")
+        self.store.add_account("a@tuan89.site", "", 100)
+        self.store.enqueue([self.PROMPT], 1, uuid.uuid4().hex)
+        self.job = self.store.snapshot()["jobs"][0]["id"]
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_every_labelled_field_is_split_out_of_the_prompt(self):
+        d = self.store.job_detail(self.job)["details"]
+        self.assertEqual(d["setting"], "sausage tree at the riverbank")  # ENVIRONMENT → setting
+        self.assertEqual((d["characters"], d["action"], d["camera"]), ("exactly 3 animals", "the leopards wake", "0-4.9s low angle"))
+        self.assertEqual((d["audio"], d["continuity"]), ("dry grass rustling", "opens on the hatchling; hands off to scene 84"))
+        self.assertTrue(d["rendering"].startswith("real-time"))
+        self.assertEqual(d["ending"], "")  # prompt không có khung cuối
+
+    def test_editing_a_field_assigns_it_back_into_the_prompt(self):
+        details = self.store.job_detail(self.job)["details"]
+        details.update(audio="wind only, no rustling", ending="leopards at the foot of the tree")
+        job = self.store.update_job(self.job, self.PROMPT, details)
+        self.assertIn("AUDIO: wind only, no rustling | CONTINUITY:", job["prompt"])  # đúng chỗ, giữ nhãn và dấu |
+        self.assertTrue(job["prompt"].endswith("| ENDING FRAME: leopards at the foot of the tree"))  # trường mới thêm cuối
+        self.assertIn("ENVIRONMENT: sausage tree", job["prompt"])  # trường khác giữ nguyên
+        self.assertEqual(job["details"]["audio"], "wind only, no rustling")
+
+    def test_editing_the_prompt_text_wins_over_fields(self):
+        details = self.store.job_detail(self.job)["details"]
+        details["audio"] = "ignored"
+        job = self.store.update_job(self.job, self.PROMPT.replace("wake", "sleep"), details)
+        self.assertIn("the leopards sleep", job["prompt"])
+        self.assertIn("AUDIO: dry grass rustling", job["prompt"])  # sửa chữ prompt thì ô trường không đè lên

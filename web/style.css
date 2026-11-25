@@ -1406,3 +1406,8 @@ details.claude-flow{display:block}details.claude-flow:not([open]){padding:12px 1
 .pq-row progress{width:100%;height:6px;accent-color:var(--accent,#4fe3a8)}
 .pq-stat{opacity:.85;white-space:nowrap}
 @media (max-width:640px){.pq-row{grid-template-columns:22px 1fr;}.pq-row progress,.pq-row .pq-stat{grid-column:2}}
+.job-fields{margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:6px 12px}
+.job-fields>summary{cursor:pointer;font-weight:600;padding:4px 0}
+.job-fields-grid{display:grid;grid-template-columns:1fr;gap:4px}
+.job-fields-grid label{margin-top:6px;font-size:var(--fs-sm)}
+.job-fields-grid textarea{resize:vertical}

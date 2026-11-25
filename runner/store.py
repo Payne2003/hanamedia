@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from .content import parse_structured
+from .content import apply_fields, parse_structured
 from .media import SOURCES as MEDIA_SOURCES, MediaLibrary
 from .characters import JOB_COLUMNS, SCHEMA as CHARACTER_SCHEMA, CharacterRegistry, migrate as migrate_characters
 
@@ -404,7 +404,7 @@ class Store:
             return {}
         match = self.SCENE_PROMPT.match(source)
         if match:
-            return {field: match.group(field).strip() for field in self.DETAIL_FIELDS}
+            return {field: match.group(field).strip() for field in self.CORE_FIELDS}
         return {"setting": source}
 
     def prompt_details(self, prompt):
@@ -415,7 +415,7 @@ class Store:
             return {field: fields.get(field, "") for field in self.DETAIL_FIELDS}
         match = self.SCENE_PROMPT.match(str(prompt or ""))
         if match:
-            return {field: match.group(field).strip() for field in self.DETAIL_FIELDS}
+            return {field: match.group(field).strip() for field in self.CORE_FIELDS}
         return {}
 
     def enqueue(self, prompts, cost, batch, images=None, mode="text", sources=None, scene_ids=None, options=None,
@@ -960,7 +960,10 @@ class Store:
             except Exception:
                 pass  # thư viện lỗi không được làm hỏng kết quả tác vụ; bấm Làm mới để đồng bộ lại
 
-    DETAIL_FIELDS = ("setting", "camera", "behavior", "action")
+    CORE_FIELDS = ("setting", "camera", "behavior", "action")  # 4 trường của dạng "Bối cảnh N: …, góc quay: …" tiếng Việt
+    # Mọi trường của prompt khung đầy đủ (SETTING/ENVIRONMENT, CHARACTERS, CAMERA, CHARACTER BEHAVIOR, ACTION, AUDIO,
+    # CONTINUITY, RENDERING RULES, ENDING FRAME): hiện và sửa được ở Prompt Studio, sửa xong gán ngược vào prompt.
+    DETAIL_FIELDS = ("setting", "characters", "camera", "behavior", "action", "audio", "continuity", "rendering", "ending")
     SCENE_PROMPT = re.compile(
         r"^\s*b[ốo]i\s*c[ảa]nh\s*\d*\s*:\s*(?P<setting>.*?),\s*g[óo]c\s*quay\s*:\s*(?P<camera>.*?),\s*"
         r"h[àa]nh\s*vi\s*nh[âa]n\s*v[ậa]t\s*:\s*(?P<behavior>.*?),\s*n[ộo]i\s*dung\s*h[àa]nh\s*[đd][ộo]ng"
@@ -979,9 +982,8 @@ class Store:
             details = json.loads(job.pop("details") or "{}")
         except (TypeError, ValueError):
             details = {}
-        if not any(details.get(field) for field in self.DETAIL_FIELDS):
-            details = self.prompt_details(job["prompt"])
-        job["details"] = {field: str(details.get(field) or "") for field in self.DETAIL_FIELDS}
+        parsed = self.prompt_details(job["prompt"])  # trường tách thẳng từ prompt; ghi chú đã lưu thì ưu tiên
+        job["details"] = {field: str(details.get(field) or parsed.get(field) or "") for field in self.DETAIL_FIELDS}
         job["editable"] = job["status"] != "running"
         return job
 
@@ -1003,11 +1005,17 @@ class Store:
             raise ValueError("Loại Ảnh → video cần ít nhất một ảnh tham chiếu.")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT status,images,images_origin FROM jobs WHERE id=?", (job_id,)).fetchone()
+            row = db.execute("SELECT status,images,images_origin,prompt FROM jobs WHERE id=?", (job_id,)).fetchone()
             if not row:
                 raise ValueError("Không tìm thấy prompt này trong hàng đợi.")
             if row["status"] == "running":
                 raise ValueError("Prompt đang chạy, không sửa được. Đợi chạy xong rồi sửa và bấm Chạy lại.")
+            if prompt.strip() == row["prompt"]:
+                # Chỉ sửa ở ô trường (không sửa chữ prompt): gán giá trị mới của từng trường vào đúng chỗ trong prompt
+                before = self.prompt_details(row["prompt"])
+                changed = {k: v for k, v in details.items() if v.strip() and v.strip() != before.get(k, "")}
+                if changed:
+                    prompt = apply_fields(row["prompt"], changed)
             # Người dùng đổi ảnh: từ giờ là ảnh tự gắn, Auto Character Mapper không ghi đè nếu chưa xác nhận.
             origin = "manual" if json.loads(row["images"] or "[]") != images else row["images_origin"]
             if account_id:
