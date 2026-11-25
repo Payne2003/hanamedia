@@ -2027,7 +2027,8 @@ async function loadClients(){
     $('clientsChip').textContent=`${online} online / ${rows.length} máy`;$('clientsChip').className='status-chip '+(online?'ok':'');
     $('clientsText').textContent=r.error?`Chưa tải được: ${r.error}`:rows.length?'Online = có nhịp tim trong 20 phút gần nhất. Danh sách giữ các máy đã báo trong 12 giờ qua; tự làm mới mỗi phút.':'Chưa có máy khách nào báo về. Máy khách cần cập nhật app bản mới và mở tool; key mới được tự nhận trong khoảng 15 phút.';
     const stateText={active:'Đang dùng',expiring:'Sắp hết hạn',expired:'Hết hạn',revoked:'Đã thu hồi',offline:'Mất kiểm tra',wrong_device:'Sai máy',clock:'Sai đồng hồ',not_started:'Chưa bắt đầu'};
-    $('clientsRows').innerHTML=rows.map(c=>`<tr class="${c.online?'on':'off'}"><td><span class="dot-status ${c.online?'on':'off'}" title="${c.online?'Đang online':'Không online'}"></span></td><td><b>${esc(c.account)}</b><small>${esc(licenseData?.roles?.[c.role]||c.role||'')}</small></td><td><code>${esc(String(c.machine||'').split('.')[0])}</code></td><td>${esc(c.ver||'')}${olderVersion(c.ver,state?.app_version)?' <small class="warn-text">cũ</small>':''}</td><td>${esc(c.os||'')}</td><td>${esc(stateText[c.state]||c.state||'')}<small>${c.expires?'đến '+dmy(c.expires):''}</small></td><td>${c.running||0} đang chạy<small>${c.waiting||0} chờ</small></td><td>${agoText(c.seen)}<small>${new Date(c.seen*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'})}</small></td></tr>`).join('')||'<tr><td colspan="8" class="detail">Chưa có dữ liệu.</td></tr>';
+    const clim=limitRows('clients',rows,8,16,false);
+    $('clientsRows').innerHTML=clim.rows.map(c=>`<tr class="${c.online?'on':'off'}"><td><span class="dot-status ${c.online?'on':'off'}" title="${c.online?'Đang online':'Không online'}"></span></td><td><b>${esc(c.account)}</b><small>${esc(licenseData?.roles?.[c.role]||c.role||'')}</small></td><td><code>${esc(String(c.machine||'').split('.')[0])}</code></td><td>${esc(c.ver||'')}${olderVersion(c.ver,state?.app_version)?' <small class="warn-text">cũ</small>':''}</td><td>${esc(c.os||'')}</td><td>${esc(stateText[c.state]||c.state||'')}<small>${c.expires?'đến '+dmy(c.expires):''}</small></td><td>${c.running||0} đang chạy<small>${c.waiting||0} chờ</small></td><td>${agoText(c.seen)}<small>${new Date(c.seen*1000).toLocaleString('vi-VN',{dateStyle:'short',timeStyle:'short'})}</small></td></tr>`).join('')+clim.foot||'<tr><td colspan="8" class="detail">Chưa có dữ liệu.</td></tr>';
   }catch(error){$('clientsText').textContent=error.message;}
   finally{clientsBusy=false;}
 }
@@ -2050,10 +2051,24 @@ function renderRevocation(r,scope){
   if(!r.has_token)$('revokeSetup').open=true;
 }
 function revokeToast(r,done){if(!r)return toast(done);if(r.local)return toast(done+' '+r.message);if(r.error)return toast(`${done} Nhưng chưa đăng thu hồi online: ${r.error}`,true);toast(done+' Đã đăng danh sách thu hồi online.');}
+// Danh sách dài: chỉ hiện N dòng đầu, có nút "Hiện thêm" / "Thu gọn" (đang tìm kiếm thì hiện hết kết quả).
+const listLimit={license:10,clients:8};
+function limitRows(key,list,cols,step,searching){
+  const start=key==='license'?10:8,shown=searching?list.length:Math.min(listLimit[key],list.length),extra=list.length-shown;
+  const buttons=[];
+  if(!searching&&extra>0){buttons.push(`<button type="button" data-more="${key}" data-step="${step}">Hiện thêm ${Math.min(step,extra)} (còn ${extra})</button>`);
+    if(extra>step)buttons.push(`<button type="button" data-more="${key}" data-all="1">Hiện tất cả ${list.length}</button>`);}
+  if(!searching&&shown>start)buttons.push(`<button type="button" data-more="${key}" data-collapse="1">Thu gọn</button>`);
+  return {rows:list.slice(0,shown),foot:buttons.length?`<tr class="more-row"><td colspan="${cols}">${buttons.join('')}</td></tr>`:''};
+}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-more]');if(!b)return;const key=b.dataset.more;
+  if(b.dataset.collapse)listLimit[key]=key==='license'?10:8;else if(b.dataset.all)listLimit[key]=1e6;else listLimit[key]+=Number(b.dataset.step)||10;
+  if(key==='license')renderLicenseRows();else loadClients();});
 function renderLicenseRows(){
   const d=licenseData,q=$('licenseSearch').value.trim().toLowerCase();
   const list=d.dashboard.accounts.filter(a=>!q||a.name.toLowerCase().includes(q)||a.email.includes(q));
-  $('licenseRows').innerHTML=list.map((a,i)=>{const [label,cls]=accountStates[a.state];return `<tr class="${licenseEditing===a.id?'selected':''}"><td>${i+1}</td><td><b>${esc(a.name)}</b><small>${esc(a.email)}</small></td><td><span class="role-chip ${a.role}">${esc(d.roles[a.role])}</span></td><td>${esc(d.plans[a.plan]||a.plan)}</td><td>${dmy(a.expires)}</td><td>${a.quota?a.quota.toLocaleString('vi-VN'):'∞'}</td><td>${a.devices.length||'Mọi máy'}${a.can_issue?' · <span class="role-chip admin" title="Máy này được tự cấp key cho khách của mình">quản lý</span>':''}</td><td><span class="status-chip ${cls}">${label}</span></td><td class="row-actions"><button type="button" data-license-edit="${a.id}" title="Xem / sửa chi tiết">✎</button><button type="button" data-license-renew="${a.id}" title="Gia hạn">↻</button><button type="button" data-license-key="${a.id}" title="Sao chép key">📋</button><button type="button" data-license-delete="${a.id}" title="Xóa tài khoản">🗑</button></td></tr>`;}).join('')||'<tr><td colspan="9" class="detail">Chưa có tài khoản. Bấm “+ Thêm tài khoản”.</td></tr>';
+  const lim=limitRows('license',list,9,20,Boolean(q));
+  $('licenseRows').innerHTML=lim.rows.map((a,i)=>{const [label,cls]=accountStates[a.state];return `<tr class="${licenseEditing===a.id?'selected':''}"><td>${i+1}</td><td><b>${esc(a.name)}</b><small>${esc(a.email)}</small></td><td><span class="role-chip ${a.role}">${esc(d.roles[a.role])}</span></td><td>${esc(d.plans[a.plan]||a.plan)}</td><td>${dmy(a.expires)}</td><td>${a.quota?a.quota.toLocaleString('vi-VN'):'∞'}</td><td>${a.devices.length||'Mọi máy'}${a.can_issue?' · <span class="role-chip admin" title="Máy này được tự cấp key cho khách của mình">quản lý</span>':''}</td><td><span class="status-chip ${cls}">${label}</span></td><td class="row-actions"><button type="button" data-license-edit="${a.id}" title="Xem / sửa chi tiết">✎</button><button type="button" data-license-renew="${a.id}" title="Gia hạn">↻</button><button type="button" data-license-key="${a.id}" title="Sao chép key">📋</button><button type="button" data-license-delete="${a.id}" title="Xóa tài khoản">🗑</button></td></tr>`;}).join('')+lim.foot||'<tr><td colspan="9" class="detail">Chưa có tài khoản. Bấm “+ Thêm tài khoản”.</td></tr>';
   const scroller=$('licenseRows').closest('.table-scroll');if(scroller)scroller.scrollLeft=0;
 }
 function fillLicenseForm(account){
