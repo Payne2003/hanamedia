@@ -1698,16 +1698,24 @@ $('pickerAttach').onclick=()=>{
 $('jobLibrary').onclick=()=>openPicker('studio');
 // ---- Nhân vật cần tham chiếu: nhân vật của các prompt đang chờ; thiếu ảnh thì cảnh đó bị chặn tới khi gắn ảnh ----
 let masterTarget='';
+const foldOpen={needs:null,queue:null};  // null = tự quyết (mở khi có nhân vật thiếu ảnh); người dùng bấm thì nhớ lựa chọn
+document.addEventListener('toggle',e=>{const id=e.target.id;if(id==='needFold')foldOpen.needs=e.target.open;else if(id==='queueFold')foldOpen.queue=e.target.open;},true);
 function renderCharacterNeeds(){
   const box=$('characterNeeds'),list=state?.character_needs||[];
   if(!box)return;box.hidden=!list.length;if(!list.length)return;
-  const missing=list.filter(c=>!c.master_token);
-  box.innerHTML=`<div class="stitch-head"><b>🧬 Nhân vật cần tham chiếu</b><label class="detail"><input type="checkbox" id="guardToggle" ${state.character_guard?'checked':''}> Chặn cảnh thiếu ảnh</label></div>
-    <div class="need-list">${list.map(c=>c.master_token
-      ?`<span class="image-chip need-ok" title="${esc(c.code)}"><img src="/api/library/image/${c.master_token}" alt=""><span>${esc(c.name)} · ${c.scenes} cảnh</span></span>`
-      :`<span class="need-missing" title="${esc(c.code)}">⚠ ${esc(c.name)} · thiếu ảnh · ${c.scenes} cảnh${state.character_guard?' đang bị chặn':''}<button type="button" data-need-master="${c.id}">Gắn ảnh</button>${c.image_prompt?`<button type="button" data-need-prompt="${c.id}" title="Chép prompt tạo ảnh tham chiếu của nhân vật này">Chép prompt ảnh</button>`:''}</span>`).join('')}</div>
-    <div class="need-actions"><button type="button" id="needImport">📁 Nhập ảnh từ thư mục…</button>${missing.some(c=>c.image_prompt)?'<small class="detail">Chưa có ảnh? Bấm “Chép prompt ảnh” rồi tạo ảnh ở ChatGPT / Flow, lưu vào một thư mục (tên file = mã nhân vật) và nhập lại.</small>':''}</div>
-    ${missing.length&&state.character_guard?'<small class="detail">Cảnh thiếu ảnh nhân vật chưa được gửi Muse (tránh tốn credit tạo nhân vật sai). Bấm “Gắn ảnh” rồi chọn ảnh từ Thư viện.</small>':''}`;
+  const missing=list.filter(c=>!c.master_token),ok=list.filter(c=>c.master_token),guard=state.character_guard;
+  const open=foldOpen.needs===null?missing.length>0:foldOpen.needs;
+  const sig=JSON.stringify([list.map(c=>[c.id,c.master_token,c.scenes]),guard,open]);if(box.dataset.sig===sig)return;box.dataset.sig=sig;
+  box.innerHTML=`<details class="fold" id="needFold" ${open?'open':''}>
+    <summary><span class="fold-title">🧬 Nhân vật cần tham chiếu</span><span class="fold-badge">${list.length} nhân vật</span>
+      ${missing.length?`<span class="fold-badge warn">⚠ ${missing.length} thiếu ảnh</span>`:'<span class="fold-badge good">✓ đủ ảnh</span>'}</summary>
+    <div class="fold-body">
+      ${missing.length?`<div class="need-list">${missing.map(c=>`<span class="need-missing" title="${esc(c.code)}">⚠ ${esc(c.name)} · ${c.scenes} cảnh${guard?' bị chặn':''}<button type="button" data-need-master="${c.id}">Gắn ảnh</button>${c.image_prompt?`<button type="button" data-need-prompt="${c.id}" title="Chép prompt tạo ảnh tham chiếu của nhân vật này">Chép prompt</button>`:''}</span>`).join('')}</div>`:''}
+      ${ok.length?`<div class="need-strip" aria-label="Nhân vật đã có ảnh">${ok.map(c=>`<img src="/api/library/image/${c.master_token}" alt="${esc(c.name)}" title="${esc(c.name)} · ${c.scenes} cảnh" loading="lazy">`).join('')}</div>`:''}
+      <div class="need-actions"><button type="button" id="needImport">📁 Nhập ảnh từ thư mục…</button>
+        <label class="detail"><input type="checkbox" id="guardToggle" ${guard?'checked':''}> Chặn cảnh thiếu ảnh</label></div>
+      ${missing.length?`<small class="detail">${guard?'Cảnh thiếu ảnh nhân vật chưa được gửi Muse (tránh tốn credit tạo nhân vật sai). ':''}Bấm “Gắn ảnh” để chọn ảnh từ Thư viện, hoặc “Chép prompt” để tạo ảnh ở ChatGPT / Flow rồi nhập từ thư mục (tên file = mã nhân vật).</small>`:''}
+    </div></details>`;
 }
 document.addEventListener('click',e=>{
   const p=e.target.closest('[data-need-prompt]');
@@ -1722,9 +1730,22 @@ document.addEventListener('change',e=>{if(e.target.id!=='guardToggle')return;con
 function renderProjectQueue(){
   const box=$('projectQueue'),list=state?.project_queue||[];
   if(!box)return;box.hidden=!list.length||(list.length<2&&state.project_sequential);if(box.hidden)return;
-  box.innerHTML=`<div class="stitch-head"><b>📚 Hàng đợi dự án</b><label class="detail"><input type="checkbox" id="sequentialToggle" ${state.project_sequential?'checked':''}> Chạy lần lượt từng dự án</label></div>
-    <div class="need-list">${list.map((p,i)=>`<span class="image-chip${p.current?' need-ok':''}" title="${esc(p.folder||'')}"><span>${p.current?'▶ ':`${i+1}. `}<b>${esc(p.folder||'Dự án')}</b> · ${p.done}/${p.total} xong${p.running?` · ${p.running} đang chạy`:''}${p.error?` · ${p.error} lỗi`:''}</span></span>`).join('')}</div>
-    <small class="detail">${state.project_sequential?'Dự án sau chỉ bắt đầu khi dự án trước chạy xong tất cả prompt.':'Đang tắt: prompt của các dự án chạy chồng lên nhau theo thứ tự thêm vào.'}</small>`;
+  const seq=state.project_sequential,now=list.find(p=>p.current)||list[0],later=list.length-1;
+  const open=foldOpen.queue===null?false:foldOpen.queue;
+  const sig=JSON.stringify([list.map(p=>[p.batch,p.done,p.running,p.error,p.total,p.current]),seq,open]);if(box.dataset.sig===sig)return;box.dataset.sig=sig;
+  const name=p=>esc(p.folder||'Dự án');
+  box.innerHTML=`<details class="fold" id="queueFold" ${open?'open':''}>
+    <summary><span class="fold-title">📚 Hàng đợi dự án</span>
+      <span class="fold-badge good" title="${name(now)}">${seq?'▶ ':''}${name(now)} · ${now.done}/${now.total}</span>
+      ${later>0?`<span class="fold-badge">+${later} dự án chờ</span>`:''}${seq?'':'<span class="fold-badge warn">chạy chồng</span>'}</summary>
+    <div class="fold-body">
+      <div class="pq-list">${list.map((p,i)=>`<div class="pq-row${p.current?' current':''}" title="${esc(p.folder||'')}">
+        <span class="pq-idx">${p.current&&seq?'▶':i+1}</span><span class="pq-name">${name(p)}</span>
+        <progress max="${p.total||1}" value="${p.done}"></progress>
+        <span class="pq-stat">${p.done}/${p.total} xong${p.running?` · ${p.running} chạy`:''}${p.error?` · <b class="bad">${p.error} lỗi</b>`:''}</span></div>`).join('')}</div>
+      <label class="detail"><input type="checkbox" id="sequentialToggle" ${seq?'checked':''}> Chạy lần lượt từng dự án</label>
+      <small class="detail">${seq?'Dự án sau chỉ bắt đầu khi dự án trước chạy xong tất cả prompt.':'Đang tắt: prompt của các dự án chạy chồng lên nhau theo thứ tự thêm vào.'}</small>
+    </div></details>`;
 }
 document.addEventListener('change',e=>{if(e.target.id!=='sequentialToggle')return;const on=e.target.checked;action(async()=>{await api('/api/projects/sequential',{enabled:on});toast(on?'Đã bật: chạy lần lượt từng dự án.':'Đã tắt: các dự án chạy chồng lên nhau.');});});
 
