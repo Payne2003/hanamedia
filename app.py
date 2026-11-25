@@ -629,17 +629,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PATCH(self):
         if not self.allowed(True):
-            return self.reply({"error": "Yêu cầu không hợp lệ. Mở tool tại địa chỉ 127.0.0.1."}, 403)
+            return self.reply({"error": self.invalid_message()}, 403)
         if self.license_blocked("PATCH", urlsplit(self.path).path):
             return
         self.media_mutate("PATCH", urlsplit(self.path).path)
 
     def do_DELETE(self):
         if not self.allowed(True):
-            return self.reply({"error": "Yêu cầu không hợp lệ. Mở tool tại địa chỉ 127.0.0.1."}, 403)
+            return self.reply({"error": self.invalid_message()}, 403)
         if self.license_blocked("DELETE", urlsplit(self.path).path):
             return
         self.media_mutate("DELETE", urlsplit(self.path).path)
+
+    def invalid_message(self):
+        """Yêu cầu bị từ chối vì sai địa chỉ / sai khóa phiên (tool vừa khởi động lại, hoặc đang mở nhầm cổng của tool khác)."""
+        return (f"Yêu cầu không hợp lệ. Mở tool tại địa chỉ {self.server.origin} "
+                "(đóng các cửa sổ HANA MEDIA cũ, tải lại trang hoặc mở lại app).")
 
     def allowed(self, mutate=False):
         if self.headers.get("Host") != urlsplit(self.server.origin).netloc:
@@ -1409,7 +1414,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self.allowed(True):
-            return self.reply({"error": "Yêu cầu không hợp lệ. Mở tool tại địa chỉ 127.0.0.1."}, 403)
+            return self.reply({"error": self.invalid_message()}, 403)
         try:
             path = urlsplit(self.path).path
             store, engine = self.server.store, self.server.engine
@@ -2032,6 +2037,9 @@ class Handler(BaseHTTPRequestHandler):
             self.reply({"error": "Không thực hiện được. Kiểm tra quyền ghi và trạng thái bộ chạy."}, 500)
 
 
+PORT_TRIES = 20  # số cổng liên tiếp thử khi cổng mặc định bận
+
+
 def start_runner(port=8765):
     """Mở dữ liệu, bộ chạy và máy chủ giao diện. Trả về (server, engine, instance) hoặc nêu RuntimeError có lời nhắn."""
     DATA.mkdir(parents=True, exist_ok=True)
@@ -2043,12 +2051,16 @@ def start_runner(port=8765):
         store = Store(DATA / "studio.sqlite3")
         engine = Engine(store, DATA)
         engine.auto_plan = True  # mở lại app: tự chia prompt đang chờ cho các tài khoản ngay
-        try:
-            server = AppServer(port, store, engine)
-        except OSError:
-            if not port:
-                raise
-            server = AppServer(0, store, engine)  # cổng 8765 bận: dùng cổng trống bất kỳ
+        server = None
+        # Cổng 8765 bận (tool khác đang dùng): thử các cổng kế tiếp 8766… để địa chỉ vẫn cố định giữa các lần mở
+        # (cài đặt lưu trong trình duyệt gắn với địa chỉ); hết thì mới dùng cổng trống bất kỳ.
+        for candidate in (list(range(port, port + PORT_TRIES)) if port else []) + [0]:
+            try:
+                server = AppServer(candidate, store, engine)
+                break
+            except OSError:
+                if not candidate:
+                    raise
     except Exception:
         instance.close()
         raise

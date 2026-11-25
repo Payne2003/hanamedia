@@ -269,3 +269,21 @@ class BridgeCharactersTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PortFallbackTests(unittest.TestCase):
+    def test_busy_default_port_falls_back_to_the_next_port_and_message_names_the_address(self):
+        import socket
+        import app
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        busy = probe.getsockname()[1]
+        probe.listen(1)
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(app, "DATA", Path(temp)):
+            server, engine, instance = app.start_runner(busy)
+            try:
+                self.assertTrue(busy < server.server_port < busy + app.PORT_TRIES)  # cổng bận → cổng kế tiếp, địa chỉ cố định
+                self.assertEqual(server.origin, f"http://127.0.0.1:{server.server_port}")
+            finally:
+                app.stop_runner(server, engine, instance, wait=1)
+                probe.close()
