@@ -77,6 +77,18 @@ DATA = data_root()      # mã nguồn: data/ cạnh app.py; bản cài đặt: %
 
 class AppServer(ThreadingHTTPServer):
     daemon_threads = True
+    # Windows: SO_REUSEADDR cho phép HAI chương trình cùng bind một cổng (chương trình nào trả lời yêu cầu thì tùy lúc) → giao
+    # diện lấy khóa phiên từ tool khác rồi gửi cho tool này và bị từ chối. Windows không cần SO_REUSEADDR để mở lại cổng
+    # vừa đóng, nên tắt đi và đòi độc quyền cổng: cổng bận thì bind lỗi và start_runner thử cổng kế tiếp.
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt":
+            import socket
+            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+            if exclusive is not None:
+                self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        super().server_bind()
 
     # Khóa API (Gemini, ChatGPT): lưu mã hóa trong kho khóa của máy, không trả về giao diện.
     # Import tĩnh (không dùng importlib) để PyInstaller đóng gói đủ hai module vào bản cài.
