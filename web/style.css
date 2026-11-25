@@ -1383,3 +1383,26 @@ details.claude-flow{display:block}details.claude-flow:not([open]){padding:12px 1
 .need-panel .need-ok{opacity:.95}
 
 .need-panel .need-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+/* Khung thu gọn: Nhân vật cần tham chiếu · Hàng đợi dự án */
+.need-panel{padding:6px 18px}
+.fold>summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;cursor:pointer;list-style:none;padding:4px 0}
+.fold>summary::-webkit-details-marker{display:none}
+.fold>summary::after{content:"▾";margin-left:auto;opacity:.6;transition:transform .15s}
+.fold:not([open])>summary::after{transform:rotate(-90deg)}
+.fold-title{font-weight:600}
+.fold-badge{display:inline-block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 10px;border-radius:999px;border:1px solid var(--border);font-size:var(--fs-sm);opacity:.9}
+.fold-badge.warn{border-color:var(--danger,#d33);color:var(--danger,#d33)}
+.fold-badge.good{border-color:var(--accent,#4fe3a8);color:var(--accent,#4fe3a8)}
+.fold-body{display:flex;flex-direction:column;gap:8px;padding:6px 0 8px}
+.need-panel .need-list{max-height:96px;overflow:auto}
+.need-strip{display:flex;flex-wrap:wrap;gap:4px;max-height:76px;overflow:auto;padding:2px}
+.need-strip img{width:32px;height:32px;object-fit:cover;border-radius:50%;border:1px solid var(--border)}
+.pq-list{display:flex;flex-direction:column;gap:2px;max-height:190px;overflow:auto}
+.pq-row{display:grid;grid-template-columns:22px minmax(120px,1fr) minmax(90px,200px) minmax(120px,auto);gap:10px;align-items:center;padding:3px 8px;border-radius:8px;font-size:var(--fs-sm)}
+.pq-row.current{background:color-mix(in srgb,var(--accent,#4fe3a8) 14%,transparent);font-weight:600}
+.pq-idx{opacity:.7;text-align:center}
+.pq-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pq-row progress{width:100%;height:6px;accent-color:var(--accent,#4fe3a8)}
+.pq-stat{opacity:.85;white-space:nowrap}
+@media (max-width:640px){.pq-row{grid-template-columns:22px 1fr;}.pq-row progress,.pq-row .pq-stat{grid-column:2}}
