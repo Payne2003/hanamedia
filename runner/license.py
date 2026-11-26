@@ -57,6 +57,8 @@ MAX_CHAIN = 3
 PLANS = {"trial": 0, "1m": 1, "1y": 12, "3y": 36}  # số tháng; gói dùng thử tính theo ngày (PLAN_DAYS)
 PLAN_DAYS = {"trial": 2}
 PLAN_NAMES = {"trial": "Dùng thử 2 ngày", "1m": "1 tháng", "1y": "1 năm", "3y": "3 năm"}
+# Giá gia hạn mỗi khách (VNĐ). Gói 3 năm chưa có giá niêm yết: nhập tay. Số tiền để trống = lấy theo bảng giá này.
+PLAN_PRICES = {"trial": 0, "1m": 599_000, "1y": 1_599_000}
 PREFIX = "HANA1"
 REV_PREFIX = "HANAREV1"
 CHECK_INTERVAL = 900  # máy khách tải danh sách thu hồi + key mới (gia hạn / đổi role) mỗi 15 phút và mỗi lần mở app
@@ -370,11 +372,29 @@ class LicenseManager:
         self.sleep = time.sleep
         with store.connect() as db:
             db.executescript(self.SCHEMA)
+        self.apply_price_list()
+        with store.connect() as db:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(licenses)")}
             if "delegates" not in columns:
                 db.execute("ALTER TABLE licenses ADD COLUMN delegates TEXT NOT NULL DEFAULT '[]'")
             if "short_code" not in columns:
                 db.execute("ALTER TABLE licenses ADD COLUMN short_code TEXT NOT NULL DEFAULT ''")
+
+    PRICE_MIGRATION = "license_prices_v1"
+
+    def apply_price_list(self):
+        """Một lần khi cập nhật: đặt lại số tiền của MỌI lần tạo / gia hạn gói 1 tháng (599.000đ) và 1 năm (1.599.000đ) theo bảng giá mới,
+        để doanh thu hiện tại khớp giá niêm yết. Gói dùng thử và 3 năm giữ nguyên."""
+        if self.store.setting(self.PRICE_MIGRATION):
+            return 0
+        changed = 0
+        with self.store.connect() as db:
+            for plan, price in PLAN_PRICES.items():
+                if price:
+                    changed += db.execute("UPDATE license_events SET amount=? WHERE plan=? AND action IN ('create','renew')"
+                                          " AND amount!=?", (price, plan, price)).rowcount
+        self.store.save_setting(self.PRICE_MIGRATION, {"at": int(time.time()), "changed": changed})
+        return changed
 
     # ---- khóa của máy ------------------------------------------------------------------------------------------
     @property
@@ -804,25 +824,27 @@ class LicenseManager:
                             json.dumps(record["devices"]), json.dumps(record["delegates"]), record["quota"], now, now))
                 db.execute("""INSERT INTO license_events(license_id,at,action,plan,expires,amount,actor,detail)
                               VALUES(?,?,?,?,?,?,?,?)""", (license_id, now, "create", plan, expires.isoformat(),
-                                                           self.amount(data.get("amount")), self.actor(context),
+                                                           self.amount(data.get("amount"), plan), self.actor(context),
                                                            f"Tạo {record['name']} ({PLAN_NAMES[plan]})"))
             row = db.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
             token = self.issue(db, row, context)
         return self.account(license_id), token
 
     @staticmethod
-    def amount(value):
-        value = value or 0
+    def amount(value, plan=None):
+        """Số tiền thu (VNĐ). Không nhập (None) thì lấy giá niêm yết của gói; nhập 0 là miễn phí."""
+        if value is None:
+            value = PLAN_PRICES.get(plan, 0)
         if type(value) is not int or not 0 <= value <= 10_000_000_000:
             raise LicenseError("Số tiền phải là số nguyên VNĐ.")
         return value
 
-    def renew(self, license_id, plan, amount=0):
+    def renew(self, license_id, plan, amount=None):
         """Gia hạn: cộng thêm gói vào ngày hết hạn hiện tại (hoặc từ hôm nay nếu đã hết hạn), cấp key mới."""
         context = self.require_issuer()
         if plan not in PLANS:
             raise LicenseError("Chọn gói dùng thử 2 ngày, 1 tháng, 1 năm hoặc 3 năm.")
-        amount = self.amount(amount)
+        amount = self.amount(amount, plan)
         with self.store.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()

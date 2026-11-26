@@ -2077,9 +2077,9 @@ function fillLicenseForm(account){
   const scope=d.dashboard.scope;$('ldRole').innerHTML=Object.entries(d.roles).filter(([k])=>scope.roles.includes(k)).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('');
   $('ldName').value=account?.name||'';$('ldEmail').value=account?.email||'';$('ldRole').value=account?.role&&scope.roles.includes(account.role)?account.role:(scope.roles.includes('user')?'user':scope.roles[scope.roles.length-1]);
   licensePlan=account?.plan||'1y';
-  $('ldPlans').innerHTML=Object.entries(d.plans).map(([k,v])=>`<label class="ld-plan-opt"><input type="radio" name="ldPlan" value="${k}" ${k===licensePlan?'checked':''}> ${esc(v)}</label>`).join('');
+  $('ldPlans').innerHTML=Object.entries(d.plans).map(([k,v])=>`<label class="ld-plan-opt"><input type="radio" name="ldPlan" value="${k}" ${k===licensePlan?'checked':''}> ${esc(v)}${d.prices?.[k]?` · ${vnd(d.prices[k])}`:''}</label>`).join('');
   $('ldStart').value=account?.start||new Date().toISOString().slice(0,10);$('ldStart').disabled=false;$('ldExpires').disabled=false;
-  $('ldDevices').value=(account?.device_codes||account?.devices||[]).join('\n');$('ldQuota').value=account?.quota||0;$('ldAmount').value=0;$('ldAmountWrap').hidden=Boolean(account);
+  $('ldDevices').value=(account?.device_codes||account?.devices||[]).join('\n');$('ldQuota').value=account?.quota||0;$('ldAmount').value=account?0:(d.prices?.[licensePlan]??0);$('ldAmountWrap').hidden=Boolean(account);
   renderPerms(account?.permissions||d.defaults[$('ldRole').value].filter(p=>scope.permissions.includes(p)));
   updateExpiryPreview(account);
   $('ldRenew').disabled=!account||!scope.can_renew;$('ldLock').disabled=!account;$('ldDelete').disabled=!account;$('ldLock').textContent=account?.state==='locked'?'🔓 Mở khóa':'🔒 Khóa';
@@ -2094,7 +2094,7 @@ function showKey(key,name,short){$('ldKey').value=key;$('ldKeyName').textContent
   const code=short?.code||'';$('ldShort').textContent=code;$('ldShortBox').hidden=!code;$('ldLongKey').open=!code;
   $('ldShortNote').textContent=code?'Khách mở HANA MEDIA → Bản quyền → nhập mã này → Kích hoạt (máy cần có mạng). Mã giữ nguyên khi gia hạn.':(short?.error||'');}
 $('ldRole').onchange=()=>renderPerms(licenseData.defaults[$('ldRole').value]);
-$('ldPlans').onchange=e=>{licensePlan=e.target.value;updateExpiryPreview(null);};
+$('ldPlans').onchange=e=>{licensePlan=e.target.value;updateExpiryPreview(null);if(!$('ldAmountWrap').hidden)$('ldAmount').value=licenseData?.prices?.[licensePlan]??0;};
 $('ldStart').onchange=()=>updateExpiryPreview(null);
 $('licenseAdd').onclick=()=>{fillLicenseForm(null);$('ldName').focus();};
 $('licenseSearch').oninput=renderLicenseRows;
@@ -2110,8 +2110,8 @@ $('ldSave').onclick=async()=>{
 };
 async function renewAccount(id){
   const a=licenseData.dashboard.accounts.find(x=>x.id===id);if(!a)return;
-  const plan=prompt(`Gia hạn "${a.name}" (hết hạn ${dmy(a.expires)}).\nNhập gói: 1m = 1 tháng, 1y = 1 năm, 3y = 3 năm, trial = thêm 2 ngày dùng thử`,'1y');if(plan===null)return;
-  const amount=prompt('Số tiền thu (VNĐ, để 0 nếu không tính):','0');if(amount===null)return;
+  const plan=prompt(`Gia hạn "${a.name}" (hết hạn ${dmy(a.expires)}).\nNhập gói: 1m = 1 tháng (${vnd(licenseData.prices?.['1m'])}), 1y = 1 năm (${vnd(licenseData.prices?.['1y'])}), 3y = 3 năm, trial = thêm 2 ngày dùng thử`,'1y');if(plan===null)return;
+  const amount=prompt('Số tiền thu (VNĐ). Mặc định theo bảng giá, nhập 0 nếu miễn phí:',String(licenseData.prices?.[plan.trim()]??0));if(amount===null)return;
   try{const r=await api('/api/license/renew',{id,plan:plan.trim(),amount:Number(amount)||0});await loadLicense();fillLicenseForm(r.account);renderLicenseRows();showKey(r.key,r.account.name,r.short);toast(r.short?.code?`Đã gia hạn tới ${dmy(r.account.expires)}. Máy khách tự cập nhật trong khoảng 15 phút (hoặc khi mở lại app).`:`Đã gia hạn tới ${dmy(r.account.expires)}. ${r.short?.error||''} Gửi key mới cho khách.`);}catch(error){toast(error.message,true);}
 }
 $('ldRenew').onclick=()=>licenseEditing&&renewAccount(licenseEditing);
