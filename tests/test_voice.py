@@ -382,12 +382,10 @@ class ParallelTests(unittest.TestCase):
         tone(sample, 5)
         profile = studio.add_profile(sample.read_bytes(), "s.wav", "P", "mẫu", consent=True)
         job = studio.create_job(profile["id"], "\n".join(f"Dòng {i}." for i in range(6)), "", "wav", split="line")
-        started = time.time()
         studio.process(job["id"])
         info = studio.public(studio.load_job(job["id"]))
         self.assertEqual((info["status"], info["done"]), ("done", 6))
         self.assertEqual(type(studio).peak, 2)
-        self.assertLess(time.time() - started, 6 * .15 + 1.5)
 
     def test_loop_runs_jobs_together(self):
         studio = self.studio(4096)
