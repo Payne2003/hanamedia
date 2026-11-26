@@ -770,6 +770,29 @@ class Store:
             SUM(status='error') AS error FROM jobs GROUP BY batch HAVING waiting+running>0 ORDER BY created, MIN(rowid)""")
         return [dict(row, current=row["batch"] == current) for row in rows]
 
+    @staticmethod
+    def steal_for_idle(db, room, blocked, batch):
+        """Tài khoản sẵn sàng (đã đăng nhập, còn credit) mà không còn prompt nào của mình thì KHÔNG đứng chờ: nhận một prompt
+        đang chờ của tài khoản đang bận (lấy từ cuối hàng của tài khoản ôm nhiều prompt nhất). Prompt người dùng tự chọn nick
+        (assigned_manual) và prompt bị chặn thiếu ảnh nhân vật không bị lấy. Trả True nếu đã chuyển được một prompt."""
+        if not room:
+            return False
+        scope = " AND j.batch=?" if batch else ""
+        guard = (" AND j.id NOT IN (" + ",".join("?" * len(blocked)) + ")") if blocked else ""
+        extra = ([batch] if batch else [])
+        idle = db.execute(f"""SELECT a.id, a.budget FROM accounts a WHERE a.enabled=1 AND a.video_blocked=0
+            AND a.state IN ('new','ready') AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.status='waiting'
+            AND j.assigned_account_id=a.id{scope}) ORDER BY a.last_used, a.rowid""", extra).fetchall()
+        for account in idle:
+            job = db.execute(f"""SELECT j.id FROM jobs j WHERE j.status='waiting' AND j.assigned_manual=0
+                AND j.assigned_account_id IS NOT NULL AND j.assigned_account_id!=? AND j.cost<=?{scope}{guard}
+                ORDER BY (SELECT count(*) FROM jobs w WHERE w.status='waiting' AND w.assigned_account_id=j.assigned_account_id) DESC,
+                j.created DESC, j.rowid DESC LIMIT 1""", [account["id"], account["budget"] + 0.000001, *extra, *blocked]).fetchone()
+            if job:
+                db.execute("UPDATE jobs SET assigned_account_id=? WHERE id=?", (account["id"], job["id"]))
+                return True
+        return False
+
     def claim(self, limit):
         self.release_limits()
         self.plan_waiting()
@@ -793,6 +816,7 @@ class Store:
             # nhận prompt của tài khoản đang chạy (không mở thêm tab chạy chen). Tài khoản bị tắt/hết lượt thì plan_waiting
             # vẫn chia lại prompt của nó như cũ.
             params = [room, *blocked]
+            batch = None
             if sequential:  # chỉ dự án tới lượt được nhận việc; dự án sau đợi dự án trước xong
                 batch = self.current_project(db, blocked)
                 if batch is None:
@@ -800,6 +824,8 @@ class Store:
                 pick = pick.replace("ORDER BY j.created", "AND j.batch=? ORDER BY j.created", 1)
                 params.append(batch)
             pair = db.execute(pick, params).fetchone()
+            if not pair and self.steal_for_idle(db, room, blocked, batch):
+                pair = db.execute(pick, params).fetchone()  # tài khoản rảnh vừa nhận một prompt đang chờ của tài khoản bận
             if not pair:
                 return None
             job = dict(db.execute("SELECT * FROM jobs WHERE id=?", (pair["job_id"],)).fetchone())

@@ -206,6 +206,17 @@ class SequentialProjectTests(unittest.TestCase):
         other.save_setting("project_sequential", False)
         self.assertEqual({other.claim(3)[0]["prompt"], other.claim(3)[0]["prompt"]}, {"A1", "B1"})  # tắt: chạy chồng như cũ
 
+    def test_idle_account_helps_the_current_project_not_the_next_one(self):
+        accounts = [a["id"] for a in self.store.snapshot()["accounts"]]
+        with self.store.connect() as db:  # mọi prompt dồn cho tài khoản đầu: hai tài khoản còn lại rảnh
+            db.execute("UPDATE jobs SET assigned_account_id=?", (accounts[0],))
+        first, a1 = self.store.claim(3)
+        second, a2 = self.store.claim(3)
+        self.assertEqual((a1["id"], first["prompt"]), (accounts[0], "A1"))
+        self.assertNotEqual(a2["id"], accounts[0])      # tài khoản rảnh nhận việc ngay
+        self.assertEqual(second["prompt"], "A2")        # và là việc của dự án đang chạy, không nhảy sang dự án B
+        self.assertIsNone(self.store.claim(3))          # dự án A hết prompt chờ: dự án B vẫn đợi A xong
+
     def test_blocked_project_does_not_hold_the_queue(self):
         registry = self.store.characters
         imported = registry.import_workflow("Truyện C", [{"code": "HERO", "name": "Hero"}],

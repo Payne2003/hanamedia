@@ -1319,8 +1319,8 @@ class RebalanceTests(unittest.TestCase):
         with self.store.connect() as db:
             return {r["id"]: r["assigned_account_id"] for r in db.execute("SELECT id, assigned_account_id FROM jobs WHERE status='waiting'")}
 
-    def test_idle_account_waits_instead_of_taking_prompts_of_a_running_account(self):
-        first, account = self.store.claim(2)  # A nhận prompt đầu tiên
+    def test_idle_account_takes_waiting_prompts_of_a_busy_account(self):
+        first, account = self.store.claim(2)  # A nhận prompt đầu tiên và đang chạy
         second, other = self.store.claim(2)
         self.assertNotEqual(account["id"], other["id"])
         # B làm xong rất nhanh 2 prompt của mình; A vẫn đang chạy prompt đầu tiên.
@@ -1329,13 +1329,24 @@ class RebalanceTests(unittest.TestCase):
             job, acc = self.store.claim(2)
             self.assertEqual(acc["id"], other["id"])
             self.store.finish(job["id"], output="x.mp4")
-        # B hết prompt của mình: CHỜ, không nhận prompt của A (A đang chạy). Prompt chờ của A vẫn thuộc A.
-        self.assertIsNone(self.store.claim(2))
-        self.assertTrue(all(owner == account["id"] for owner in self.assigned().values()))
-        # A chạy xong thì A tự chạy prompt tiếp theo của mình.
+        # B hết prompt của mình nhưng đã sẵn sàng: KHÔNG đứng chờ, nhận tiếp prompt đang chờ của A (A đang bận).
+        waiting_a = [j for j, owner in self.assigned().items() if owner == account["id"]]
+        self.assertTrue(waiting_a)
+        job, acc = self.store.claim(2)
+        self.assertEqual(acc["id"], other["id"])
+        self.assertIn(job["id"], waiting_a)
+        self.store.finish(job["id"], output="x.mp4")
+        # A chạy xong thì tự chạy tiếp prompt còn lại của mình.
         self.store.finish(first["id"], output="x.mp4")
         job, acc = self.store.claim(2)
-        self.assertEqual(acc["id"], account["id"])
+        self.assertIsNotNone(job)
+
+    def test_manual_and_blocked_prompts_are_not_taken_by_idle_accounts(self):
+        for job_id in [j["id"] for j in self.store.snapshot()["jobs"]]:
+            self.store.update_job(job_id, self.store.job_detail(job_id)["prompt"], account_id=self.a)
+        first, acc = self.store.claim(2)
+        self.assertEqual(acc["id"], self.a)
+        self.assertIsNone(self.store.claim(2))  # tất cả đã chọn nick A: B rảnh cũng không lấy
 
     def test_prompt_with_user_chosen_account_is_never_moved(self):
         jobs = [j["id"] for j in self.store.snapshot()["jobs"]]
