@@ -108,6 +108,30 @@ class LicenseTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "không có quyền"):
             self.client.check("upload_media")
 
+    def test_price_list_defaults_and_updates_existing_revenue(self):
+        from runner.license import PLAN_PRICES
+        self.assertEqual((PLAN_PRICES["1m"], PLAN_PRICES["1y"]), (599_000, 1_599_000))
+        def amounts():
+            with self.admin_store.connect() as db:
+                return [r["amount"] for r in db.execute(
+                    "SELECT amount FROM license_events WHERE action IN ('create','renew') ORDER BY id")]
+        a, _ = self.create(name="A", plan="1m", amount=100)          # số tiền cũ nhập tay
+        b, _ = self.create(name="B", plan="1y", amount=0)
+        self.create(name="C", plan="3y", amount=5_000_000)           # gói 3 năm không có giá niêm yết
+        self.create(name="D", plan="trial", amount=0)
+        self.admin.renew(a["id"], "1y", 7)
+        # cập nhật dữ liệu hiện tại: chỉ chạy một lần, đặt lại số tiền gói 1 tháng / 1 năm
+        self.admin_store.save_setting(LicenseManager.PRICE_MIGRATION, None)
+        self.assertEqual(self.admin.apply_price_list(), 3)
+        self.assertEqual(amounts(), [599_000, 1_599_000, 5_000_000, 0, 1_599_000])  # A, B, C, D (dùng thử), gia hạn A
+        self.assertEqual(self.admin.apply_price_list(), 0)
+        # không nhập số tiền: lấy giá niêm yết; nhập 0: miễn phí; gói 3 năm không giá: 0
+        e, _ = self.create(name="E", plan="1m", amount=None)
+        self.admin.renew(e["id"], "1y")
+        self.admin.renew(e["id"], "1m", 0)
+        g, _ = self.create(name="G", plan="3y", amount=None)
+        self.assertEqual(amounts()[5:], [599_000, 1_599_000, 0, 0])  # E tạo 1 tháng, gia hạn 1 năm, gia hạn 1 tháng miễn phí, G (3 năm) không giá
+
     def test_feature_permissions_ai_voice_and_narration(self):
         account, token = self.create()
         self.client.activate(token)
@@ -199,7 +223,7 @@ class LicenseTests(unittest.TestCase):
         self.create(name="Reseller", role="admin", plan="3y", amount=5_000_000)
         dashboard = self.admin.dashboard()
         self.assertEqual((dashboard["stats"]["total"], dashboard["stats"]["admins"]), (2, 1))
-        self.assertEqual(dashboard["stats"]["revenue"], 1_200_000 + 1_000_000 + 5_000_000)
+        self.assertEqual(dashboard["stats"]["revenue"], 1_200_000 + 1_000_000 + 599_000 + 5_000_000)  # gia hạn 1 tháng không nhập số tiền = 599.000đ
         self.assertEqual([e["action"] for e in dashboard["events"][:3]], ["create", "lock", "renew"])
         self.client.activate(token)
         self.assertEqual(self.client.status()["expires"], "2027-02-28")

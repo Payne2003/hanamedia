@@ -752,7 +752,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/license":
             manager = self.server.license
             data = {"status": manager.status(), "roles": licensing.ROLE_NAMES, "permissions": licensing.PERMISSION_NAMES,
-                    "defaults": licensing.ROLE_DEFAULTS, "plans": licensing.PLAN_NAMES}
+                    "defaults": licensing.ROLE_DEFAULTS, "plans": licensing.PLAN_NAMES, "prices": licensing.PLAN_PRICES}
             if manager.issuer_context():
                 data["dashboard"] = manager.dashboard()
             return self.reply(data)
