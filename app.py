@@ -161,6 +161,17 @@ class AppServer(ThreadingHTTPServer):
         saved = self.store.setting("narration_auto") or {}
         return saved if isinstance(saved, dict) else {}
 
+    def review_loop(self):
+        """Agent Phân tích xin xem kỹ cảnh khó (review_request.json trong input/<ten>_pack/): trích ảnh liên tiếp từ video gốc
+        và ghi review_status.json ngay (vài giây một lần), người dùng không phải cắt ảnh hay sao chép kết quả."""
+        from runner import scene_review
+        while True:
+            time.sleep(3)
+            try:
+                scene_review.scan(self.workflows.home)
+            except Exception:
+                continue  # không để luồng nền chết
+
     def narration_auto_loop(self):
         """Thoại phim tự động: bài thoại mới → AI Voice đọc ngay → đọc xong → ghép vào video (chạy nền, 15 giây một lần)."""
         from runner import narration
@@ -292,6 +303,7 @@ class AppServer(ThreadingHTTPServer):
         self.voice = VoiceStudio(self.data_dir)  # AI Voice (F5-TTS trên máy) — chỉ máy Super Admin dùng
         self._shorts = None  # Short Veo hàng loạt: tạo khi dùng lần đầu (xem property shorts)
         threading.Thread(target=self.narration_auto_loop, daemon=True).start()
+        threading.Thread(target=self.review_loop, daemon=True).start()
         self.chatgpt_web = chatgpt_runner(self.data_dir / "profiles" / "chatgpt-web")
         self.chatgpt_web.api_session = lambda: self.api_session("chatgpt")
         self.claude_web = claude_runner(self.data_dir / "profiles" / "claude-web")

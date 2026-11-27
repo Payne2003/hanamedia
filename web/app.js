@@ -740,7 +740,7 @@ function renderClaude(){
   $('claudeFolderInfo').textContent=`Thư mục chung: ${claude.folder}${claude.exists?'':' (chưa tạo — bấm Mở thư mục để tạo)'} · Claude desktop / Codex phải mở đúng thư mục này.`;
   $('claudeAuto').checked=claude.auto;$('claudeCuts').checked=claude.cuts;$('claudePack').checked=claude.pack&&claude.cuts;$('claudePack').disabled=!claude.cuts;
   const waiting=claude.pending.map(p=>`<div class="claude-item wait"><span>⏳ <b>${esc(p.video)}</b> <small>chờ bạn mở đoạn chat chạy workflow${p.cuts?' · có điểm cắt của tool':''}</small></span><button type="button" class="text-button" data-copy-cmd="${esc(p.name)}" data-copy-video="${esc(p.video)}" title="Chép lệnh chạy riêng dự án này, dán vào một đoạn chat Claude / Codex">Chép lệnh</button></div>`);
-  const done=claude.results.map(r=>`<div class="claude-item"><span>${r.error?'<b class="bad">✕</b>':(r.imported||r.folder_imported)?'<b class="ok">✓</b>':'🆕'} <b>${esc(r.name)}</b> <small>${r.error?esc(r.error):`${r.scenes} cảnh${r.duration?` · ${Number(r.duration).toLocaleString('vi-VN')} giây`:''}${r.cut_source==='hanamedia'?' · điểm cắt của tool':r.cut_source==='auto'?' · Claude tự dò điểm cắt':''} · ${esc(r.file)}${r.imported?' · đã vào Studio':''}`}</small></span>${r.error?'':`<button type="button" data-claude-import="${esc(r.path)}" data-claude-sig="${r.signature}" data-again="${r.imported?1:0}">${r.imported?'Đưa lại vào Studio':'→ Đưa vào Studio'}</button>`}</div>`);
+  const done=claude.results.map(r=>`<div class="claude-item"><span>${r.error?'<b class="bad">✕</b>':(r.imported||r.folder_imported)?'<b class="ok">✓</b>':'🆕'} <b>${esc(r.name)}</b> <small>${r.error?esc(r.error):`${r.scenes} cảnh${r.duration?` · ${Number(r.duration).toLocaleString('vi-VN')} giây`:''}${r.cut_source==='hanamedia'?' · điểm cắt của tool':r.cut_source==='auto'?' · Claude tự dò điểm cắt':''} · ${esc(r.file)}${r.imported?' · đã vào Studio':''}${r.review_pending?` · <b class="bad">còn ${r.review_pending} cảnh xem kỹ chưa có kết luận</b>`:''}`}</small></span>${r.error?'':`<button type="button" data-claude-import="${esc(r.path)}" data-claude-sig="${r.signature}" data-again="${r.imported?1:0}">${r.imported?'Đưa lại vào Studio':'→ Đưa vào Studio'}</button>`}</div>`);
   $('claudeList').innerHTML=waiting.concat(done).join('');
   $('claudeAutorun').checked=claude.autorun!==false;$('claudeWindow').checked=claude.window!==false;if(document.activeElement!==$('claudeEngine'))$('claudeEngine').value=claude.engine||'auto';
   const q=claude.queue||{queue:[],history:[]},cur=q.current,eng={claude:'Claude Code',codex:'Codex'};
@@ -775,7 +775,7 @@ async function pollClaude(){
   if(!key||claudeBusy)return;
   try{await claudeCall('/api/claude/status');}catch{return;}
   showCutNotice(claude.notices||[]);
-  if(claude.auto)for(const r of claude.results)if(!r.imported&&!r.folder_imported&&!r.error&&Date.now()/1000-r.updated>40)await claudeImport(r.path,r.signature,true);
+  if(claude.auto)for(const r of claude.results)if(!r.imported&&!r.folder_imported&&!r.error&&!r.review_pending&&Date.now()/1000-r.updated>40)await claudeImport(r.path,r.signature,true);  // còn yêu cầu xem kỹ chưa có kết luận: chưa tự vào Studio
 }
 setInterval(pollClaude,6000);setTimeout(pollClaude,1500);
 $('claudeSend').onclick=async()=>{const b=$('claudeSend');b.disabled=true;claudeBusy=true;const label=b.innerHTML;b.textContent='Đang chép video, đo điểm cắt, làm tờ ảnh… (video dài mất vài phút)';

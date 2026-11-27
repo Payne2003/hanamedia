@@ -52,16 +52,35 @@ def verify_source(path, stop=None):
 
 
 def frame_differences(path, stop=None, timeout=1800):
-    """Sai khác trung bình (0–1) giữa từng cặp khung hình liên tiếp, đo trên ảnh thu nhỏ 32×18."""
+    """Sai khác trung bình (0–1) giữa từng cặp khung hình liên tiếp, đo trên ảnh thu nhỏ 32×18.
+    Trả về (điểm số, mốc thời gian thật của từng khung). ffmpeg cũ chưa có -fps_mode thì thử lại với -vsync 0."""
+    scores, times = _frame_differences(path, stop, timeout, ["-fps_mode", "passthrough"])
+    if not scores and not times:
+        scores, times = _frame_differences(path, stop, timeout, ["-vsync", "0"])
+    return scores, times
+
+
+def _frame_differences(path, stop, timeout, sync):
     width, height = SAMPLE
     size = width * height * 3
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    process = subprocess.Popen([video.ffmpeg(), "-v", "error", "-i", str(path), "-map", "0:v:0", "-vf",
-                                f"scale={width}:{height}:flags=area,showinfo", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+    # showinfo ghi mốc từng khung ở mức "info": trước đây chạy -v error nên KHÔNG BAO GIỜ có mốc thật và điểm cắt / chuyển động
+    # bị suy ra từ fps danh nghĩa (sai với video có tốc độ khung hình biến đổi). passthrough: không nhân / bỏ khung để tính
+    # lại thời gian, nên mỗi điểm số khớp đúng một cặp khung và mốc của nó.
+    process = subprocess.Popen([video.ffmpeg(), "-hide_banner", "-nostats", "-v", "info", "-i", str(path), "-map", "0:v:0", "-vf",
+                                f"scale={width}:{height}:flags=area,showinfo", *sync, "-f", "rawvideo",
+                                "-pix_fmt", "rgb24", "-"],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, creationflags=flags)
     import threading
-    log = []
-    reader = threading.Thread(target=lambda: log.append(process.stderr.read().decode("utf-8", "replace")), daemon=True)
+    pts_line = re.compile(r"pts_time:\s*(-?[\d.]+)")
+    found = []
+
+    def read_log():  # chỉ giữ mốc thời gian (nhật ký info của video dài rất lớn)
+        for raw in process.stderr:
+            match = pts_line.search(raw.decode("utf-8", "replace"))
+            if match:
+                found.append(float(match.group(1)))
+    reader = threading.Thread(target=read_log, daemon=True)
     reader.start()
     previous, scores = None, []
     try:
@@ -83,8 +102,7 @@ def frame_differences(path, stop=None, timeout=1800):
         process.stdout.close()
     reader.join(5)
     process.stderr.close()
-    times = [float(t) for t in re.findall(r"pts_time:\s*([\d.]+)", "".join(log))]
-    return scores, times
+    return scores, [t for t in found if t >= 0]
 
 
 def quick_shots(path, stop=None):

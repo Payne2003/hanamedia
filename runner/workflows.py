@@ -334,9 +334,27 @@ class Workflows:
         if target.is_dir():
             shutil.rmtree(target)
 
+    def apply_managed_rules(self, slug):
+        """Workflow Wildlife: ghi khối quy tắc nhận diện hành động vào SKILL.md của Agent Phân tích, Agent Viết prompt và
+        Master (đúng các kỹ năng workflow.json gắn cho từng vai). Kỹ năng chưa nạp thì bỏ qua, lần sync sau sẽ ghi."""
+        if slug != "wildlife":
+            return 0
+        from . import agent_rules
+        agents = self.load(slug)["agents"]
+        changed = 0
+        for role, slot in (("analyst", "analyst"), ("writer", "writer"), ("conductor", "conductor")):
+            name = agents[slot]["skill"]
+            if name and agent_rules.apply_block(self.root / slug / "skills" / name / "SKILL.md", role):
+                changed += 1
+        return changed
+
     def sync(self, slug):
         """Chép bản gốc kỹ năng sang chỗ Claude Code / Codex đọc, đóng gói zip cho Claude desktop."""
         path = self.folder(slug)
+        try:
+            self.apply_managed_rules(slug)
+        except (OSError, WorkflowError):
+            pass
         done = {"claude": 0, "codex": 0, "zip": 0}
         targets = [("claude", self.home / ".claude" / "skills"), ("codex", Path.home() / ".codex" / "skills")]
         dist = path / "dist"
@@ -441,6 +459,11 @@ class Workflows:
                 '"note": "<một câu>"} — cập nhật mỗi khi chuyển bước.',
                 "- Không hỏi lại người dùng giữa chừng.",
             ]
+            if slug == "wildlife":
+                lines.append("- Cảnh khó (hai con áp sát / giao nhau / bị che / chưa rõ chủ thể, hướng, kết quả tiếp xúc): xin xem kỹ theo "
+                             "input/<ten>_pack/REVIEW.md (review_request.json → HanaMedia trích ảnh → review_conclusions.json), phân biệt "
+                             "«lao về phía» / «chạm» / «bắt giữ», điểm tiếp xúc bị che = «chưa xác định tiếp xúc». Chỉ báo xong bước phân tích "
+                             "khi mọi yêu cầu có kết luận; Agent Viết prompt đọc review_handoff.md và giữ đúng mức chắc chắn.")
             if slug == "universal":
                 from . import universal_skills as pack
                 lines.append(pack.REFERENCE_RULE)
