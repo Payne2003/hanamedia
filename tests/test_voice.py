@@ -424,3 +424,65 @@ class ParallelTests(unittest.TestCase):
         self.assertEqual(studio.parallel(), 1)
         studio.save_config({"parallel": 0})  # lưu lại cấu hình: thử lại theo VRAM
         self.assertEqual(studio.parallel(), 2)
+
+
+class ProjectLimitTests(unittest.TestCase):
+    """Một dự án tối đa 500 voice; xóa dự án và dọn dự án cũ."""
+
+    def setUp(self):
+        try:
+            video.ffmpeg()
+        except Exception:
+            self.skipTest("không có ffmpeg")
+        self.temp = tempfile.TemporaryDirectory()
+        self.studio = FakeStudio(Path(self.temp.name))
+        sample = Path(self.temp.name) / "s.wav"
+        tone(sample, 5)
+        self.profile = self.studio.add_profile(sample.read_bytes(), "s.wav", "P", "mẫu", consent=True)["id"]
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def lines(self, count, start=1):
+        return "\n".join(f"Dòng số {n}." for n in range(start, start + count))
+
+    def test_project_holds_at_most_500_voices(self):
+        with self.assertRaisesRegex(VoiceError, "tối đa 500 voice"):
+            self.studio.create_batch(self.profile, self.lines(501), "Quá dài")
+        project = self.studio.create_batch(self.profile, self.lines(498), "Đủ")
+        self.assertEqual(len(project["jobs"]), 498)
+        self.studio.create_batch(self.profile, self.lines(2, 499), group=project["group"])  # vừa đủ 500
+        with self.assertRaisesRegex(VoiceError, "chỉ thêm được 0 dòng"):
+            self.studio.create_batch(self.profile, "Dòng thứ 501", group=project["group"])
+        self.assertEqual(len([j for j in self.studio.jobs() if j["group"] == project["group"]]), 500)
+
+    def test_delete_project_removes_files_and_refuses_while_running(self):
+        project = self.studio.create_batch(self.profile, self.lines(3), "Xóa tôi")
+        other = self.studio.create_batch(self.profile, self.lines(2), "Giữ lại")
+        ids = [j["id"] for j in project["jobs"]]
+        self.studio.update_job(ids[0], status="running")
+        with self.assertRaisesRegex(VoiceError, "đang tạo giọng"):
+            self.studio.delete_group(project["group"])
+        self.studio.update_job(ids[0], status="draft")
+        self.assertEqual(self.studio.delete_group(project["group"]), 3)
+        self.assertTrue(all(not (self.studio.jobs_dir / i).exists() for i in ids))
+        self.assertEqual([j["group"] for j in self.studio.jobs()], [other["group"]] * 2)
+        with self.assertRaises(VoiceError):
+            self.studio.delete_group(project["group"])
+
+    def test_clean_old_deletes_only_finished_old_projects(self):
+        old = self.studio.create_batch(self.profile, self.lines(2), "Cũ xong", start=True)
+        recent = self.studio.create_batch(self.profile, self.lines(2), "Mới xong", start=True)
+        pending = self.studio.create_batch(self.profile, self.lines(2), "Cũ chưa xong", start=True)
+        long_ago = time.time() - 30 * 86400
+        for project, status in ((old, "done"), (recent, "done"), (pending, "waiting")):
+            for job in project["jobs"]:
+                fields = {"status": status}
+                self.studio.update_job(job["id"], **fields)
+        for project in (old, pending):  # lùi mốc cập nhật cuối của dự án cũ
+            for job in project["jobs"]:
+                data = self.studio.load_job(job["id"])
+                data["updated"] = long_ago
+                self.studio.save_job(data)
+        self.assertEqual(self.studio.delete_old(7), (1, 2))
+        self.assertEqual({j["group_title"] for j in self.studio.jobs()}, {"Mới xong", "Cũ chưa xong"})

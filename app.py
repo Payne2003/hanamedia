@@ -1197,6 +1197,11 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/voice/delete":
                 voice.delete_job(str(body.get("id")))
                 return self.reply({"ok": True})
+            if path == "/api/voice/delete-group":
+                return self.reply({"ok": True, "deleted": voice.delete_group(str(body.get("group") or ""))})
+            if path == "/api/voice/delete-old":
+                projects, voices = voice.delete_old(int(body.get("days") or 0) if body.get("days") is not None else 7)
+                return self.reply({"ok": True, "projects": projects, "voices": voices})
             if path == "/api/voice/save":
                 # Lưu file vào Downloads/HanaMedia Voice rồi mở thư mục, chọn sẵn file (cửa sổ app không tải link được).
                 if body.get("group"):
