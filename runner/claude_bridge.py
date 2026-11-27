@@ -47,6 +47,10 @@ Dành cho Claude hoặc Codex khi được yêu cầu "Chạy hanamedia-wildlife
   opencv. Xem đủ TẤT CẢ các tờ ảnh trong sheets/.
 - Ghi kết quả vào output/<ten-ngan>/: Wildlife_Prompts_EN_<ten-ngan>.txt (mỗi dòng một cảnh, dòng N = cảnh N)
   và hanamedia_<ten-ngan>.json nếu làm được. Tool tự đưa prompt vào hàng đợi Studio khi thấy file.
+- Cảnh khó (hai con áp sát / giao nhau / bị che / chưa rõ chủ thể, hướng, kết quả tiếp xúc): XIN XEM KỸ, đừng đoán. Đọc
+  input/<ten-ngan>_pack/REVIEW.md: ghi review_request.json → HanaMedia trích dải khung liên tiếp (ảnh lớn có giây thật) vào
+  review/ + review_status.json → bạn ghi review_conclusions.json (kèm mức chắc chắn). Phân biệt "lao về phía" / "chạm" / "bắt
+  giữ"; điểm tiếp xúc bị che = "chưa xác định tiếp xúc". Agent Viết prompt đọc review_handoff.md và giữ đúng mức chắc chắn đó.
 - Trong hanamedia_<ten-ngan>.json thêm "character": tên nhân vật chính (tiếng Việt, vd "Báo mẹ và đàn con") — tool
   dùng để đặt tên thư mục kết quả.
 - Không sửa hay xoá video trong input/. Dự án cũ đã chuyển sang input-done/ (không đọc input-done/). Input/ có thể có NHIỀU
@@ -273,7 +277,8 @@ FRAME_W, FRAME_H = 256, 144
 
 
 def scenes_from_cuts(cuts, duration):
-    bounds = [0.0] + sorted({round(float(c), 2) for c in cuts if 0.05 < float(c) < duration - 0.05}) + [round(duration, 2)]
+    # 3 chữ số thập phân (mốc khung hình thật): làm tròn 2 chữ số có thể đẩy khung đầu cảnh sau sang cảnh trước
+    bounds = [0.0] + sorted({round(float(c), 3) for c in cuts if 0.05 < float(c) < duration - 0.05}) + [round(duration, 3)]
     return [(bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)]
 
 
@@ -333,9 +338,15 @@ def group_shots(shots):
 def build_pack(source, target, cuts, duration, stop=None, status=lambda text: None):
     """Gói dữ liệu máy đo sẵn cho Claude / Codex (máy khách không cần Python, opencv):
     shots.txt (cảnh · đầu · cuối · dài), allcuts.txt, sheets/sNN.jpg + sheets.txt (vị trí từng cảnh trên tờ ảnh),
-    motion.txt (độ chuyển động trong khung của từng cảnh, đo bằng sai khác khung hình)."""
+    frames.txt / frames.json (số cảnh + giây THẬT của từng ảnh), frame_pts.json, REVIEW.md (cách xin xem kỹ cảnh khó),
+    motion.txt (độ chuyển động trong khung của từng cảnh, đo bằng sai khác khung hình).
+
+    Khung hình lấy theo mốc hiển thị THẬT của từng khung (runner/frames.py), không theo "giây danh nghĩa": mỗi cảnh tối đa 3
+    khung khác nhau theo thứ tự thời gian, đều nằm trong cảnh; cảnh chỉ có 1–2 khung thì ghi đúng số khung có được."""
+    from . import frames as framelib
+    from . import scene_review
     from . import video_tools as video
-    from .reverse_engineer import frame_differences
+    from .reverse_engineer import clock, frame_differences
     target = Path(target)
     if target.exists():
         shutil.rmtree(target, ignore_errors=True)
@@ -348,22 +359,39 @@ def build_pack(source, target, cuts, duration, stop=None, status=lambda text: No
                                       encoding="utf-8", newline="\n")
     (target / "groups.json").write_text(json.dumps(group_shots(shots), ensure_ascii=False, indent=1), encoding="utf-8",
                                         newline="\n")
+    status("Đọc mốc thời gian từng khung hình…")
+    times = framelib.frame_pts(source, stop)
+    if times:
+        scene_review.write_json(target / scene_review.PTS_FILE, {"video": scene_review.video_signature(source), "times": times})
     index = []
+    frame_rows = []   # mỗi cảnh: các khung thật đã chọn
     total = len(shots)
     for number, (start, end) in enumerate(shots):
         if stop is not None and stop.is_set():
             raise BridgeError("Đã dừng.")
         if number % 20 == 0:
             status(f"Trích khung hình cảnh {number + 1}/{total}…")
-        moments = [min(start + 0.3, (start + end) / 2), (start + end) / 2, max(end - 0.35, (start + end) / 2)]
-        for slot, moment in enumerate(moments):
+        if times:
+            moments = framelib.pick_overview(times, start, end)
+            valid = len(framelib.scene_frames_in(times, start, end))
+        else:  # không đọc được mốc khung hình: lấy ba điểm khác nhau theo thời lượng (ghi rõ trong frames.json)
+            span = max(end - start, 0.0)
+            moments = sorted({round(start + span * f, 3) for f in ((.1, .5, .9) if span > .3 else (.5,))})
+            valid = None
+        row = []
+        for slot in range(3):
             out = frames / f"{number * 3 + slot:05d}.jpg"
-            video.run([video.ffmpeg(), "-v", "error", "-y", "-ss", f"{max(moment, 0):.3f}", "-i", str(source), "-frames:v", "1",
-                       "-vf", f"scale={FRAME_W}:{FRAME_H}:force_original_aspect_ratio=decrease,pad={FRAME_W}:{FRAME_H}:-1:-1",
-                       "-q:v", "4", str(out)], 60)
-            if not out.exists():  # khung cuối video đôi khi không đọc được: ô đen
-                video.run([video.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", f"color=black:s={FRAME_W}x{FRAME_H}",
-                           "-frames:v", "1", str(out)], 30)
+            real = framelib.extract(source, moments[slot], out, FRAME_W, FRAME_H) if slot < len(moments) else None
+            if real is not None:
+                framelib.label(out, f"C{number + 1} {real:.2f}s", size=11)
+                row.append({"time": round(real, 3), "wanted": round(moments[slot], 3),
+                            "verified": bool(times) and start - framelib.EPS <= real < end - framelib.EPS})
+            elif not out.exists():  # cảnh ít khung (hoặc khung không đọc được): ô đen, KHÔNG nhân bản khung khác
+                framelib.black_tile(out, FRAME_W, FRAME_H)
+        names = {1: ("duy nhất",), 2: ("đầu", "cuối"), 3: ("đầu", "giữa", "cuối")}.get(len(row), ())
+        for item, name in zip(row, names):
+            item["slot"] = name
+        frame_rows.append({"scene": number + 1, "start": start, "end": end, "valid_frames": valid, "frames": row})
     per_sheet = SHEET_SCENES * 3
     for sheet, first in enumerate(range(0, total, SHEET_SCENES)):
         group = shots[first:first + SHEET_SCENES]
@@ -376,14 +404,32 @@ def build_pack(source, target, cuts, duration, stop=None, status=lambda text: No
             index.append(f"{first + offset + 1}\t{name}\thàng {row + 1}\t{'cột 1–3 (trái)' if half == 0 else 'cột 4–6 (phải)'}"
                          f"\t{start:.2f}-{end:.2f}s")
     (target / "sheets.txt").write_text(
-        "# Mỗi tờ: 2 cảnh một hàng, mỗi cảnh 3 khung liền nhau (đầu · giữa · cuối cảnh). Cột: cảnh · tờ · hàng · vị trí · giây\n"
+        "# Mỗi tờ: 2 cảnh một hàng, mỗi cảnh tối đa 3 khung khác nhau theo thứ tự thời gian (đầu · giữa · cuối cảnh; cảnh chỉ có "
+        "1–2 khung thì ô còn lại để đen). Cột: cảnh · tờ · hàng · vị trí · giây. Giây THẬT của từng ảnh: xem frames.txt.\n"
         + "\n".join(index) + "\n", encoding="utf-8", newline="\n")
+    # frames.txt / frames.json: số cảnh + giây thật + vị trí ô của TỪNG ảnh (gói cũ không có hai file này: vẫn đọc được bằng sheets.txt)
+    text_rows = ["# cảnh · khung · giây thật (mốc hiển thị của khung) · tờ · hàng · cột · đã kiểm tra thuộc đúng cảnh · số khung hợp lệ của cảnh"]
+    for number, entry in enumerate(frame_rows):
+        sheet, offset = divmod(number, SHEET_SCENES)
+        row, half = divmod(offset, 2)
+        for slot, item in enumerate(entry["frames"]):
+            item.update(sheet=f"s{sheet + 1:02d}.jpg", row=row + 1, col=1 + half * 3 + slot)
+            text_rows.append(f"{entry['scene']}\t{item.get('slot', '?')}\t{item['time']:.3f}\ts{sheet + 1:02d}.jpg\thàng {row + 1}"
+                             f"\tcột {item['col']}\t{'có' if item['verified'] else 'KHÔNG'}\t"
+                             f"{'?' if entry['valid_frames'] is None else entry['valid_frames']}")
+        if len(entry["frames"]) < 3:
+            text_rows.append(f"{entry['scene']}\t(chỉ có {len(entry['frames'])} khung hợp lệ; ô còn lại trên tờ ảnh để đen)\t-\t-\t-\t-\t-\t"
+                             f"{'?' if entry['valid_frames'] is None else entry['valid_frames']}")
+    (target / "frames.txt").write_text("\n".join(text_rows) + "\n", encoding="utf-8", newline="\n")
+    (target / "frames.json").write_text(json.dumps({"source": "pts" if times else "nominal", "scenes": frame_rows},
+                                                   ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
     shutil.rmtree(frames, ignore_errors=True)
     status("Đo độ chuyển động từng cảnh…")
     try:
-        scores, times = frame_differences(source, stop)
+        scores, mtimes = frame_differences(source, stop)
     except Exception:
-        scores, times = [], []
+        scores, mtimes = [], []
+    times = mtimes
     if scores and len(times) < len(scores) + 1:  # không đọc được mốc thời gian: chia đều theo thời lượng
         step = float(duration) / (len(scores) + 1)
         times = [i * step for i in range(len(scores) + 1)]
@@ -399,10 +445,18 @@ def build_pack(source, target, cuts, duration, stop=None, status=lambda text: No
     (target / "README.txt").write_text(
         "Dữ liệu HanaMedia đo sẵn cho video này (không cần Python / opencv):\n"
         "- shots.txt: cảnh, giây đầu, giây cuối, độ dài (thay cho Bước 2–3 của kỹ năng phân tích).\n"
-        "- sheets/*.jpg + sheets.txt: tờ ảnh liên hoàn, mỗi cảnh 3 khung đầu/giữa/cuối. Xem TẤT CẢ các tờ.\n"
-        "- motion.txt: độ chuyển động trong khung từng cảnh (tĩnh / chậm / vừa / nhanh), hỗ trợ ghi tốc độ hành động.\n"
-        "- groups.json: bảng gộp cảnh thành prompt 8–10 giây, tính đúng script Lock 01 (dùng khi máy không có Python).\n",
+        "- sheets/*.jpg + sheets.txt: tờ ảnh liên hoàn, mỗi cảnh tối đa 3 khung KHÁC NHAU (đầu/giữa/cuối), mỗi ô có nhãn «C<cảnh> giây». Xem TẤT CẢ các tờ.\n"
+        "- frames.txt / frames.json: số cảnh + giây thật + vị trí ô của từng ảnh (để đối chiếu diễn biến theo thứ tự thời gian).\n"
+        "- motion.txt: độ chuyển động trong khung từng cảnh (tĩnh / chậm / vừa / nhanh). CHỈ là gợi ý chỗ cần xem: máy lia / rung làm cả khung đổi,\n"
+        "  con vật động nhỏ vẫn có thể quan trọng dù điểm thấp.\n"
+        "- groups.json: bảng gộp cảnh thành prompt 8–10 giây, tính đúng script Lock 01 (dùng khi máy không có Python).\n"
+        "- REVIEW.md: cách xin HanaMedia trích ảnh liên tiếp để XEM KỸ một cảnh khó (ghi review_request.json), rồi ghi review_conclusions.json.\n",
         encoding="utf-8", newline="\n")
+    try:
+        (target / "REVIEW.md").write_text(scene_review.protocol(target.name, Path(source).name, video.ffmpeg()),
+                                          encoding="utf-8", newline="\n")
+    except Exception:
+        pass
     return {"scenes": total, "sheets": (total + SHEET_SCENES - 1) // SHEET_SCENES}
 
 
@@ -620,7 +674,9 @@ def results(folder, imported=None):
             data, error = {"name": path.parent.name, "scene_count": 0, "duration": None, "cut_source": ""}, str(problem)
         stat = path.stat()
         sig = signature(path)
+        pending_reviews = review_pending(folder, source_name(path.parent))
         items.append({"name": data["name"], "file": path.name, "path": str(path), "scenes": data["scene_count"],
+                      "review_pending": len(pending_reviews),
                       "duration": data.get("duration"), "cut_source": data.get("cut_source", ""), "error": error,
                       "updated": stat.st_mtime, "signature": sig, "folder_key": folder_key(path),
                       "imported": bool(imported.get(sig)), "folder_imported": bool(imported.get(folder_key(path)))})
@@ -643,6 +699,15 @@ AGENTS = (
     {"id": "conductor", "name": "Agent Điều phối", "skill": "hanamedia-wildlife-workflow", "role": "Nối hai agent, xuất file cho tool"},
     {"id": "studio", "name": "Studio · Muse", "role": "Hàng đợi tạo video trên Muse"},
 )
+
+
+def review_pending(folder, name):
+    """Mã các yêu cầu xem kỹ cảnh khó của dự án <name> chưa có kết luận ([] nếu không có / gói cũ không có yêu cầu nào)."""
+    from . import scene_review
+    try:
+        return scene_review.pending(Path(folder).expanduser() / "input" / f"{name}_pack")
+    except Exception:
+        return []
 
 
 def progress(folder, imported=None, jobs=None):
@@ -668,8 +733,11 @@ def progress(folder, imported=None, jobs=None):
         started = out.is_dir() and any(out.iterdir())
         stages = {}
         stages["tool"] = "done" if video or analysis else "waiting"
-        stages["analyst"] = "done" if analysis else "working" if started else "waiting"
-        stages["writer"] = "done" if prompts else "working" if analysis or has("groups_*.json") else "waiting"
+        open_reviews = review_pending(root, name)
+        # Bước phân tích chỉ xong khi mọi yêu cầu xem kỹ cảnh khó đã có kết luận (Agent Viết prompt đợi bản bàn giao đó)
+        stages["analyst"] = ("working" if open_reviews and (analysis or started) else "done" if analysis
+                             else "working" if started else "waiting")
+        stages["writer"] = "done" if prompts else "working" if (analysis and not open_reviews) or has("groups_*.json") else "waiting"
         stages["conductor"] = "done" if final or (prompts and not video) else "working" if started else "waiting"
         files = result_files(root)
         result = next((f for f in files if f.parent == out), None)
@@ -709,8 +777,8 @@ def project_done(folder, name, slug="wildlife", settle=20):
         if not sub.is_dir() or sub.name.startswith(("_", ".")) or source_name(sub) != name:
             continue
         files = [f for pattern in patterns for f in sub.glob(pattern) if f.is_file() and f.name != "thoai_voice.json"]
-        if not files:
-            continue
+        if not files or review_pending(folder, name):
+            continue  # còn yêu cầu xem kỹ chưa có kết luận: chưa coi là xong
         try:
             newest = max(f.stat().st_mtime for f in sub.iterdir())
         except (OSError, ValueError):

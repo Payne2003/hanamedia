@@ -33,6 +33,45 @@ class WorkflowTests(unittest.TestCase):
         (folder / "SKILL.md").write_text(f'---\nname: "{name}"\ndescription: "Mô tả {name}"\n---\n# {name}\n{text}\n', encoding="utf-8")
         return folder
 
+    def test_wildlife_skills_get_one_managed_action_analysis_block(self):
+        from runner import agent_rules
+        flows = self.flows
+        flows.list()
+        folder = self.home / "workflows" / "wildlife" / "skills"
+        original = {}
+        for name in ("phan-tich-video-doi-thu", "wildlife-motion-prompt-meta", "hanamedia-wildlife-workflow"):
+            (folder / name).mkdir(parents=True)
+            original[name] = f'---\nname: "{name}"\ndescription: "mô tả"\n---\n# {name}\nNội dung gốc của người dùng.\n'
+            (folder / name / "SKILL.md").write_text(original[name], encoding="utf-8")
+        flows.sync("wildlife")
+        flows.sync("wildlife")  # chạy lại không nhân đôi khối
+        analyst = (folder / "phan-tich-video-doi-thu" / "SKILL.md").read_text(encoding="utf-8")
+        writer = (folder / "wildlife-motion-prompt-meta" / "SKILL.md").read_text(encoding="utf-8")
+        conductor = (folder / "hanamedia-wildlife-workflow" / "SKILL.md").read_text(encoding="utf-8")
+        for text, role in ((analyst, "analyst"), (writer, "writer"), (conductor, "conductor")):
+            self.assertEqual(text.count(agent_rules.begin(role)), 1)
+            self.assertEqual(text.count(agent_rules.end(role)), 1)
+        self.assertTrue(analyst.startswith(original["phan-tich-video-doi-thu"]))     # phần của người dùng giữ nguyên
+        for phrase in ("lao về phía", "chạm vào", "bắt giữ", "chưa xác định tiếp xúc", "CẮT CẢNH", "REVIEW.md", "review_conclusions.json"):
+            self.assertIn(phrase, analyst)
+        self.assertIn("ngoạm được dê", writer)                                     # ví dụ: không tự thêm kết quả không nhìn thấy
+        self.assertIn("review_handoff.md", writer + conductor)
+        # bản sao Claude Code / Codex nhận cùng nội dung (workflow thật nạp từ đây)
+        copied = (self.home / ".claude" / "skills" / "phan-tich-video-doi-thu" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertEqual(copied, analyst)
+        # khối đổi phiên bản: được thay, không thêm khối thứ hai
+        skill = folder / "phan-tich-video-doi-thu" / "SKILL.md"
+        skill.write_text(analyst.replace(agent_rules.begin("analyst"), "<!-- HANAMEDIA:action-analysis:analyst v0 BEGIN -->")
+                         .replace("lao về phía", "SỬA TAY"), encoding="utf-8")
+        flows.sync("wildlife")
+        again = skill.read_text(encoding="utf-8")
+        self.assertEqual(again.count("HANAMEDIA:action-analysis:analyst"), 2)  # BEGIN + END, không phải bốn dòng
+        self.assertNotIn("SỬA TAY", again)
+        # kỹ năng chưa nạp thì bỏ qua, workflow khác không bị đụng
+        shutil_target = self.home / "workflows" / "thoai-phim" / "skills"
+        self.assertFalse(any("HANAMEDIA:action-analysis" in p.read_text(encoding="utf-8") for p in shutil_target.rglob("SKILL.md")))
+        self.assertIn("REVIEW.md", flows.prompt("wildlife", "run"))
+
     def test_default_and_new_workflow_with_skills_and_requests(self):
         items = self.flows.list()
         self.assertEqual(items[0]["slug"], "wildlife")
