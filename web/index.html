@@ -148,7 +148,7 @@
         </div>
         <div class="va-pane" id="vaProject" hidden>
           <div class="va-top"><button type="button" id="vaBack" class="text-button">←</button><b id="vaProjectTitle">Dự án mới</b><span class="bulk-spacer"></span>
-            <label class="va-ghost"><input type="file" id="vaProjectUpload" accept=".txt,.srt,text/plain" hidden>⇪ Tải lên</label><a id="vaExport" class="va-accent" href="#">⇩ Xuất</a></div>
+            <label class="va-ghost"><input type="file" id="vaProjectUpload" accept=".txt,.srt,text/plain" hidden>⇪ Tải lên</label><button type="button" id="vaProjectDelete" class="va-ghost" title="Xóa cả dự án và các file âm thanh của nó">🗑 Xóa dự án</button><a id="vaExport" class="va-accent" href="#">⇩ Xuất</a></div>
           <div class="va-chip" id="vaProgress">Hoàn thành: 0 / 0</div>
           <div class="va-table-wrap"><table class="va-table"><thead><tr><th>#</th><th>Tên</th><th>Văn bản</th><th>Trạng thái</th><th>Kết quả đầu ra</th><th></th></tr></thead><tbody id="vaRows"></tbody></table></div>
           <div class="va-bottom"><span class="bulk-spacer"></span><small id="vaProjectCount"></small><button type="button" id="vaProjectGenerate" class="va-primary">✦ Tạo giọng nói</button></div>
@@ -204,6 +204,7 @@
           </details>
         </div>
         <div class="va-tab" id="vaHistory" hidden></div>
+        <div class="va-tab-foot" id="vaHistoryFoot" hidden><button type="button" id="vaCleanOld" title="Xóa các dự án đã làm xong từ hơn 7 ngày trước">🧹 Dọn dự án cũ (&gt; 7 ngày)</button></div>
       </aside>
     </section>
     <section id="agentsView" class="agents-page" hidden aria-labelledby="agentsTitle">

@@ -1071,7 +1071,7 @@ function renderVoice(){
     const rows=d.jobs.filter(j=>j.group===va.group).sort((a,b)=>a.index-b.index),done=rows.filter(j=>j.status==='done').length;
     $('vaProjectTitle').textContent=rows[0]?.group_title||'Dự án';$('vaProgress').textContent=`Hoàn thành: ${done} / ${rows.length}`;
     $('vaExport').href=`/api/voice/export/${va.group}`;$('vaExport').classList.toggle('disabled',!done);
-    $('vaProjectCount').textContent=`${rows.reduce((n,j)=>n+j.chars,0).toLocaleString('vi-VN')} ký tự · ${rows.length} dòng`;
+    $('vaProjectCount').textContent=`${rows.reduce((n,j)=>n+j.chars,0).toLocaleString('vi-VN')} ký tự · ${rows.length}/500 voice`;
     if(!$('vaRows').contains(document.activeElement))vaPaint($('vaRows'),rows.map(j=>{const [label,cls]=VA_STATUS[j.status]||[j.status,''];
       if(va.editing===j.id)return `<tr class="editing"><td>${j.index}</td><td><input data-edit-name value="${esc(j.title)}"></td><td colspan="3"><textarea data-edit-text rows="2">${esc(j.text)}</textarea></td><td><button type="button" data-va-save="${j.id}">Lưu</button><button type="button" class="text-button" data-va-cancel-edit>Hủy</button></td></tr>`;
       return `<tr><td>${j.index}</td><td class="va-name">${esc(j.title)}</td><td class="va-text">${esc(j.text)}</td><td><span class="va-badge ${cls}">${label}${j.status==='running'?` ${j.done}/${j.total}`:''}</span>${j.error?`<small class="va-err">${esc(j.error)}</small>`:''}</td>
@@ -1082,7 +1082,7 @@ function renderVoice(){
   const items=[...Object.entries(groups).map(([g,list])=>({g,list,created:Math.max(...list.map(x=>x.created))})),...singles.map(j=>({j,created:j.created}))].sort((a,b)=>b.created-a.created);
   const histChanged=vaPaint($('vaHistory'),items.map(it=>{
     if(it.g){const done=it.list.filter(x=>x.status==='done').length,run=it.list.some(x=>['waiting','running'].includes(x.status));
-      return `<div class="va-hist" data-va-open="${it.g}"><b>☰ ${esc(it.list[0].group_title||'Dự án')}</b><small>${it.list.length} dòng · xong ${done}/${it.list.length}${run?' · đang tạo…':''}</small></div>`;}
+      return `<div class="va-hist" data-va-open="${it.g}"><b>☰ ${esc(it.list[0].group_title||'Dự án')}</b><small>${it.list.length}/500 voice · xong ${done}/${it.list.length}${run?' · đang tạo…':''}</small><button type="button" class="text-button" data-va-delgroup="${it.g}" title="Xóa dự án này" ${run?'disabled':''}>🗑 Xóa</button></div>`;}
     const j=it.j,[label,cls]=VA_STATUS[j.status]||[j.status,''],pct=j.total?Math.round(100*j.done/j.total):0;
     return `<div class="va-hist"><b>${esc(j.title)}</b><small>${esc(j.profile_name)} · ${j.chars.toLocaleString('vi-VN')} ký tự${j.seconds?` · ${fmtSec(j.seconds)}`:''}</small><div class="va-hist-row"><span class="va-badge ${cls}">${label}${['running','waiting'].includes(j.status)?` ${j.done}/${j.total}`:''}</span>${j.status!=='done'?`<div class="meter"><i data-w="${pct}"></i></div>`:''}</div>${j.error?`<small class="va-err">${esc(j.error)}</small>`:j.note?`<small>${esc(j.note)}</small>`:''}
       ${j.status==='done'?`<audio controls preload="none" src="/api/voice/file/${j.id}"></audio>`:''}<div class="wf-row">${j.status==='done'?`<button type="button" data-va-download="${j.id}">⇩ Tải về</button>`:''}${['error','done'].includes(j.status)?`<button type="button" data-va-retry="${j.id}">${j.status==='done'?'Tạo lại':'Thử lại'}</button>`:''}${['waiting','running'].includes(j.status)?`<button type="button" data-va-stop="${j.id}">Dừng</button>`:''}<button type="button" data-va-folder="${j.id}" title="Mở thư mục: nghe từng đoạn chunk_0000.wav…">Thư mục</button>${j.status!=='running'?`<button type="button" class="text-button" data-va-delete="${j.id}">Xóa</button>`:''}</div></div>`;}).join('')||'<p class="detail">Chưa có lịch sử.</p>');
@@ -1090,7 +1090,7 @@ function renderVoice(){
 }
 async function vaDownload(body){try{const r=await api('/api/voice/save',body);toast(`Đã lưu: ${r.path}`);}catch(error){toast(error.message,true);}}
 document.querySelectorAll('.va-link').forEach(b=>b.onclick=()=>vaShow(b.dataset.va));
-document.querySelectorAll('.va-tabs [data-vtab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.va-tabs [data-vtab]').forEach(x=>x.classList.toggle('active',x===b));$('vaSettings').hidden=b.dataset.vtab!=='settings';$('vaHistory').hidden=b.dataset.vtab!=='history';});
+document.querySelectorAll('.va-tabs [data-vtab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.va-tabs [data-vtab]').forEach(x=>x.classList.toggle('active',x===b));$('vaSettings').hidden=b.dataset.vtab!=='settings';$('vaHistory').hidden=b.dataset.vtab!=='history';$('vaHistoryFoot').hidden=b.dataset.vtab!=='history';});
 document.querySelectorAll('.va-split [data-split]').forEach(b=>b.onclick=()=>{va.split=b.dataset.split;vaSave();renderVaControls();});
 document.querySelectorAll('#vaFormat [data-fmt]').forEach(b=>b.onclick=()=>{va.format=b.dataset.fmt;vaSave();renderVaControls();});
 for(const [id,key,parse] of [['vaSpeed','speed',Number],['vaNfe','nfe',Number],['vaGap','gap',Number]])$(id).oninput=e=>{va[key]=parse(e.target.value);vaSave();renderVaControls();};
@@ -1120,8 +1120,17 @@ $('vaRows').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
   if(b.dataset.vaSave){const row=b.closest('tr');try{await api('/api/voice/edit',{id:b.dataset.vaSave,name:row.querySelector('[data-edit-name]').value,text:row.querySelector('[data-edit-text]').value});va.editing=null;$('vaRows').dataset.html='';await loadVoice();}catch(error){toast(error.message,true);}return;}
   if(b.dataset.vaRetry){try{await api('/api/voice/retry',{id:b.dataset.vaRetry});loadVoice();}catch(error){toast(error.message,true);}}};
 $('vaHistory').onclick=async e=>{const open=e.target.closest('[data-va-open]');if(open&&!e.target.closest('button,a,audio')){va.group=open.dataset.vaOpen;vaShow('project');return;}
-  const b=e.target.closest('button');if(!b)return;if(b.dataset.vaDownload)return vaDownload({id:b.dataset.vaDownload});const act=[['vaRetry','/api/voice/retry'],['vaStop','/api/voice/cancel'],['vaDelete','/api/voice/delete'],['vaFolder','/api/voice/open']].find(([k])=>b.dataset[k]);if(!act)return;
+  const b=e.target.closest('button');if(!b)return;if(b.dataset.vaDownload)return vaDownload({id:b.dataset.vaDownload});
+  if(b.dataset.vaDelgroup)return vaDeleteGroup(b.dataset.vaDelgroup);const act=[['vaRetry','/api/voice/retry'],['vaStop','/api/voice/cancel'],['vaDelete','/api/voice/delete'],['vaFolder','/api/voice/open']].find(([k])=>b.dataset[k]);if(!act)return;
   if(act[0]==='vaDelete'&&!confirm('Xóa tác vụ và file âm thanh?'))return;try{await api(act[1],{id:b.dataset[act[0]]});loadVoice();}catch(error){toast(error.message,true);}};
+async function vaDeleteGroup(group){
+  const rows=(voiceData?.jobs||[]).filter(j=>j.group===group);
+  if(!confirm(`Xóa dự án “${rows[0]?.group_title||'Dự án'}” (${rows.length} voice) và toàn bộ file âm thanh của nó? Không khôi phục được.`))return;
+  try{const r=await api('/api/voice/delete-group',{group});toast(`Đã xóa dự án (${r.deleted} voice).`);if(va.group===group){va.group=null;vaShow('tts');}loadVoice();}catch(error){toast(error.message,true);}
+}
+$('vaProjectDelete').onclick=()=>va.group&&vaDeleteGroup(va.group);
+$('vaCleanOld').onclick=async()=>{if(!confirm('Xóa mọi dự án đã làm xong từ hơn 7 ngày trước (kể cả file âm thanh)? Dự án đang chạy hoặc còn dòng chờ được giữ lại.'))return;
+  try{const r=await api('/api/voice/delete-old',{days:7});toast(r.projects?`Đã dọn ${r.projects} dự án cũ (${r.voices} voice).`:'Không có dự án nào cũ hơn 7 ngày.');loadVoice();}catch(error){toast(error.message,true);}};
 // nhân bản giọng
 let vaLocalUrl='';
 function vaLocalPreview(f){const a=$('vaVoiceLocal');if(vaLocalUrl){URL.revokeObjectURL(vaLocalUrl);vaLocalUrl='';}

@@ -31,6 +31,7 @@ SAMPLE_RATE = 24000
 SILENCE = .28                # khoảng lặng giữa các đoạn (giây)
 FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 MAX_PARALLEL = 4             # tối đa số worker (bản mô hình) đọc cùng lúc
+MAX_PROJECT_VOICES = 500     # một dự án (nhiều dòng, mỗi dòng một file voice) tối đa 500 voice
 
 WORKER_SCRIPT = r'''# HanaMedia AI Voice worker (chạy trong venv của engine). Giao thức: mỗi dòng JSON vào stdin → một dòng JSON ra.
 import argparse, json, os, sys, traceback
@@ -923,11 +924,15 @@ class VoiceStudio:
         lines = [line.strip() for line in str(text or "").replace("\r", "").split("\n") if line.strip()]
         if not lines:
             raise VoiceError("Nhập văn bản: mỗi dòng sẽ thành một file âm thanh.")
-        if len(lines) > 2000:
-            raise VoiceError("Tối đa 2000 dòng mỗi lần.")
         existing = [j for j in self.jobs() if group and j.get("group") == group]
         if group and not existing:
             raise VoiceError("Không tìm thấy dự án.")
+        if len(existing) + len(lines) > MAX_PROJECT_VOICES:
+            room = max(0, MAX_PROJECT_VOICES - len(existing))
+            raise VoiceError(f"Một dự án tối đa {MAX_PROJECT_VOICES} voice"
+                             + (f" (dự án này đã có {len(existing)}, chỉ thêm được {room} dòng nữa)" if existing else
+                                f" (văn bản có {len(lines)} dòng)")
+                             + ". Chia văn bản thành nhiều dự án.")
         group = group or uuid.uuid4().hex[:12]
         project = existing[0].get("group_title") if existing else (re.sub(r"\s+", " ", str(title or "")).strip()[:80] or "Dự án mới")
         first = max((j.get("index", 0) for j in existing), default=0)
@@ -1023,6 +1028,41 @@ class VoiceStudio:
         if job["status"] in ("waiting", "running"):
             job = self.update_job(job_id, status="error", error="Đã dừng theo yêu cầu.", note="")
         return self.public(job)
+
+    def delete_group(self, group):
+        """Xóa cả một dự án (mọi dòng + file âm thanh). Dự án đang có dòng chạy thì phải dừng trước."""
+        if not re.fullmatch(r"[a-f0-9]{12}", str(group or "")):
+            raise VoiceError("Dự án không hợp lệ.")
+        jobs = [j for j in self.jobs() if j.get("group") == group]
+        if not jobs:
+            raise VoiceError("Không tìm thấy dự án.")
+        if any(j["status"] == "running" for j in jobs):
+            raise VoiceError("Dự án đang tạo giọng. Dừng các dòng đang chạy rồi xóa.")
+        for job in jobs:
+            shutil.rmtree(self.jobs_dir / job["id"], ignore_errors=True)
+        title = re.sub(r"[^\w\- ]+", "", jobs[0].get("group_title") or "", flags=re.UNICODE).strip()[:50]
+        if title:
+            (self.root / "exports" / f"{title}.zip").unlink(missing_ok=True)
+        return len(jobs)
+
+    def delete_old(self, days=7):
+        """Dọn dự án cũ: xóa mọi dự án đã xong hết (không còn dòng chờ / đang chạy) và lần cập nhật cuối quá `days` ngày.
+        Trả về (số dự án, số voice) đã xóa."""
+        days = max(0, min(3650, int(days)))
+        cutoff = time.time() - days * 86400
+        groups = {}
+        for job in self.jobs():
+            if job.get("group"):
+                groups.setdefault(job["group"], []).append(job)
+        projects = voices = 0
+        for group, jobs in groups.items():
+            if any(j["status"] in ("waiting", "running", "draft") for j in jobs):
+                continue
+            if max(j.get("updated", j.get("created", 0)) for j in jobs) > cutoff:
+                continue
+            voices += self.delete_group(group)
+            projects += 1
+        return projects, voices
 
     def delete_job(self, job_id):
         job = self.load_job(job_id)
